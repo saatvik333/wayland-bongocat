@@ -1,6 +1,13 @@
 # Compiler
 CC = gcc
 
+# Try to find XML files via pkg-config, otherwise fall back
+PKG_PREFIX := $(shell pkg-config --variable=prefix wayland-protocols 2>/dev/null)
+# construct the XML path, or else default to /usr/share/wayland-protocols
+PROTO_DIR  := $(if $(PKG_PREFIX),$(PKG_PREFIX)/share/wayland-protocols,/usr/share/wayland-protocols)
+
+
+
 # Build type (debug or release)
 BUILD_TYPE ?= release
 
@@ -63,7 +70,7 @@ protocols: $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR)
 embed-assets: $(EMBEDDED_ASSETS_H) $(EMBEDDED_ASSETS_C)
 
 $(EMBEDDED_ASSETS_H) $(EMBEDDED_ASSETS_C): $(EMBED_SCRIPT) assets/*.png
-	./$(EMBED_SCRIPT)
+	exec $(EMBED_SCRIPT)
 
 # Create object directory
 $(OBJDIR):
@@ -82,8 +89,10 @@ $(TARGET): $(OBJECTS) $(PROTOCOL_OBJECTS)
 
 # Rule to generate Wayland protocol files
 $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR): $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml
-	wayland-scanner client-header /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-client-protocol.h
-	wayland-scanner private-code /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-protocol.c
+	wayland-scanner client-header $(PROTO_DIR)/stable/xdg-shell/xdg-shell.xml \
+     $(PROTOCOLDIR)/xdg-shell-client-protocol.h
+	wayland-scanner private-code   $(PROTO_DIR)/stable/xdg-shell/xdg-shell.xml \
+     $(PROTOCOLDIR)/xdg-shell-protocol.c
 	wayland-scanner private-code $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c
 	wayland-scanner client-header $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h
 
