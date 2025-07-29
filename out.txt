@@ -1,0 +1,284 @@
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B"
+P: Phys=usb-0000:00:14.0-2/input0
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.0/0003:3151:4015.0001/input/input0
+U: Uniq=
+H: Handlers=sysrq kbd leds event0 
+B: PROP=0
+B: EV=120013
+B: KEY=1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe
+B: MSC=10
+B: LED=1f
+
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B Consumer Control"
+P: Phys=usb-0000:00:14.0-2/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.1/0003:3151:4015.0002/input/input1
+U: Uniq=
+H: Handlers=kbd event1 
+B: PROP=0
+B: EV=1f
+B: KEY=3f00033fff 0 0 483ffff17aff32d bfd4444600000000 1 130ff38b17d000 677bfad9415fed 19ed68000004400 10000002
+B: REL=1040
+B: ABS=100000000
+B: MSC=10
+
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B System Control"
+P: Phys=usb-0000:00:14.0-2/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.1/0003:3151:4015.0002/input/input2
+U: Uniq=
+H: Handlers=kbd event2 
+B: PROP=0
+B: EV=13
+B: KEY=c000 10000000000000 0
+B: MSC=10
+
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B Keyboard"
+P: Phys=usb-0000:00:14.0-2/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.1/0003:3151:4015.0002/input/input3
+U: Uniq=
+H: Handlers=kbd event3 
+B: PROP=0
+B: EV=100013
+B: KEY=7 ff80000000000454 80b0ffcd01cfffff febffbffdffffffe
+B: MSC=10
+
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B Mouse"
+P: Phys=usb-0000:00:14.0-2/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.1/0003:3151:4015.0002/input/input4
+U: Uniq=
+H: Handlers=event4 mouse0 
+B: PROP=0
+B: EV=17
+B: KEY=1f0000 0 0 0 0
+B: REL=1943
+B: MSC=10
+
+I: Bus=0003 Vendor=3151 Product=4015 Version=0111
+N: Name="ROYUAN Akko Multi-modes Keyboard-B"
+P: Phys=usb-0000:00:14.0-2/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.1/0003:3151:4015.0002/input/input5
+U: Uniq=
+H: Handlers=event5 
+B: PROP=0
+B: EV=9
+B: ABS=10000000000
+
+I: Bus=0003 Vendor=2cc2 Product=0018 Version=0111
+N: Name="C-Media Electronics Inc. Teufel Gaming Headset"
+P: Phys=usb-0000:00:14.0-8/input3
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-8/1-8:1.3/0003:2CC2:0018.0004/input/input6
+U: Uniq=
+H: Handlers=kbd event6 
+B: PROP=0
+B: EV=100017
+B: KEY=100000000000000 7800000000 c000000000000 0
+B: REL=200
+B: MSC=10
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver"
+P: Phys=usb-0000:00:14.0-9/input0
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.0/0003:046D:C548.0005/input/input7
+U: Uniq=
+H: Handlers=sysrq kbd leds event7 
+B: PROP=0
+B: EV=120013
+B: KEY=1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe
+B: MSC=10
+B: LED=1f
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver Mouse"
+P: Phys=usb-0000:00:14.0-9/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.1/0003:046D:C548.0006/input/input8
+U: Uniq=
+H: Handlers=event8 mouse1 
+B: PROP=0
+B: EV=17
+B: KEY=ffff0000 0 0 0 0
+B: REL=1943
+B: MSC=10
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver Consumer Control"
+P: Phys=usb-0000:00:14.0-9/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.1/0003:046D:C548.0006/input/input9
+U: Uniq=
+H: Handlers=kbd event9 
+B: PROP=0
+B: EV=1f
+B: KEY=3f00033fff 0 0 483ffff17aff32d bfd4444600000000 1 130ff38b17d000 677bfad9415fed 19ed68000004400 10000002
+B: REL=1040
+B: ABS=100000000
+B: MSC=10
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver System Control"
+P: Phys=usb-0000:00:14.0-9/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.1/0003:046D:C548.0006/input/input10
+U: Uniq=
+H: Handlers=kbd event10 
+B: PROP=0
+B: EV=13
+B: KEY=8000 0 0 0 0 0 0 c000 10000000000000 0
+B: MSC=10
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver"
+P: Phys=usb-0000:00:14.0-9/input1
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.1/0003:046D:C548.0006/input/input11
+U: Uniq=
+H: Handlers=event11 
+B: PROP=0
+B: EV=13
+B: KEY=1 0 0 0 0
+B: MSC=10
+
+I: Bus=0019 Vendor=0000 Product=0003 Version=0000
+N: Name="Sleep Button"
+P: Phys=PNP0C0E/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0E:00/input/input13
+U: Uniq=
+H: Handlers=kbd event12 
+B: PROP=0
+B: EV=3
+B: KEY=4000 0 0
+
+I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+P: Phys=PNP0C0C/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0C:00/input/input14
+U: Uniq=
+H: Handlers=kbd event13 
+B: PROP=0
+B: EV=3
+B: KEY=8000 10000000000000 0
+
+I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+P: Phys=LNXPWRBN/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXPWRBN:00/input/input15
+U: Uniq=
+H: Handlers=kbd event14 
+B: PROP=0
+B: EV=3
+B: KEY=8000 10000000000000 0
+
+I: Bus=0003 Vendor=046d Product=c548 Version=0111
+N: Name="Logitech USB Receiver"
+P: Phys=usb-0000:00:14.0-9/input3
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-9/1-9:1.3/0003:046D:C548.0008/input/input16
+U: Uniq=
+H: Handlers=event15 mouse2 
+B: PROP=5
+B: EV=1b
+B: KEY=e520 10000 0 0 0 0
+B: ABS=6e0800001000003
+B: MSC=20
+
+I: Bus=0003 Vendor=045e Product=02ea Version=0511
+N: Name="Microsoft X-Box One S pad"
+P: Phys=usb-0000:00:14.0-3/input0
+S: Sysfs=/devices/pci0000:00/0000:00:14.0/usb1/1-3/1-3:1.0/input/input17
+U: Uniq=
+H: Handlers=event16 js0 
+B: PROP=0
+B: EV=20000b
+B: KEY=7cdb000000000000 0 0 0 0
+B: ABS=3003f
+B: FF=107030000 0
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA NVidia HDMI/DP,pcm=3"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:01.0/0000:01:00.1/sound/card2/input18
+U: Uniq=
+H: Handlers=event17 
+B: PROP=0
+B: EV=21
+B: SW=140
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA NVidia HDMI/DP,pcm=7"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:01.0/0000:01:00.1/sound/card2/input19
+U: Uniq=
+H: Handlers=event18 
+B: PROP=0
+B: EV=21
+B: SW=140
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA NVidia HDMI/DP,pcm=8"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:01.0/0000:01:00.1/sound/card2/input20
+U: Uniq=
+H: Handlers=event19 
+B: PROP=0
+B: EV=21
+B: SW=140
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA NVidia HDMI/DP,pcm=9"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:01.0/0000:01:00.1/sound/card2/input21
+U: Uniq=
+H: Handlers=event20 
+B: PROP=0
+B: EV=21
+B: SW=140
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA Intel PCH Rear Mic"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:1f.3/sound/card1/input22
+U: Uniq=
+H: Handlers=event21 
+B: PROP=0
+B: EV=21
+B: SW=10
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA Intel PCH Front Mic"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:1f.3/sound/card1/input23
+U: Uniq=
+H: Handlers=event22 
+B: PROP=0
+B: EV=21
+B: SW=10
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA Intel PCH Line"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:1f.3/sound/card1/input24
+U: Uniq=
+H: Handlers=event23 
+B: PROP=0
+B: EV=21
+B: SW=2000
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA Intel PCH Line Out"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:1f.3/sound/card1/input25
+U: Uniq=
+H: Handlers=event24 
+B: PROP=0
+B: EV=21
+B: SW=40
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="HDA Intel PCH Front Headphone"
+P: Phys=ALSA
+S: Sysfs=/devices/pci0000:00/0000:00:1f.3/sound/card1/input26
+U: Uniq=
+H: Handlers=event25 
+B: PROP=0
+B: EV=21
+B: SW=4
+
