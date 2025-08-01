@@ -5,7 +5,7 @@ CC = gcc
 BUILD_TYPE ?= release
 
 # Base flags
-BASE_CFLAGS = -std=c11 -Iinclude -Ilib -Iprotocols
+BASE_CFLAGS = -std=c23 -Iinclude -isystem lib -isystem protocols # -fembed-dir=assets/
 BASE_CFLAGS += -Wall -Wextra -Wpedantic -Wformat=2 -Wstrict-prototypes
 BASE_CFLAGS += -Wmissing-prototypes -Wold-style-definition -Wredundant-decls
 BASE_CFLAGS += -Wnested-externs -Wmissing-include-dirs -Wlogical-op
@@ -38,13 +38,8 @@ PROTOCOLDIR = protocols
 WAYLAND_PROTOCOLS_DIR ?= /usr/share/wayland-protocols
 
 # Source files (excluding embedded assets which is generated)
-SOURCES = $(filter-out $(EMBEDDED_ASSETS_C), $(wildcard $(SRCDIR)/*.c))
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o) $(OBJDIR)/embedded_assets.o
-
-# Embedded assets
-EMBED_SCRIPT = scripts/embed_assets.sh
-EMBEDDED_ASSETS_H = $(INCDIR)/embedded_assets.h
-EMBEDDED_ASSETS_C = $(SRCDIR)/embedded_assets.c
+SOURCES = $(SRCDIR)/animation.c $(SRCDIR)/config.c $(SRCDIR)/config_watcher.c $(SRCDIR)/embedded_assets.c $(SRCDIR)/embedded_assets_bongocat.c $(SRCDIR)/error.c $(SRCDIR)/input.c $(SRCDIR)/main.c $(SRCDIR)/memory.c $(SRCDIR)/wayland.c
+OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Protocol files
 C_PROTOCOL_SRC = $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c $(PROTOCOLDIR)/xdg-shell-protocol.c
@@ -54,18 +49,12 @@ PROTOCOL_OBJECTS = $(C_PROTOCOL_SRC:$(PROTOCOLDIR)/%.c=$(OBJDIR)/%.o)
 # Target executable
 TARGET = $(BUILDDIR)/bongocat
 
-.PHONY: all clean protocols embed-assets
+.PHONY: all clean protocols
 
-all: protocols embed-assets $(TARGET)
+all: protocols $(TARGET)
 
 # Generate protocol files first
 protocols: $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR)
-
-# Generate embedded assets
-embed-assets: $(EMBEDDED_ASSETS_H) $(EMBEDDED_ASSETS_C)
-
-$(EMBEDDED_ASSETS_H) $(EMBEDDED_ASSETS_C): $(EMBED_SCRIPT) assets/*.png
-	./$(EMBED_SCRIPT)
 
 # Create build directories
 $(OBJDIR):
@@ -73,7 +62,7 @@ $(OBJDIR):
 	mkdir -p $(BUILDDIR)
 
 # Compile source files (depends on protocol headers and embedded assets)
-$(OBJDIR)/%.o: $(SRCDIR)/%.c $(H_PROTOCOL_HDR) $(EMBEDDED_ASSETS_H) | $(OBJDIR)
+$(OBJDIR)/%.o: $(SRCDIR)/%.c $(H_PROTOCOL_HDR) | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Compile protocol files
@@ -91,7 +80,7 @@ $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR): $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.
 	wayland-scanner client-header $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h
 
 clean:
-	rm -rf $(BUILDDIR) $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR) $(EMBEDDED_ASSETS_H) $(EMBEDDED_ASSETS_C)
+	rm -rf $(BUILDDIR) $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR)
 
 # Development targets
 debug:

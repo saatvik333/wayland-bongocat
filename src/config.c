@@ -2,6 +2,7 @@
 #include "config.h"
 #include "error.h"
 #include "memory.h"
+#include "embedded_assets.h"
 #include <limits.h>
 
 // Configuration validation ranges
@@ -66,17 +67,33 @@ static bongocat_error_t validate_config(config_t *config) {
         bongocat_log_warning("overlay_opacity %d out of range [0-255], clamping", config->overlay_opacity);
         config->overlay_opacity = config->overlay_opacity < 0 ? 0 : 255;
     }
-    
+
+    // Animation index
+    if (config->animation_index < 0 || config->animation_index >= TOTAL_ANIMATIONS) {
+        bongocat_log_warning("animation_index %d out of range [0-%d], resetting to 0",
+                           config->animation_index, TOTAL_ANIMATIONS - 1);
+        config->animation_index = 0;
+    }
+
     // Validate idle frame
-    if (config->idle_frame < 0 || config->idle_frame >= NUM_FRAMES) {
-        bongocat_log_warning("idle_frame %d out of range [0-%d], resetting to 0", 
-                           config->idle_frame, NUM_FRAMES - 1);
-        config->idle_frame = 0;
+    if (config->animation_index == BONGOCAT_ANIM_INDEX) {
+        if (config->idle_frame < 0 || config->idle_frame >= BONGOCAT_NUM_FRAMES) {
+            bongocat_log_warning("idle_frame %d out of range [0-%d], resetting to 0",
+                               config->idle_frame, BONGOCAT_NUM_FRAMES - 1);
+            config->idle_frame = 0;
+        }
+    } else {
+        if (config->idle_frame < 0 || config->idle_frame >= MAX_NUM_FRAMES) {
+            bongocat_log_warning("idle_frame %d out of range [0-%d], resetting to 0",
+                               config->idle_frame, MAX_NUM_FRAMES - 1);
+            config->idle_frame = 0;
+        }
     }
     
     // Validate enable_debug
     config->enable_debug = config->enable_debug ? 1 : 0;
-    
+    config->invert_color = config->invert_color ? 1 : 0;
+
     // Validate overlay_position
     if (config->overlay_position != POSITION_TOP && config->overlay_position != POSITION_BOTTOM) {
         bongocat_log_warning("Invalid overlay_position %d, resetting to top", config->overlay_position);
@@ -155,6 +172,8 @@ static bongocat_error_t parse_config_file(config_t *config, const char *config_f
                 config->overlay_opacity = (int)strtol(value, NULL, 10);
             } else if (strcmp(key_start, "enable_debug") == 0) {
                 config->enable_debug = (int)strtol(value, NULL, 10);
+            } else if (strcmp(key_start, "invert_color") == 0) {
+                config->invert_color = (int)strtol(value, NULL, 10);
             } else if (strcmp(key_start, "overlay_position") == 0) {
                 if (strcmp(value, "top") == 0) {
                     config->overlay_position = POSITION_TOP;
@@ -163,6 +182,15 @@ static bongocat_error_t parse_config_file(config_t *config, const char *config_f
                 } else {
                     bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
                     config->overlay_position = POSITION_TOP;
+                }
+            } else if (strcmp(key_start, "animation_name") == 0) {
+                if (strcmp(value, "bongocat") == 0) {
+                    config->animation_index = BONGOCAT_ANIM_INDEX;
+                } else if (strcmp(value, "agumon") == 0 || strcmp(value, "dm20:agumon") == 0 || strcmp(value, "dm:agumon") == 0) {
+                    config->animation_index = DM20_AGUMON_ANIM_INDEX;
+                } else {
+                    bongocat_log_warning("Invalid animation_name '%s', using 'bongocat'", value);
+                    config->animation_index = BONGOCAT_ANIM_INDEX;
                 }
             } else if (strcmp(key_start, "keyboard_device") == 0 || strcmp(key_start, "keyboard_devices") == 0) {
                 // Reallocate device array
@@ -209,11 +237,6 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
     *config = (config_t) {
         .screen_width = DEFAULT_SCREEN_WIDTH,  // Will be updated by Wayland detection
         .bar_height = DEFAULT_BAR_HEIGHT,
-        .asset_paths = {
-            "assets/bongo-cat-both-up.png",
-            "assets/bongo-cat-left-down.png", 
-            "assets/bongo-cat-right-down.png"
-        },
         .keyboard_devices = NULL,
         .num_keyboard_devices = 0,
         .cat_x_offset = 100,  // Default values from current config
@@ -227,7 +250,9 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
         .fps = 60,
         .overlay_opacity = 150,
         .enable_debug = 1,
-        .overlay_position = POSITION_TOP
+        .overlay_position = POSITION_TOP,
+        .animation_index = BONGOCAT_ANIM_INDEX,
+        .invert_color = 0
     };
     
     // Set default keyboard device if none specified
@@ -266,9 +291,16 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
     
     bongocat_log_debug("Configuration loaded successfully");
     bongocat_log_debug("  Screen: %dx%d", config->screen_width, config->bar_height);
-    bongocat_log_debug("  Cat: %dx%d at offset (%d,%d)", 
-                      config->cat_height, (config->cat_height * 954) / 393,
-                      config->cat_x_offset, config->cat_y_offset);
+    if (config->animation_index == BONGOCAT_ANIM_INDEX) {
+        bongocat_log_debug("  Cat: %dx%d at offset (%d,%d)",
+                          config->cat_height, (config->cat_height * 954) / 393,
+                          config->cat_x_offset, config->cat_y_offset);
+
+    } else {
+        bongocat_log_debug("  Digimon: %02d at offset (%d,%d)",
+                          config->animation_index,
+                          config->cat_x_offset, config->cat_y_offset);
+    }
     bongocat_log_debug("  FPS: %d, Opacity: %d", config->fps, config->overlay_opacity);
     bongocat_log_debug("  Position: %s", config->overlay_position == POSITION_TOP ? "top" : "bottom");
     

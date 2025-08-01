@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "wayland.h"
 #include "animation.h"
+#include "embedded_assets.h"
 
 // Wayland globals
 bool configured = false;
@@ -63,15 +64,33 @@ void draw_bar(void) {
     }
 
     pthread_mutex_lock(&anim_lock);
-    // Use configured cat height
-    int cat_height = current_config->cat_height;
-    int cat_width = (cat_height * 779) / 320;  // Maintain 954:393 ratio
-    int cat_x = (current_config->screen_width - cat_width) / 2 + current_config->cat_x_offset;
-    int cat_y = (current_config->bar_height - cat_height) / 2 + current_config->cat_y_offset;
 
-    blit_image_scaled(pixels, current_config->screen_width, current_config->bar_height,
-                      anim_imgs[anim_index], anim_width[anim_index], anim_height[anim_index],
-                      cat_x, cat_y, cat_width, cat_height);
+    if (current_config->animation_index == BONGOCAT_ANIM_INDEX) {
+        // Use configured cat height
+        int cat_height = current_config->cat_height;
+        int cat_width = (cat_height * 779) / 320;  // Maintain 954:393 ratio
+        int cat_x = (current_config->screen_width - cat_width) / 2 + current_config->cat_x_offset;
+        int cat_y = (current_config->bar_height - cat_height) / 2 + current_config->cat_y_offset;
+
+        blit_image_scaled(pixels, current_config->screen_width, current_config->bar_height,
+                          anims[current_config->animation_index].frames[anim_frame_index].pixels,
+                          anims[current_config->animation_index].frames[anim_frame_index].width,
+                          anims[current_config->animation_index].frames[anim_frame_index].height,
+                          cat_x, cat_y, cat_width, cat_height);
+    } else if (current_config->animation_index >= DM20_AGUMON_ANIM_INDEX) { // otherwise its digimon
+        // Use configured cat height
+        int cat_height = current_config->cat_height;
+        int cat_width = (cat_height * anims[current_config->animation_index].frames[anim_frame_index].width) / anims[current_config->animation_index].frames[anim_frame_index].height;  // Maintain ratio
+        int cat_x = (current_config->screen_width - cat_width) / 2 + current_config->cat_x_offset;
+        int cat_y = (current_config->bar_height - cat_height) / 2 + current_config->cat_y_offset;
+
+        blit_image_scaled(pixels, current_config->screen_width, current_config->bar_height,
+                          anims[current_config->animation_index].frames[anim_frame_index].pixels,
+                          anims[current_config->animation_index].frames[anim_frame_index].width,
+                          anims[current_config->animation_index].frames[anim_frame_index].height,
+                          cat_x, cat_y, cat_width, cat_height);
+    }
+
     pthread_mutex_unlock(&anim_lock);
 
     wl_surface_attach(surface, buffer, 0, 0);

@@ -12,7 +12,6 @@ typedef enum {
 typedef struct {
     int screen_width;
     int bar_height;
-    const char *asset_paths[NUM_FRAMES];
     char **keyboard_devices;
     int num_keyboard_devices;
     int cat_x_offset;
@@ -27,6 +26,8 @@ typedef struct {
     int overlay_opacity;
     int enable_debug;
     overlay_position_t overlay_position;
+    int animation_index;
+    int invert_color;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

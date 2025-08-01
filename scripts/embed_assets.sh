@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Script to convert PNG assets to C header files for embedding
 
 ASSETS_DIR="assets"

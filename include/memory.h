@@ -49,4 +49,6 @@ void memory_leak_check(void);
 #define BONGOCAT_FREE(ptr) bongocat_free(ptr)
 #endif
 
+#define LEN_ARRAY(x)  (sizeof(x) / sizeof((x)[0]))
+
 #endif // MEMORY_H

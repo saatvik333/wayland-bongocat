@@ -17,7 +17,9 @@
 #include <linux/input.h>
 #include <sys/inotify.h>
 
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
 #include <wayland-client.h>
 
 #include "../lib/stb_image.h"
@@ -26,9 +28,21 @@
 #define BONGOCAT_VERSION "1.2.2"
 
 // Common constants
-#define NUM_FRAMES 3
+#define BONGOCAT_NUM_FRAMES 4
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
+
+// Idle 1, Idle 2, Angry, Down1, Happy, Eat1, Sleep1, Refuse, Down2 ~~, Eat2, Sleep2, Attack~~
+// both-up, left-down, right-down, both-down, ...
+#define MAX_NUM_FRAMES 12
+#define MAX_DIGIMON_FRAMES 12
+
+// Animations
+#define TOTAL_DIGIMON_ANIMATIONS 1
+
+// bongocat + digimons
+#define TOTAL_ANIMATIONS (1+TOTAL_DIGIMON_ANIMATIONS)
+
 
 // Config watcher constants
 #define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))
