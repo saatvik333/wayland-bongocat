@@ -300,10 +300,26 @@ bongocat_error_t wayland_init(config_t *config) {
     if (config->overlay_position == POSITION_TOP) {
         anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
         bongocat_log_debug("Setting overlay position to top");
+    } else if (config->overlay_position == POSITION_BOTTOM) {
+        anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+        bongocat_log_debug("Setting overlay position to bottom");
+    } else if (config->overlay_position == POSITION_TOP_LEFT) {
+        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+        bongocat_log_debug("Setting overlay position to top-left");
+    } else if (config->overlay_position == POSITION_BOTTOM_LEFT) {
+        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+        bongocat_log_debug("Setting overlay position to left-bottom");
+    } else if (config->overlay_position == POSITION_TOP_RIGHT) {
+        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+        bongocat_log_debug("Setting overlay position to top-right");
+    } else if (config->overlay_position == POSITION_BOTTOM_RIGHT) {
+        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+        bongocat_log_debug("Setting overlay position to right-bottom");
     } else {
         anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
         bongocat_log_debug("Setting overlay position to bottom");
     }
+
     zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
     zwlr_layer_surface_v1_set_size(layer_surface, 0, config->bar_height);
     zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, -1);

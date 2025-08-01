@@ -89,7 +89,7 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y,
 
 sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, int sprite_size,
                                                     int frame_columns, int frame_rows, int* out_frame_count,
-                                                    int padding_x, int padding_y);
+                                                    int padding_x, int padding_y, bool invert_color);
 void free_frames(sprite_sheet_frame_t* frames, int frame_count);
 
 #endif // ANIMATION_H

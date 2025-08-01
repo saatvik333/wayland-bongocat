@@ -5,8 +5,12 @@
 #include "error.h"
 
 typedef enum {
-    POSITION_TOP = 0,
-    POSITION_BOTTOM = 1
+    POSITION_TOP,
+    POSITION_BOTTOM,
+    POSITION_TOP_LEFT,
+    POSITION_BOTTOM_LEFT,
+    POSITION_TOP_RIGHT,
+    POSITION_BOTTOM_RIGHT,
 } overlay_position_t;
 
 typedef struct {
@@ -28,6 +32,9 @@ typedef struct {
     overlay_position_t overlay_position;
     int animation_index;
     int invert_color;
+    int crop_sprite;
+    int padding_x;
+    int padding_y;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

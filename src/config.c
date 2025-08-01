@@ -93,6 +93,7 @@ static bongocat_error_t validate_config(config_t *config) {
     // Validate enable_debug
     config->enable_debug = config->enable_debug ? 1 : 0;
     config->invert_color = config->invert_color ? 1 : 0;
+    config->crop_sprite = config->crop_sprite ? 1 : 0;
 
     // Validate overlay_position
     if (config->overlay_position != POSITION_TOP && config->overlay_position != POSITION_BOTTOM) {
@@ -104,6 +105,16 @@ static bongocat_error_t validate_config(config_t *config) {
     if (abs(config->cat_x_offset) > config->screen_width) {
         bongocat_log_warning("cat_x_offset %d may position cat off-screen (screen width: %d)", 
                            config->cat_x_offset, config->screen_width);
+    }
+
+    // Validate padding
+    if (config->padding_x < 0) {
+        bongocat_log_warning("padding_x %d can not be negative, clamping", config->padding_x);
+        config->padding_x = 0;
+    }
+    if (config->padding_y < 0) {
+        bongocat_log_warning("padding_y %d can not be negative, clamping", config->padding_y);
+        config->padding_y = 0;
     }
     
     return BONGOCAT_SUCCESS;
@@ -174,11 +185,25 @@ static bongocat_error_t parse_config_file(config_t *config, const char *config_f
                 config->enable_debug = (int)strtol(value, NULL, 10);
             } else if (strcmp(key_start, "invert_color") == 0) {
                 config->invert_color = (int)strtol(value, NULL, 10);
+            } else if (strcmp(key_start, "crop_sprite") == 0) {
+                config->crop_sprite = (int)strtol(value, NULL, 10);
+            } else if (strcmp(key_start, "padding_x") == 0) {
+                config->padding_x = (int)strtol(value, NULL, 10);
+            } else if (strcmp(key_start, "padding_y") == 0) {
+                config->padding_y = (int)strtol(value, NULL, 10);
             } else if (strcmp(key_start, "overlay_position") == 0) {
                 if (strcmp(value, "top") == 0) {
                     config->overlay_position = POSITION_TOP;
                 } else if (strcmp(value, "bottom") == 0) {
                     config->overlay_position = POSITION_BOTTOM;
+                } else if (strcmp(value, "top-left") == 0) {
+                    config->overlay_position = POSITION_TOP_LEFT;
+                } else if (strcmp(value, "bottom-left") == 0) {
+                    config->overlay_position = POSITION_BOTTOM_LEFT;
+                } else if (strcmp(value, "top-right") == 0) {
+                    config->overlay_position = POSITION_TOP_RIGHT;
+                } else if (strcmp(value, "bottom-right") == 0) {
+                    config->overlay_position = POSITION_BOTTOM_RIGHT;
                 } else {
                     bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
                     config->overlay_position = POSITION_TOP;

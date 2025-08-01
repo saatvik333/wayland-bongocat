@@ -7,6 +7,7 @@
 #include "embedded_assets_bongocat.h"
 #include "embedded_assets.h"
 #include <time.h>
+#include <stdlib.h>
 
 // Animation globals
 
@@ -23,8 +24,17 @@ pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
 static config_t *current_config;
 static pthread_t anim_thread;
 
-static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t loaded_frame, int padding_x, int padding_y) {
-    sprite_sheet_frame_t ret = empty_sprite_sheet_frame;
+typedef struct {
+    int min_x;
+    int min_y;
+    int max_x;
+    int max_y;
+    int crop_width;
+    int crop_height;
+    int padded_width;
+    int padded_height;
+} get_cropped_sizes_result_t;
+static get_cropped_sizes_result_t get_cropped_sizes(sprite_sheet_frame_t loaded_frame, int padding_x, int padding_y) {
     const int width = loaded_frame.width;
     const int height = loaded_frame.height;
     const int channels = loaded_frame.channels;
@@ -35,38 +45,6 @@ static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t 
     int min_y = height;
     int max_x = -1;
     int max_y = -1;
-    /*
-    if (width > 0 && height > 0) {
-        bool find_min = false;
-        for (int x = 0; !find_min && x < width; x++) {
-            for (int y = 0; !find_min && y < height; y++) {
-                unsigned char alpha = src_pixels[(y * width + x) * channels + 3];
-                if (alpha > THRESHOLD_ALPHA) {
-                    if (x < min_x) min_x = x;
-                    if (x > max_x) max_x = x;
-                    if (y < min_y) min_y = y;
-                    if (y > max_y) max_y = y;
-                    find_min = true;
-                    break;
-                }
-            }
-        }
-        bool find_max = false;
-        if (find_min) {
-            for (int x = width-1; !find_max && x >= 0; x--) {
-                for (int y = height-1; !find_max && y >= 0; y--) {
-                    unsigned char alpha = src_pixels[(y * width + x) * channels + 3];
-                    if (alpha > THRESHOLD_ALPHA) {
-                        if (x > max_x) max_x = x;
-                        if (y > max_y) max_y = y;
-                        find_max = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    */
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const unsigned char alpha = src_pixels[(y * width + x) * channels + 3];
@@ -84,36 +62,134 @@ static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t 
         min_x = min_y = max_x = max_y = 0;
     }
 
-    const int crop_width = max_x - min_x + 1;
-    const int crop_height = max_y - min_y + 1;
+    int crop_width = max_x - min_x + 1;
+    int crop_height = max_y - min_y + 1;
     int padded_width = crop_width + 2 * padding_x;
     int padded_height = crop_height + 2 * padding_y;
-    unsigned char *dest_pixels = (unsigned char *)bongocat_malloc(padded_width * padded_height * channels);
+
+    return (get_cropped_sizes_result_t) {
+        .min_x = min_x,
+        .min_y = min_y,
+        .max_x = max_x,
+        .max_y = max_y,
+        .crop_width = crop_width,
+        .crop_height = crop_height,
+        .padded_width = padded_width,
+        .padded_height = padded_height,
+    };
+}
+
+static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t loaded_frame,
+                                                           int padding_x, int padding_y, bool invert_color,
+                                                           const get_cropped_sizes_result_t* cropping_size) {
+    sprite_sheet_frame_t ret = empty_sprite_sheet_frame;
+    const int width = loaded_frame.width;
+    const int height = loaded_frame.height;
+    const int channels = loaded_frame.channels;
+    const unsigned char *src_pixels = loaded_frame.pixels;
+
+    get_cropped_sizes_result_t padding_sizes = get_cropped_sizes(loaded_frame, padding_x, padding_y);
+
+    int start_x = 0;
+    int start_y = 0;
+    if (cropping_size) {
+        // @FIXME: center sprite so frame is not "jumping"
+    } else {
+        // skip cropping, when copying
+        padding_sizes.min_x = 0;
+        padding_sizes.min_y = 0;
+        padding_sizes.max_x = width;
+        padding_sizes.max_y = height;
+        padding_sizes.padded_width = width;
+        padding_sizes.padded_height = height;
+        padding_sizes.crop_width = width;
+        padding_sizes.crop_height = height;
+    }
+
+    unsigned char *dest_pixels = (unsigned char *)bongocat_malloc(padding_sizes.padded_width * padding_sizes.padded_height * channels);
     if (!dest_pixels) {
-        stbi_image_free(loaded_frame.pixels);
-        loaded_frame.pixels = NULL;
         return ret;
     }
-    memset(dest_pixels, 0, padded_width * padded_height * channels);
+    memset(dest_pixels, 0, padding_sizes.padded_width * padding_sizes.padded_height * channels);
+
     /// @TODO: optimize cropped region copy
-    for (int y = 0; y < crop_height; y++) {
-        for (int x = 0; x < crop_width; x++) {
-            const int src_x = min_x + x;
-            const int src_y = min_y + y;
+    for (int y = 0; y < padding_sizes.crop_height; y++) {
+        for (int x = 0; x < padding_sizes.crop_width; x++) {
+            const int src_x = padding_sizes.min_x + x;
+            const int src_y = padding_sizes.min_y + y;
+            const int dst_x = start_x + x;
+            const int dst_y = start_y + y;
 
-            const unsigned char *src_pixel = &src_pixels[(src_y * width + src_x) * channels];
-            unsigned char *dst_pixel = &dest_pixels[((y + padding_y) * padded_width + (x + padding_x)) * channels];
+            const size_t src_pixel_index = (src_y * width + src_x) * channels;
 
-            memcpy(dst_pixel, src_pixel, channels);
+            // skip frame
+            if (dst_x < 0 || dst_x >= padding_sizes.padded_width ||
+                dst_y < 0 || dst_y >= padding_sizes.padded_height) {
+                continue; // Skip out-of-bounds
+            }
+
+            const size_t dst_pixel_index = (dst_y * padding_sizes.padded_width + dst_x) * channels;
+
+            if (src_pixel_index >= width * height * channels ||
+                dst_pixel_index >= padding_sizes.padded_width * padding_sizes.padded_height * channels) {
+                continue;
+            }
+
+            const unsigned char *src_pixel = &src_pixels[src_pixel_index];
+            unsigned char *dst_pixel = &dest_pixels[dst_pixel_index];
+
+            if (invert_color) {
+                dst_pixel[0] = 255 - src_pixel[0]; //
+                dst_pixel[1] = 255 - src_pixel[1]; //
+                dst_pixel[2] = 255 - src_pixel[2]; //
+                dst_pixel[3] = src_pixel[3];       // A (unchanged)
+            } else {
+                memcpy(dst_pixel, src_pixel, channels);
+            }
         }
     }
 
     // move frame
     ret = loaded_frame;
-    ret.width = padded_width;
-    ret.height = padded_height;
+    ret.width = padding_sizes.padded_width;
+    ret.height = padding_sizes.padded_height;
     ret.pixels = dest_pixels;
     dest_pixels = NULL;
+
+    return ret;
+}
+static get_cropped_sizes_result_t get_biggest_cropped_size(
+    int frame_width,
+    int frame_height,
+    get_cropped_sizes_result_t* cropped_frames,
+    size_t cropped_frames_size,
+    int padding_x,
+    int padding_y
+) {
+    get_cropped_sizes_result_t ret = {
+        .min_x = frame_width,
+        .min_y = frame_height,
+        .max_x = 0,
+        .max_y = 0,
+        .crop_width = 0,
+        .crop_height = 0,
+        .padded_width = 0,
+        .padded_height = 0,
+    };
+
+    for (size_t i = 0; i < cropped_frames_size; ++i) {
+        get_cropped_sizes_result_t* crop = &cropped_frames[i];
+
+        if (crop->min_x < ret.min_x) ret.min_x = crop->min_x;
+        if (crop->min_y < ret.min_y) ret.min_y = crop->min_y;
+        if (crop->max_x > ret.max_x) ret.max_x = crop->max_x;
+        if (crop->max_y > ret.max_y) ret.max_y = crop->max_y;
+    }
+
+    ret.crop_width = ret.max_x - ret.min_x + 1;
+    ret.crop_height = ret.max_y - ret.min_y + 1;
+    ret.padded_width = ret.crop_width + 2 * padding_x;
+    ret.padded_height = ret.crop_height + 2 * padding_y;
 
     return ret;
 }
@@ -121,7 +197,7 @@ static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t 
 sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, int sprite_size,
                                                     int frame_columns, int frame_rows,
                                                     int* out_frame_count,
-                                                    int padding_x, int padding_y) {
+                                                    int padding_x, int padding_y, bool invert_color) {
     int sheet_width, sheet_height, channels;
     uint8_t* sprite_sheet_pixels = stbi_load_from_memory(sprite_data, sprite_size, &sheet_width, &sheet_height, &channels, 4); // Force RGBA
     if (!sprite_sheet_pixels) {
@@ -148,6 +224,43 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
         return NULL;
     }
 
+    get_cropped_sizes_result_t* cropped_frames = bongocat_malloc(sizeof(get_cropped_sizes_result_t) * total_frames);
+    /// @TODO: optimize search for the biggest padding
+    for (int row = 0; row < frame_rows; ++row) {
+        for (int col = 0; col < frame_columns; ++col) {
+            const int idx = row * frame_columns + col;
+
+            uint8_t* frame_pixels = bongocat_malloc(frame_width * frame_height * 4);
+            if (!frame_pixels) {
+                continue;
+            }
+
+            for (int y = 0; y < frame_height; ++y) {
+                memcpy(
+                    frame_pixels + y * frame_width * 4,
+                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * 4,
+                    frame_width * 4
+                );
+            }
+
+            const sprite_sheet_frame_t frame = (sprite_sheet_frame_t){
+                .width = frame_width,
+                .height = frame_height,
+                .channels = 4,
+                .pixels = frame_pixels
+            };
+            get_cropped_sizes_result_t cropping_result = get_cropped_sizes(frame, padding_x, padding_y);
+            bongocat_log_debug("Cropped Sprite Frame (%d): %dx%d (%dx%d)", idx, cropping_result.padded_width, cropping_result.padded_height, frame_width, frame_height);
+
+            cropped_frames[idx] = cropping_result;
+
+            bongocat_free(frame_pixels);
+            frame_pixels = NULL;
+        }
+    }
+    const get_cropped_sizes_result_t cropping_size = get_biggest_cropped_size(frame_width,frame_height, cropped_frames, total_frames, padding_x, padding_y);
+    bongocat_free(cropped_frames);
+
     for (int row = 0; row < frame_rows; ++row) {
         for (int col = 0; col < frame_columns; ++col) {
             const int idx = row * frame_columns + col;
@@ -161,14 +274,13 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
                     frames[j].pixels = NULL;
                 }
                 bongocat_free(frames);
-                stbi_image_free(pixels);
                 return NULL;
             }
 
             for (int y = 0; y < frame_height; ++y) {
                 memcpy(
                     frame_pixels + y * frame_width * 4,
-                    pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * 4,
+                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * 4,
                     frame_width * 4
                 );
             }
@@ -179,14 +291,16 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
                 .channels = 4,
                 .pixels = frame_pixels
             };
-            frames[idx] = copy_image_from_memory_cropped(frame, padding_x, padding_y);
+            frames[idx] = copy_image_from_memory_cropped(frame, padding_x, padding_y, invert_color, &cropping_size);
+            bongocat_log_debug("Cropped Sprite Frame (%d): %dx%d (%dx%d)", idx, frames[idx].width, frames[idx].height, frame_width, frame_height);
             // frame_pixels moved
-            stbi_image_free(frame_pixels);
+            bongocat_free(frame_pixels);
             frame_pixels = NULL;
         }
     }
 
     stbi_image_free(sprite_sheet_pixels);
+    sprite_sheet_pixels = NULL;
     if (out_frame_count) *out_frame_count = total_frames;
     return frames;
 }
@@ -344,16 +458,17 @@ bongocat_error_t animation_init(config_t *config) {
         assert(LEN_ARRAY(frame_names) == LEN_ARRAY(embedded_data));
 
         sprite_sheet_frame_t bongocat_anims[BONGOCAT_NUM_FRAMES];
+        sprite_sheet_frame_t loaded_frames[BONGOCAT_NUM_FRAMES];
+        get_cropped_sizes_result_t cropped_frames[BONGOCAT_NUM_FRAMES];
         for (int i = 0; i < BONGOCAT_NUM_FRAMES; i++) {
             bongocat_log_debug("Loading embedded image: %s", frame_names[i]);
 
-            sprite_sheet_frame_t loaded_frame;
-            loaded_frame.channels = 4;
-            loaded_frame.pixels = stbi_load_from_memory(embedded_data[i], embedded_sizes[i],
-                                                             &loaded_frame.width,
-                                                             &loaded_frame.height,
-                                                             NULL, loaded_frame.channels);
-            if (!loaded_frame.pixels) {
+            loaded_frames[i].channels = 4;
+            loaded_frames[i].pixels = stbi_load_from_memory(embedded_data[i], embedded_sizes[i],
+                                                             &loaded_frames[i].width,
+                                                             &loaded_frames[i].height,
+                                                             NULL, loaded_frames[i].channels);
+            if (!loaded_frames[i].pixels) {
                 bongocat_log_error("Failed to load embedded image: %s", frame_names[i]);
 
                 // Cleanup already loaded images
@@ -365,19 +480,29 @@ bongocat_error_t animation_init(config_t *config) {
                 }
                 return BONGOCAT_ERROR_FILE_IO;
             }
-            bongocat_log_debug("Loaded %dx%d embedded image", loaded_frame.width, loaded_frame.height);
+            bongocat_log_debug("Loaded %dx%d embedded image", loaded_frames[i].width, loaded_frames[i].height);
 
-            bongocat_anims[i] = copy_image_from_memory_cropped(loaded_frame, padding_x, padding_y);
+            // detect croppable area
+            cropped_frames[i] = get_cropped_sizes(loaded_frames[i], padding_x, padding_y);
+        }
+        /// @NOTE: assume every frame has the same dimentions
+        const get_cropped_sizes_result_t cropping_size = get_biggest_cropped_size(loaded_frames[0].width, loaded_frames[0].height, cropped_frames, BONGOCAT_NUM_FRAMES, padding_x, padding_y);
 
-            stbi_image_free(loaded_frame.pixels);
-            loaded_frame.pixels = NULL;
-
+        for (int i = 0; i < BONGOCAT_NUM_FRAMES; i++) {
+            // skip cropping and padding for bongocat
+            bongocat_anims[i] = copy_image_from_memory_cropped(loaded_frames[i], 0, 0, current_config->invert_color, NULL /*&cropping_size*/);
             // move loaded frame
             bongocat_log_debug("Loaded, cropped, padded: %dx%d -> %dx%d (padding %d,%d): %s",
-                               loaded_frame.width, loaded_frame.height,
+                               loaded_frames[i].width, loaded_frames[i].height,
                                bongocat_anims[i].width, bongocat_anims[i].height,
-                               padding_x, padding_y,
+                               0, 0,
                                frame_names[i]);
+        }
+
+        // clean up frames
+        for (int i = 0; i < BONGOCAT_NUM_FRAMES; i++) {
+            stbi_image_free(loaded_frames[i].pixels);
+            loaded_frames[i].pixels = NULL;
         }
 
         // move frames into global anims
@@ -399,7 +524,7 @@ bongocat_error_t animation_init(config_t *config) {
                                                                            (int)dm20_agumon_png_size,
                                                                            DM20_AGUMON_SPRITE_SHEET_COLS,
                                                                            DM20_AGUMON_SPRITE_SHEET_ROWS,
-                                                                           &sprite_sheet_count, padding_x, padding_y);
+                                                                           &sprite_sheet_count, padding_x, padding_y, current_config->invert_color);
 
         assert(sprite_sheet_count > 0);
 
