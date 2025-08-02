@@ -13,10 +13,6 @@ result
 *-protocol.h
 *-client-protocol.h
 
-# Generated embedded assets
-*embedded_assets.h
-*embedded_assets.c
-
 # IDE files
 .vscode/
 *.swp
