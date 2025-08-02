@@ -1,7 +1,7 @@
 # Bongo Cat Wayland Overlay
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.2.2-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
 
 A delightful Wayland overlay that displays an animated bongo cat reacting to your keyboard input! Perfect for streamers, content creators, or anyone who wants to add some fun to their desktop.
 
@@ -13,10 +13,10 @@ A delightful Wayland overlay that displays an animated bongo cat reacting to you
 - **🔥 Hot-Reload Configuration** - Modify settings without restarting (v1.2.0)
 - **🔄 Dynamic Device Detection** - Automatically detects Bluetooth/USB keyboards (v1.2.0)
 - **⚡ Performance Optimized** - Adaptive monitoring and batch processing (v1.2.0)
-- **🖥️ Screen Detection** - Automatic screen detection for all sizes and orientations (1.2.2)
+- **🖥️ Screen Detection** - Automatic screen detection for all sizes and orientations (v1.2.2)
+- **🎮 Smart Fullscreen Detection** - Automatically hides during fullscreen applications (v1.2.3)
 - **💾 Lightweight** - Minimal resource usage (~7MB RAM)
 - **🎛️ Multi-device Support** - Monitor multiple keyboards simultaneously
-- **🎨 Embedded Assets** - No external dependencies
 - **🏗️ Cross-platform** - Works on x86_64 and ARM64
 
 ## 🚀 Installation
@@ -243,7 +243,7 @@ The `bongocat-find-devices` tool provides professional input device analysis wit
 $ bongocat-find-devices
 
 ╔══════════════════════════════════════════════════════════════════╗
-║ Wayland Bongo Cat - Input Device Discovery v1.2.0                ║
+║ Wayland Bongo Cat - Input Device Discovery v1.2.3                ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 [SCAN] Scanning for input devices...
@@ -308,20 +308,21 @@ bongocat-find-devices --help
 - **Storage:** ~0.4MB executable size
 - **Compositor:** Wayland with layer shell protocol support
 
-### Performance Metrics (v1.2.2)
+### Performance Metrics (v1.2.3)
 
 - **Input Latency:** <1ms with batch processing
 - **CPU Usage:** <1% on modern systems
 - **Device Monitoring:** Adaptive 5-30 second intervals
 - **Memory:** Optimized with leak detection
+- **Fullscreen Detection:** Intelligent hiding with minimal overhead
 
 ### Tested Compositors
 
 - ✅ **Hyprland** - Full support
 - ✅ **Sway** - Full support
 - ✅ **Wayfire** - Compatible
-- ⚠️ **KDE Wayland** - Limited layer shell support
-- ❌ **GNOME Wayland** - No layer shell support
+- ✅ **KDE Wayland** - Compatiable
+- ❌ **GNOME Wayland** - Support Unknown
 
 ## 🐛 Troubleshooting
 
@@ -411,9 +412,11 @@ wayland-bongocat/
 └── nix/               # NixOS integration
 ```
 
-### Key Features (v1.2.2)
+### Key Features (v1.2.3)
 
 - **Screen Detection** -> Automatic screen width/orientation detection
+- **Fullscreen Detection** -> Smart hiding during fullscreen applications
+- **Enhanced Artwork** -> Custom-drawn animations with improved visual quality
 
 ## 🤝 Contributing
 
@@ -443,8 +446,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 Built with ❤️ for the Wayland community. Special thanks to:
 
 - Redditor: [u/akonzu](https://www.reddit.com/user/akonzu/) for the inspiration
+- [@Shreyabardia](https://github.com/Shreyabardia) for the beautiful custom-drawn bongo cat artwork
 - All the contributors and users
 
 ---
 
-**₍^. .^₎ Wayland Bongo Cat Overlay v1.2.2** - Making desktops more delightful, one keystroke at a time!
+**₍^. .^₎ Wayland Bongo Cat Overlay v1.2.3** - Making desktops more delightful, one keystroke at a time!

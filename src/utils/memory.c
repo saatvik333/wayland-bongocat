@@ -1,5 +1,5 @@
-#include "memory.h"
-#include "error.h"
+#include "utils/memory.h"
+#include "utils/error.h"
 #include <string.h>
 #include <pthread.h>
 

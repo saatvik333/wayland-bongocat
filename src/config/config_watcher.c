@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
-#include "bongocat.h"
-#include "error.h"
-#include "config.h"
+#include "core/bongocat.h"
+#include "utils/error.h"
+#include "config/config.h"
 #include <string.h>
 #include <unistd.h>
 #include <time.h>

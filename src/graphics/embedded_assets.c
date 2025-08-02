@@ -1,7 +1,7 @@
-#include "embedded_assets.h"
+#include "graphics/embedded_assets.h"
 #include <stddef.h>
 
 const unsigned char dm20_agumon_png[] = {
-#embed "../assets/dm20/Agumon.png"
+#embed "../../assets/dm20/Agumon.png"
 };
 const size_t dm20_agumon_png_size = sizeof(dm20_agumon_png);

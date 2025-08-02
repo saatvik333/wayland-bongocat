@@ -1,8 +1,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "bongocat.h"
-#include "error.h"
+#include "core/bongocat.h"
+#include "utils/error.h"
 
 typedef enum {
     POSITION_TOP,
@@ -12,6 +12,11 @@ typedef enum {
     POSITION_TOP_RIGHT,
     POSITION_BOTTOM_RIGHT,
 } overlay_position_t;
+
+typedef enum {
+    LAYER_TOP = 0,
+    LAYER_OVERLAY = 1
+} layer_type_t;
 
 typedef struct {
     int screen_width;
@@ -29,6 +34,7 @@ typedef struct {
     int fps;
     int overlay_opacity;
     int enable_debug;
+    layer_type_t layer;
     overlay_position_t overlay_position;
 
     int animation_index;
@@ -36,9 +42,6 @@ typedef struct {
     int crop_sprite;
     int padding_x;
     int padding_y;
-
-    char **_config_keyboard_devices;
-    int _config_num_devices;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

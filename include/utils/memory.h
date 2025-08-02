@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-#include "error.h"
+#include "utils/error.h"
 
 // Memory pool for efficient allocation
 typedef struct memory_pool {

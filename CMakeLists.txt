@@ -23,13 +23,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(PROTOCOL_XML_WLR ${PROTOCOLS_DIR}/wlr-layer-shell-unstable-v1.xml)
 set(PROTOCOL_XML_XDG ${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml)
+set(PROTOCOL_XML_WLR_FOREIGN ${PROTOCOLS_DIR}/wlr-foreign-toplevel-management-unstable-v1.xml)
 set(GENERATED_PROTOCOLS_SOURCES
     ${PROTOCOLS_DIR}/zwlr-layer-shell-v1-protocol.c
     ${PROTOCOLS_DIR}/xdg-shell-protocol.c
+    ${PROTOCOLS_DIR}/wlr-foreign-toplevel-management-v1-protocol.c
 )
 set(GENERATED_PROTOCOLS_HEADERS
     ${PROTOCOLS_DIR}/zwlr-layer-shell-v1-client-protocol.h
     ${PROTOCOLS_DIR}/xdg-shell-client-protocol.h
+    ${PROTOCOLS_DIR}/wlr-foreign-toplevel-management-v1-client-protocol.h
 )
 set(GENERATED_PROTOCOLS
     ${GENERATED_PROTOCOLS_SOURCES}
@@ -40,6 +43,8 @@ add_custom_command(OUTPUT ${GENERATED_PROTOCOLS}
     COMMAND wayland-scanner private-code ${PROTOCOL_XML_XDG} ${PROTOCOLS_DIR}/xdg-shell-protocol.c
     COMMAND wayland-scanner client-header ${PROTOCOL_XML_WLR} ${PROTOCOLS_DIR}/zwlr-layer-shell-v1-client-protocol.h
     COMMAND wayland-scanner private-code ${PROTOCOL_XML_WLR} ${PROTOCOLS_DIR}/zwlr-layer-shell-v1-protocol.c
+    COMMAND wayland-scanner private-code ${PROTOCOL_XML_WLR_FOREIGN} ${PROTOCOLS_DIR}/wlr-foreign-toplevel-management-v1-protocol.c
+    COMMAND wayland-scanner client-header ${PROTOCOL_XML_WLR_FOREIGN} ${PROTOCOLS_DIR}/wlr-foreign-toplevel-management-v1-client-protocol.h
     DEPENDS ${PROTOCOL_XML_WLR} ${PROTOCOL_XML_XDG}
     COMMENT "Generating Wayland protocol files..."
 )
@@ -47,16 +52,16 @@ add_custom_target(protocols DEPENDS ${GENERATED_PROTOCOLS})
 
 
 set(SOURCES
-    ${SRC_DIR}/animation.c
-    ${SRC_DIR}/config.c
-    ${SRC_DIR}/config_watcher.c
-    ${SRC_DIR}/embedded_assets.c
-    ${SRC_DIR}/embedded_assets_bongocat.c
-    ${SRC_DIR}/error.c
-    ${SRC_DIR}/input.c
-    ${SRC_DIR}/main.c
-    ${SRC_DIR}/memory.c
-    ${SRC_DIR}/wayland.c
+    ${SRC_DIR}/config/config.c
+    ${SRC_DIR}/config/config_watcher.c
+    ${SRC_DIR}/core/main.c
+    ${SRC_DIR}/graphics/animation.c
+    ${SRC_DIR}/graphics/embedded_assets.c
+    ${SRC_DIR}/graphics/embedded_assets_bongocat.c
+    ${SRC_DIR}/platform/input.c
+    ${SRC_DIR}/platform/wayland.c
+    ${SRC_DIR}/utils/error.c
+    ${SRC_DIR}/utils/memory.c
 )
 add_executable(bongocat ${SOURCES} ${GENERATED_PROTOCOLS_SOURCES})
 add_dependencies(bongocat protocols)

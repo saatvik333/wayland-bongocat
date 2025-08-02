@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
-#include "input.h"
-#include "animation.h"
-#include "memory.h"
+#include "platform/input.h"
+#include "graphics/animation.h"
+#include "utils/memory.h"
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/types.h>
@@ -11,13 +11,30 @@
 #include <stdbool.h>
 #include <assert.h>
 
+// Child process signal handler - exits quietly without logging
+static void child_signal_handler(int sig) {
+    (void)sig; // Suppress unused parameter warning
+    exit(0);
+}
+
 static void capture_input_multiple(input_context_t *input, char **device_paths, int num_devices, int enable_debug) {
     assert(input);
+
+    // Set up child-specific signal handlers to avoid duplicate logging
+    struct sigaction sa;
+    sa.sa_handler = child_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+
     bongocat_log_debug("Starting input capture on %d devices", num_devices);
-    
+
     int *fds = BONGOCAT_MALLOC(num_devices * sizeof(int));
     char **unique_paths = BONGOCAT_MALLOC(num_devices * sizeof(char*));
     if (!fds || !unique_paths) {
+        BONGOCAT_SAFE_FREE(fds);
+        BONGOCAT_SAFE_FREE(unique_paths);
         input->_capture_input_running = 0;
         bongocat_log_error("Failed to allocate memory for file descriptors");
         exit(1);
@@ -209,7 +226,7 @@ static void capture_input_multiple(input_context_t *input, char **device_paths, 
         }
     }
     input->_capture_input_running = 0;
-    
+
     // Close all file descriptors
     for (int i = 0; i < num_devices; i++) {
         if (fds[i] >= 0) {
@@ -231,7 +248,7 @@ bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_path
     }
 
     ctx->_input_child_pid = -1;
-    
+
     bongocat_log_info("Initializing input monitoring system for %d devices", num_devices);
     
     // Initialize shared memory for key press flag
