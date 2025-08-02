@@ -9,20 +9,12 @@
 #include <time.h>
 #include <stdlib.h>
 
-// Animation globals
-
-sprite_sheet_frame_t empty_sprite_sheet_frame = (sprite_sheet_frame_t){
+const sprite_sheet_frame_t empty_sprite_sheet_frame = (sprite_sheet_frame_t){
     .width = 0,
     .height = 0,
     .channels = 4,
     .pixels = NULL,
 };
-animation_t anims[TOTAL_ANIMATIONS];
-int anim_frame_index = 0;
-pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static config_t *current_config;
-static pthread_t anim_thread;
 
 typedef struct {
     int min_x;
@@ -106,7 +98,7 @@ static sprite_sheet_frame_t copy_image_from_memory_cropped(sprite_sheet_frame_t 
         padding_sizes.crop_height = height;
     }
 
-    unsigned char *dest_pixels = (unsigned char *)bongocat_malloc(padding_sizes.padded_width * padding_sizes.padded_height * channels);
+    unsigned char *dest_pixels = (unsigned char *)BONGOCAT_MALLOC(padding_sizes.padded_width * padding_sizes.padded_height * channels);
     if (!dest_pixels) {
         return ret;
     }
@@ -217,20 +209,20 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
     int frame_height = sheet_height / frame_rows;
     const int total_frames = frame_columns * frame_rows;
 
-    sprite_sheet_frame_t* frames = bongocat_malloc(sizeof(sprite_sheet_frame_t) * total_frames);
+    sprite_sheet_frame_t* frames = BONGOCAT_MALLOC(sizeof(sprite_sheet_frame_t) * total_frames);
     if (!frames) {
         stbi_image_free(sprite_sheet_pixels);
         sprite_sheet_pixels = NULL;
         return NULL;
     }
 
-    get_cropped_sizes_result_t* cropped_frames = bongocat_malloc(sizeof(get_cropped_sizes_result_t) * total_frames);
+    get_cropped_sizes_result_t* cropped_frames = BONGOCAT_MALLOC(sizeof(get_cropped_sizes_result_t) * total_frames);
     /// @TODO: optimize search for the biggest padding
     for (int row = 0; row < frame_rows; ++row) {
         for (int col = 0; col < frame_columns; ++col) {
             const int idx = row * frame_columns + col;
 
-            uint8_t* frame_pixels = bongocat_malloc(frame_width * frame_height * 4);
+            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * 4);
             if (!frame_pixels) {
                 continue;
             }
@@ -254,26 +246,26 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
 
             cropped_frames[idx] = cropping_result;
 
-            bongocat_free(frame_pixels);
+            BONGOCAT_FREE(frame_pixels);
             frame_pixels = NULL;
         }
     }
     const get_cropped_sizes_result_t cropping_size = get_biggest_cropped_size(frame_width,frame_height, cropped_frames, total_frames, padding_x, padding_y);
-    bongocat_free(cropped_frames);
+    BONGOCAT_FREE(cropped_frames);
 
     for (int row = 0; row < frame_rows; ++row) {
         for (int col = 0; col < frame_columns; ++col) {
             const int idx = row * frame_columns + col;
 
-            uint8_t* frame_pixels = bongocat_malloc(frame_width * frame_height * 4);
+            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * 4);
             if (!frame_pixels) {
                 bongocat_log_error("Failed to allocate memory for frame %d\n", idx);
                 // Cleanup previously allocated
                 for (int j = 0; j < idx; ++j) {
-                    if (frames[j].pixels) bongocat_free(frames[j].pixels);
+                    if (frames[j].pixels) BONGOCAT_FREE(frames[j].pixels);
                     frames[j].pixels = NULL;
                 }
-                bongocat_free(frames);
+                BONGOCAT_FREE(frames);
                 return NULL;
             }
 
@@ -294,7 +286,7 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
             frames[idx] = copy_image_from_memory_cropped(frame, padding_x, padding_y, invert_color, &cropping_size);
             bongocat_log_debug("Cropped Sprite Frame (%d): %dx%d (%dx%d)", idx, frames[idx].width, frames[idx].height, frame_width, frame_height);
             // frame_pixels moved
-            bongocat_free(frame_pixels);
+            BONGOCAT_FREE(frame_pixels);
             frame_pixels = NULL;
         }
     }
@@ -307,14 +299,15 @@ sprite_sheet_frame_t* load_sprite_sheet_from_memory(const uint8_t* sprite_data, 
 
 void free_frames(sprite_sheet_frame_t* frames, int frame_count) {
     for (int i = 0; i < frame_count; ++i) {
-        if (frames[i].pixels) bongocat_free(frames[i].pixels);
+        if (frames[i].pixels) BONGOCAT_FREE(frames[i].pixels);
     }
-    bongocat_free(frames);
+    BONGOCAT_FREE(frames);
+    frames = NULL;
 }
 
 
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
-                       unsigned char *src, int src_w, int src_h,
+                       const unsigned char *src, int src_w, int src_h,
                        int offset_x, int offset_y, int target_w, int target_h) {
     for (int y = 0; y < target_h; y++) {
         for (int x = 0; x < target_w; x++) {
@@ -356,72 +349,87 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
     }
 }
 
-static void *animate(void *arg __attribute__((unused))) {
+typedef struct {
+    input_context_t *input;
+    config_t *current_config;
+    animation_context_t* ctx;
+    wayland_context_t* wayland;
+} animate_params_t;
+static void *animate_thread(/*animate_params_t*/ void *arg) {
+    animate_params_t* animate_params = (animate_params_t*) arg;
+
+    assert(animate_params->current_config);
+
     // Calculate frame time based on configured FPS
-    long frame_time_ns = 1000000000L / current_config->fps;
+    long frame_time_ns = 1000000000L / animate_params->current_config->fps;
     struct timespec ts = {0, frame_time_ns};
     
     long hold_until = 0;
     int test_counter = 0;
-    int test_interval_frames = current_config->test_animation_interval * current_config->fps;
+    int test_interval_frames = animate_params->current_config->test_animation_interval * animate_params->current_config->fps;
 
-    while (1) {
+    assert(animate_params->ctx);
+
+    while (animate_params->ctx->_running) {
         struct timeval now;
         gettimeofday(&now, NULL);
         long now_us = now.tv_sec * 1000000 + now.tv_usec;
 
-        pthread_mutex_lock(&anim_lock);
+        pthread_mutex_lock(&animate_params->ctx->anim_lock);
 
         // Test animation based on configured interval
-        if (current_config->test_animation_interval > 0) {
+        if (animate_params->current_config->test_animation_interval > 0) {
             test_counter++;
             if (test_counter > test_interval_frames) {
-                if (current_config->enable_debug) {
+                if (animate_params->current_config->enable_debug) {
                     printf("Test animation trigger\n");
                 }
-                anim_frame_index = (rand() % 2) + 1;
-                hold_until = now_us + (current_config->test_animation_duration * 1000);
+                animate_params->ctx->anim_frame_index = (rand() % 2) + 1;
+                hold_until = now_us + (animate_params->current_config->test_animation_duration * 1000);
                 test_counter = 0;
             }
         }
 
-        if (*any_key_pressed) {
-            if (current_config->enable_debug) {
+        if (*animate_params->input->any_key_pressed) {
+            if (animate_params->current_config->enable_debug) {
                 printf("Key pressed! Switching to frame %d\n", (rand() % 2) + 1);
             }
-            anim_frame_index = (rand() % 2) + 1;
-            hold_until = now_us + (current_config->keypress_duration * 1000);
-            *any_key_pressed = 0;
+            animate_params->ctx->anim_frame_index = (rand() % 2) + 1;
+            hold_until = now_us + (animate_params->current_config->keypress_duration * 1000);
+            *animate_params->input->any_key_pressed = 0;
             test_counter = 0; // Reset test counter
         } else if (now_us > hold_until) {
-            if (anim_frame_index != current_config->idle_frame) {
-                if (current_config->enable_debug) {
-                    printf("Returning to idle frame %d\n", current_config->idle_frame);
+            if (animate_params->ctx->anim_frame_index != animate_params->current_config->idle_frame) {
+                if (animate_params->current_config->enable_debug) {
+                    printf("Returning to idle frame %d\n", animate_params->current_config->idle_frame);
                 }
-                anim_frame_index = current_config->idle_frame;
+                animate_params->ctx->anim_frame_index = animate_params->current_config->idle_frame;
             }
         }
         
-        pthread_mutex_unlock(&anim_lock);
+        pthread_mutex_unlock(&animate_params->ctx->anim_lock);
 
-        draw_bar();
+        draw_bar(animate_params->wayland, animate_params->ctx);
         nanosleep(&ts, NULL);
     }
-    
+    animate_params->ctx->_running = 0;
+
+    bongocat_log_info("Animation thread stopped");
+
+    BONGOCAT_FREE(animate_params);
+    animate_params = NULL;
     return NULL;
 }
 
-bongocat_error_t animation_init(config_t *config) {
+bongocat_error_t animation_init(animation_context_t* ctx, const config_t *config) {
     BONGOCAT_CHECK_NULL(config, BONGOCAT_ERROR_INVALID_PARAM);
-    
-    current_config = config;
     
     bongocat_log_info("Initializing animation system");
 
     // empty animations
     for (size_t i = 0;i < TOTAL_ANIMATIONS; i++) {
         for (size_t j = 0; j < MAX_DIGIMON_FRAMES; j++) {
-            anims[i].frames[j] = empty_sprite_sheet_frame;
+            ctx->anims[i].frames[j] = empty_sprite_sheet_frame;
         }
     }
 
@@ -490,7 +498,7 @@ bongocat_error_t animation_init(config_t *config) {
 
         for (int i = 0; i < BONGOCAT_NUM_FRAMES; i++) {
             // skip cropping and padding for bongocat
-            bongocat_anims[i] = copy_image_from_memory_cropped(loaded_frames[i], 0, 0, current_config->invert_color, NULL /*&cropping_size*/);
+            bongocat_anims[i] = copy_image_from_memory_cropped(loaded_frames[i], 0, 0, config->invert_color, NULL /*&cropping_size*/);
             // move loaded frame
             bongocat_log_debug("Loaded, cropped, padded: %dx%d -> %dx%d (padding %d,%d): %s",
                                loaded_frames[i].width, loaded_frames[i].height,
@@ -506,10 +514,10 @@ bongocat_error_t animation_init(config_t *config) {
         }
 
         // move frames into global anims
-        anims[BONGOCAT_ANIM_INDEX].bongocat.both_up = bongocat_anims[0];
-        anims[BONGOCAT_ANIM_INDEX].bongocat.left_down = bongocat_anims[1];
-        anims[BONGOCAT_ANIM_INDEX].bongocat.right_down = bongocat_anims[2];
-        anims[BONGOCAT_ANIM_INDEX].bongocat.both_down = bongocat_anims[3];
+        ctx->anims[BONGOCAT_ANIM_INDEX].bongocat.both_up = bongocat_anims[0];
+        ctx->anims[BONGOCAT_ANIM_INDEX].bongocat.left_down = bongocat_anims[1];
+        ctx->anims[BONGOCAT_ANIM_INDEX].bongocat.right_down = bongocat_anims[2];
+        ctx->anims[BONGOCAT_ANIM_INDEX].bongocat.both_down = bongocat_anims[3];
         for (int i = 0; i < BONGOCAT_NUM_FRAMES; i++) {
             bongocat_anims[i].pixels = NULL;
         }
@@ -524,26 +532,27 @@ bongocat_error_t animation_init(config_t *config) {
                                                                            (int)dm20_agumon_png_size,
                                                                            DM20_AGUMON_SPRITE_SHEET_COLS,
                                                                            DM20_AGUMON_SPRITE_SHEET_ROWS,
-                                                                           &sprite_sheet_count, padding_x, padding_y, current_config->invert_color);
+                                                                           &sprite_sheet_count, padding_x, padding_y,
+                                                                           config->invert_color);
 
         assert(sprite_sheet_count > 0);
 
         bongocat_log_debug("Loaded %dx%d sprite sheet with %d frames", sprite_sheet[0].width, sprite_sheet[0].height, sprite_sheet_count);
 
         if (sprite_sheet_count <= 4) {
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
 
             // assign aliases/fallback
             /// @TODO: make copies of fallback frames ? vs. double free
             /*
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_IDLE1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_ANGRY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_DOWN1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_IDLE2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_IDLE1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_ANGRY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_DOWN1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_IDLE2];
             */
 
             // data has been moved
@@ -552,16 +561,16 @@ bongocat_error_t animation_init(config_t *config) {
             sprite_sheet[DIGIMON_FRAME_ANGRY].pixels = NULL;
             sprite_sheet[DIGIMON_FRAME_DOWN1].pixels = NULL;
         } else if (sprite_sheet_count <= 9) {
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
 
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_HAPPY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_EAT1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_SLEEP1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_REFUSE];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_SAD];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_HAPPY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_EAT1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_SLEEP1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_REFUSE];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_SAD];
 
             // data has been moved
             sprite_sheet[DIGIMON_FRAME_IDLE1].pixels = NULL;
@@ -575,21 +584,21 @@ bongocat_error_t animation_init(config_t *config) {
             sprite_sheet[DIGIMON_FRAME_REFUSE].pixels = NULL;
             sprite_sheet[DIGIMON_FRAME_SAD].pixels = NULL;
         } else if (sprite_sheet_count <= 13) {
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_1 = sprite_sheet[DIGIMON_FRAME_IDLE1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.idle_2 = sprite_sheet[DIGIMON_FRAME_IDLE2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.angry = sprite_sheet[DIGIMON_FRAME_ANGRY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.down1 = sprite_sheet[DIGIMON_FRAME_DOWN1];
 
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_HAPPY];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_EAT1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_SLEEP1];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_REFUSE];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_DOWN2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.happy = sprite_sheet[DIGIMON_FRAME_HAPPY];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.eat1 = sprite_sheet[DIGIMON_FRAME_EAT1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep1 = sprite_sheet[DIGIMON_FRAME_SLEEP1];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.refuse = sprite_sheet[DIGIMON_FRAME_REFUSE];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sad = sprite_sheet[DIGIMON_FRAME_DOWN2];
 
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.down_2 = sprite_sheet[DIGIMON_FRAME_DOWN2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.eat_2 = sprite_sheet[DIGIMON_FRAME_EAT2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep_2 = sprite_sheet[DIGIMON_FRAME_SLEEP2];
-            anims[DM20_AGUMON_ANIM_INDEX].digimon.attack = sprite_sheet[DIGIMON_FRAME_ATTACK];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.down_2 = sprite_sheet[DIGIMON_FRAME_DOWN2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.eat_2 = sprite_sheet[DIGIMON_FRAME_EAT2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.sleep_2 = sprite_sheet[DIGIMON_FRAME_SLEEP2];
+            ctx->anims[DM20_AGUMON_ANIM_INDEX].digimon.attack = sprite_sheet[DIGIMON_FRAME_ATTACK];
 
             // data has been moved
             sprite_sheet[DIGIMON_FRAME_IDLE1].pixels = NULL;
@@ -617,35 +626,54 @@ bongocat_error_t animation_init(config_t *config) {
     return BONGOCAT_SUCCESS;
 }
 
-bongocat_error_t animation_start(void) {
+bongocat_error_t animation_start(animation_context_t* ctx, input_context_t *input, wayland_context_t* wayland, config_t *config) {
     bongocat_log_info("Starting animation thread");
-    
-    int result = pthread_create(&anim_thread, NULL, animate, NULL);
+
+    animate_params_t* animate_arg = BONGOCAT_MALLOC(sizeof(animate_params_t));
+    if (!animate_arg) {
+        bongocat_log_error("Failed to allocate memory for animate_arg");
+        return BONGOCAT_ERROR_MEMORY;
+    }
+    animate_arg->input = input;
+    animate_arg->current_config = config;
+    animate_arg->ctx = ctx;
+    animate_arg->wayland = wayland;
+
+    if (animate_arg->wayland->current_config != animate_arg->current_config) {
+        bongocat_log_warning("Wayland config and animation config SHOULD be the same");
+    }
+
+    ctx->_running = 1;
+    const int result = pthread_create(&ctx->_anim_thread, NULL, animate_thread, (void*)animate_arg);
     if (result != 0) {
+        ctx->_running = 0;
+        BONGOCAT_FREE(animate_arg);
         bongocat_log_error("Failed to create animation thread: %s", strerror(result));
         return BONGOCAT_ERROR_THREAD;
     }
+    animate_arg = NULL;
     
     bongocat_log_debug("Animation thread started successfully");
     return BONGOCAT_SUCCESS;
 }
 
-void animation_cleanup(void) {
-    pthread_cancel(anim_thread);
-    pthread_join(anim_thread, NULL);
+void animation_cleanup(animation_context_t* ctx) {
+    ctx->_running = 0;
+    pthread_cancel(ctx->_anim_thread);
+    pthread_join(ctx->_anim_thread, NULL);
     
     for (int i = 0; i < TOTAL_ANIMATIONS; i++) {
         for (int j = 0; j < MAX_DIGIMON_FRAMES; j++) {
-            if (anims[i].frames[j].width) {
-                if (anims[i].frames[j].pixels) stbi_image_free(anims[i].frames[j].pixels);
-                anims[i].frames[j].pixels = NULL;
+            if (ctx->anims[i].frames[j].width) {
+                if (ctx->anims[i].frames[j].pixels) stbi_image_free(ctx->anims[i].frames[j].pixels);
+                ctx->anims[i].frames[j].pixels = NULL;
             }
         }
     }
     
-    pthread_mutex_destroy(&anim_lock);
+    pthread_mutex_destroy(&ctx->anim_lock);
 }
 
-void animation_trigger(void) {
-    *any_key_pressed = 1;
+void animation_trigger(input_context_t *input) {
+    *input->any_key_pressed = 1;
 }

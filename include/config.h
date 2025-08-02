@@ -30,15 +30,19 @@ typedef struct {
     int overlay_opacity;
     int enable_debug;
     overlay_position_t overlay_position;
+
     int animation_index;
     int invert_color;
     int crop_sprite;
     int padding_x;
     int padding_y;
+
+    char **_config_keyboard_devices;
+    int _config_num_devices;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);
-void config_cleanup(void);
+void config_cleanup(config_t *config);
 int get_screen_width(void);
 
 #endif // CONFIG_H

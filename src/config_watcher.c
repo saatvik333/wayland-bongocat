@@ -7,15 +7,17 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/select.h>
+#include <assert.h>
 
 static void *config_watcher_thread(void *arg) {
-    ConfigWatcher *watcher = (ConfigWatcher *)arg;
+    assert(arg);
+    config_watcher_t *watcher = (config_watcher_t *)arg;
     char buffer[INOTIFY_BUF_LEN];
     time_t last_reload_time = 0;
     
     bongocat_log_info("Config watcher started for: %s", watcher->config_path);
-    
-    while (watcher->watching) {
+
+    while (watcher->_running) {
         fd_set read_fds;
         struct timeval timeout;
         
@@ -31,6 +33,7 @@ static void *config_watcher_thread(void *arg) {
         if (select_result < 0) {
             if (errno == EINTR) continue;
             bongocat_log_error("Config watcher select failed: %s", strerror(errno));
+            watcher->_running = false;
             break;
         }
         
@@ -76,17 +79,18 @@ static void *config_watcher_thread(void *arg) {
             }
         }
     }
+    watcher->_running = false;
     
     bongocat_log_info("Config watcher stopped");
     return NULL;
 }
 
-int config_watcher_init(ConfigWatcher *watcher, const char *config_path, void (*callback)(const char *)) {
+int config_watcher_init(config_watcher_t *watcher, const char *config_path, void (*callback)(const char *)) {
     if (!watcher || !config_path || !callback) {
         return -1;
     }
     
-    memset(watcher, 0, sizeof(ConfigWatcher));
+    memset(watcher, 0, sizeof(config_watcher_t));
     
     // Initialize inotify
     watcher->inotify_fd = inotify_init1(IN_NONBLOCK);
@@ -113,41 +117,40 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path, void (*
     }
     
     watcher->reload_callback = callback;
-    watcher->watching = false;
     
     return 0;
 }
 
-void config_watcher_start(ConfigWatcher *watcher) {
-    if (!watcher || watcher->watching) {
+void config_watcher_start(config_watcher_t *watcher) {
+    if (!watcher) {
         return;
     }
-    
-    watcher->watching = true;
-    
+
+
+    watcher->_running = 1;
     if (pthread_create(&watcher->watcher_thread, NULL, config_watcher_thread, watcher) != 0) {
+        watcher->_running = 0;
         bongocat_log_error("Failed to create config watcher thread: %s", strerror(errno));
-        watcher->watching = false;
         return;
     }
     
     bongocat_log_info("Config watcher thread started");
 }
 
-void config_watcher_stop(ConfigWatcher *watcher) {
-    if (!watcher || !watcher->watching) {
+void config_watcher_stop(config_watcher_t *watcher) {
+    if (!watcher) {
         return;
     }
     
-    watcher->watching = false;
-    
+    watcher->_running = 0;
+    //pthread_cancel(watcher->watcher_thread);
     // Wait for thread to finish
     if (pthread_join(watcher->watcher_thread, NULL) != 0) {
         bongocat_log_error("Failed to join config watcher thread: %s", strerror(errno));
     }
 }
 
-void config_watcher_cleanup(ConfigWatcher *watcher) {
+void config_watcher_cleanup(config_watcher_t *watcher) {
     if (!watcher) {
         return;
     }
@@ -167,5 +170,5 @@ void config_watcher_cleanup(ConfigWatcher *watcher) {
         watcher->config_path = NULL;
     }
     
-    memset(watcher, 0, sizeof(ConfigWatcher));
+    memset(watcher, 0, sizeof(config_watcher_t));
 }

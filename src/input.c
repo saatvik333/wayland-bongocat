@@ -9,16 +9,16 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <assert.h>
 
-int *any_key_pressed;
-static pid_t input_child_pid = -1;
-
-static void capture_input_multiple(char **device_paths, int num_devices, int enable_debug) {
+static void capture_input_multiple(input_context_t *input, char **device_paths, int num_devices, int enable_debug) {
+    assert(input);
     bongocat_log_debug("Starting input capture on %d devices", num_devices);
     
     int *fds = BONGOCAT_MALLOC(num_devices * sizeof(int));
     char **unique_paths = BONGOCAT_MALLOC(num_devices * sizeof(char*));
     if (!fds || !unique_paths) {
+        input->_capture_input_running = 0;
         bongocat_log_error("Failed to allocate memory for file descriptors");
         exit(1);
     }
@@ -77,6 +77,7 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
     num_devices = unique_devices;
     
     if (valid_devices == 0) {
+        input->_capture_input_running = 0;
         bongocat_log_error("No valid input devices found");
         BONGOCAT_SAFE_FREE(fds);
         exit(1);
@@ -90,8 +91,9 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
     struct timeval timeout;
     int check_counter = 0;
     int adaptive_check_interval = 5; // Start with 5 seconds, can increase to 30
-    
-    while (1) {
+
+    input->_capture_input_running = 1;
+    while (input->_capture_input_running) {
         FD_ZERO(&readfds);
         
         // Optimize: only rebuild fd_set when devices change, track current max_fd
@@ -113,6 +115,7 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
         if (select_result < 0) {
             if (errno == EINTR) continue; // Interrupted by signal
             bongocat_log_error("Select error: %s", strerror(errno));
+            input->_capture_input_running = 0;
             break;
         }
         
@@ -193,7 +196,7 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
                 
                 // Trigger animation only once per batch to reduce overhead
                 if (key_pressed) {
-                    animation_trigger();
+                    animation_trigger(input);
                 }
             }
         }
@@ -201,9 +204,11 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
         // Exit if no valid devices remain
         if (valid_devices == 0) {
             bongocat_log_error("All input devices became unavailable");
+            input->_capture_input_running = 0;
             break;
         }
     }
+    input->_capture_input_running = 0;
     
     // Close all file descriptors
     for (int i = 0; i < num_devices; i++) {
@@ -217,62 +222,66 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
     bongocat_log_info("Input monitoring stopped");
 }
 
-bongocat_error_t input_start_monitoring(char **device_paths, int num_devices, int enable_debug) {
+bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug) {
     BONGOCAT_CHECK_NULL(device_paths, BONGOCAT_ERROR_INVALID_PARAM);
     
     if (num_devices <= 0) {
         bongocat_log_error("No input devices specified");
         return BONGOCAT_ERROR_INVALID_PARAM;
     }
+
+    ctx->_input_child_pid = -1;
     
     bongocat_log_info("Initializing input monitoring system for %d devices", num_devices);
     
     // Initialize shared memory for key press flag
-    any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, 
+    ctx->any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                                  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (any_key_pressed == MAP_FAILED) {
+    if (ctx->any_key_pressed == MAP_FAILED) {
         bongocat_log_error("Failed to create shared memory for input monitoring: %s", strerror(errno));
         return BONGOCAT_ERROR_MEMORY;
     }
-    *any_key_pressed = 0;
+    *ctx->any_key_pressed = 0;
 
     // Fork process for input monitoring
-    input_child_pid = fork();
-    if (input_child_pid < 0) {
+    ctx->_input_child_pid = fork();
+    if (ctx->_input_child_pid < 0) {
+        ctx->_capture_input_running = 0;
         bongocat_log_error("Failed to fork input monitoring process: %s", strerror(errno));
-        munmap(any_key_pressed, sizeof(int));
-        any_key_pressed = NULL;
+        munmap(ctx->any_key_pressed, sizeof(int));
+        ctx->any_key_pressed = NULL;
         return BONGOCAT_ERROR_THREAD;
     }
-    
-    if (input_child_pid == 0) {
+    if (ctx->_input_child_pid == 0) {
         // Child process - handle keyboard input from multiple devices
         bongocat_log_debug("Input monitoring child process started (PID: %d)", getpid());
-        capture_input_multiple(device_paths, num_devices, enable_debug);
+        capture_input_multiple(ctx, device_paths, num_devices, enable_debug);
         exit(0);
     }
     
-    bongocat_log_info("Input monitoring started (child PID: %d)", input_child_pid);
+    bongocat_log_info("Input monitoring started (child PID: %d)", ctx->_input_child_pid);
     return BONGOCAT_SUCCESS;
 }
 
-bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices, int enable_debug) {
+bongocat_error_t input_restart_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug) {
     bongocat_log_info("Restarting input monitoring system");
     
     // Stop current monitoring
-    if (input_child_pid > 0) {
-        bongocat_log_debug("Stopping current input monitoring (PID: %d)", input_child_pid);
-        kill(input_child_pid, SIGTERM);
+    if (ctx->_input_child_pid > 0) {
+        bongocat_log_debug("Stopping current input monitoring (PID: %d)", ctx->_input_child_pid);
+        kill(ctx->_input_child_pid, SIGTERM);
         
         // Wait for child to terminate with timeout
         int status;
         int wait_attempts = 0;
         while (wait_attempts < 10) {
-            pid_t result = waitpid(input_child_pid, &status, WNOHANG);
-            if (result == input_child_pid) {
+            pid_t result = waitpid(ctx->_input_child_pid, &status, WNOHANG);
+            if (result == ctx->_input_child_pid) {
+                ctx->_capture_input_running = 0;
                 bongocat_log_debug("Previous input monitoring process terminated");
                 break;
-            } else if (result == -1) {
+            } else if (result == -1 && ctx->_capture_input_running) {
+                ctx->_capture_input_running = 0;
                 bongocat_log_warning("Error waiting for input child process: %s", strerror(errno));
                 break;
             }
@@ -283,66 +292,71 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices, 
         
         // Force kill if still running
         if (wait_attempts >= 10) {
+            ctx->_capture_input_running = 0;
             bongocat_log_warning("Force killing previous input monitoring process");
-            kill(input_child_pid, SIGKILL);
-            waitpid(input_child_pid, &status, 0);
+            kill(ctx->_input_child_pid, SIGKILL);
+            waitpid(ctx->_input_child_pid, &status, 0);
         }
         
-        input_child_pid = -1;
+        ctx->_input_child_pid = -1;
     }
     
     // Start new monitoring (reuse shared memory if it exists)
-    bool need_new_shm = (any_key_pressed == NULL || any_key_pressed == MAP_FAILED);
+    bool need_new_shm = (ctx->any_key_pressed == NULL || ctx->any_key_pressed == MAP_FAILED);
     
     if (need_new_shm) {
-        any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, 
+        ctx->any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                                      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        if (any_key_pressed == MAP_FAILED) {
+        if (ctx->any_key_pressed == MAP_FAILED) {
             bongocat_log_error("Failed to create shared memory for input monitoring: %s", strerror(errno));
             return BONGOCAT_ERROR_MEMORY;
         }
-        *any_key_pressed = 0;
+        *ctx->any_key_pressed = 0;
     }
 
     // Fork new process for input monitoring
-    input_child_pid = fork();
-    if (input_child_pid < 0) {
+    ctx->_input_child_pid = fork();
+    if (ctx->_input_child_pid < 0) {
         bongocat_log_error("Failed to fork input monitoring process: %s", strerror(errno));
         if (need_new_shm) {
-            munmap(any_key_pressed, sizeof(int));
-            any_key_pressed = NULL;
+            munmap(ctx->any_key_pressed, sizeof(int));
+            ctx->any_key_pressed = NULL;
         }
         return BONGOCAT_ERROR_THREAD;
     }
     
-    if (input_child_pid == 0) {
+    if (ctx->_input_child_pid == 0) {
+        ctx->_capture_input_running = 0;
         // Child process - handle keyboard input from multiple devices
         bongocat_log_debug("Input monitoring child process restarted (PID: %d)", getpid());
-        capture_input_multiple(device_paths, num_devices, enable_debug);
+        capture_input_multiple(ctx, device_paths, num_devices, enable_debug);
         exit(0);
     }
     
-    bongocat_log_info("Input monitoring restarted (child PID: %d)", input_child_pid);
+    bongocat_log_info("Input monitoring restarted (child PID: %d)", ctx->_input_child_pid);
     return BONGOCAT_SUCCESS;
 }
 
-void input_cleanup(void) {
+void input_cleanup(input_context_t* ctx) {
     bongocat_log_info("Cleaning up input monitoring system");
     
     // Terminate child process if it exists
-    if (input_child_pid > 0) {
-        bongocat_log_debug("Terminating input monitoring child process (PID: %d)", input_child_pid);
-        kill(input_child_pid, SIGTERM);
+    if (ctx->_input_child_pid > 0) {
+        ctx->_capture_input_running = 0;
+        bongocat_log_debug("Terminating input monitoring child process (PID: %d)", ctx->_input_child_pid);
+        kill(ctx->_input_child_pid, SIGTERM);
         
         // Wait for child to terminate with timeout
         int status;
         int wait_attempts = 0;
         while (wait_attempts < 10) {
-            pid_t result = waitpid(input_child_pid, &status, WNOHANG);
-            if (result == input_child_pid) {
+            pid_t result = waitpid(ctx->_input_child_pid, &status, WNOHANG);
+            if (result == ctx->_input_child_pid) {
+                ctx->_capture_input_running = 0;
                 bongocat_log_debug("Input monitoring child process terminated gracefully");
                 break;
-            } else if (result == -1) {
+            } else if (result == -1 && ctx->_capture_input_running) {
+                ctx->_capture_input_running = 0;
                 bongocat_log_warning("Error waiting for input child process: %s", strerror(errno));
                 break;
             }
@@ -353,18 +367,19 @@ void input_cleanup(void) {
         
         // Force kill if still running
         if (wait_attempts >= 10) {
+            ctx->_capture_input_running = 0;
             bongocat_log_warning("Force killing input monitoring child process");
-            kill(input_child_pid, SIGKILL);
-            waitpid(input_child_pid, &status, 0);
+            kill(ctx->_input_child_pid, SIGKILL);
+            waitpid(ctx->_input_child_pid, &status, 0);
         }
         
-        input_child_pid = -1;
+        ctx->_input_child_pid = -1;
     }
     
     // Cleanup shared memory
-    if (any_key_pressed && any_key_pressed != MAP_FAILED) {
-        munmap(any_key_pressed, sizeof(int));
-        any_key_pressed = NULL;
+    if (ctx->any_key_pressed && ctx->any_key_pressed != MAP_FAILED) {
+        munmap(ctx->any_key_pressed, sizeof(int));
+        ctx->any_key_pressed = NULL;
     }
     
     bongocat_log_debug("Input monitoring cleanup complete");

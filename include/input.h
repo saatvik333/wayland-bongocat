@@ -4,10 +4,8 @@
 #include "bongocat.h"
 #include "error.h"
 
-extern int *any_key_pressed;
-
-bongocat_error_t input_start_monitoring(char **device_paths, int num_devices, int enable_debug);
-bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices, int enable_debug);
-void input_cleanup(void);
+bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug);
+bongocat_error_t input_restart_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug);
+void input_cleanup(input_context_t* ctx);
 
 #endif // INPUT_H

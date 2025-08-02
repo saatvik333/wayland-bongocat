@@ -8,23 +8,36 @@
 #include "../protocols/zwlr-layer-shell-v1-client-protocol.h"
 
 // Wayland globals
-extern struct wl_display *display;
-extern struct wl_compositor *compositor;
-extern struct wl_shm *shm;
-extern struct zwlr_layer_shell_v1 *layer_shell;
-extern struct wl_output *output;
-extern struct wl_surface *surface;
-extern struct wl_buffer *buffer;
-extern struct zwlr_layer_surface_v1 *layer_surface;
-extern uint8_t *pixels;
-extern bool configured;
+typedef struct {
+    struct wl_display *display;
+    struct wl_compositor *compositor;
+    struct wl_shm *shm;
+    struct zwlr_layer_shell_v1 *layer_shell;
+    struct wl_output *output;
+    struct wl_surface *surface;
+    struct wl_buffer *buffer;
+    struct zwlr_layer_surface_v1 *layer_surface;
+    uint8_t *pixels;
+    bool configured;
 
-bongocat_error_t wayland_init(config_t *config);
-bongocat_error_t wayland_run(volatile sig_atomic_t *running);
-void wayland_cleanup(void);
-void wayland_update_config(config_t *config);
-void draw_bar(void);
+    config_t *current_config;
+
+    // Screen dimensions from Wayland output
+    int _wayland_screen_width;
+    int _wayland_screen_height;
+    int _wayland_transform;
+    int _wayland_raw_width;
+    int _wayland_raw_height;
+    bool _wayland_mode_received;
+    bool _wayland_geometry_received;
+} wayland_context_t;
+
+bongocat_error_t wayland_init(wayland_context_t* ctx, animation_context_t* anim, config_t *config);
+bongocat_error_t wayland_run(wayland_context_t* ctx, volatile sig_atomic_t *running);
+void wayland_cleanup(wayland_context_t* ctx);
+void wayland_update_config(wayland_context_t* ctx, config_t *config, animation_context_t* anim);
+void draw_bar(wayland_context_t* ctx, animation_context_t* anim);
 int create_shm(int size);
-int wayland_get_screen_width(void);
+int wayland_get_screen_width(wayland_context_t* ctx);
 
 #endif // WAYLAND_H
