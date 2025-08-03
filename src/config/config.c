@@ -1,9 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "config/config.h"
+
+#include <ctype.h>
+
 #include "utils/error.h"
 #include "utils/memory.h"
 #include "graphics/context.h"
-#include "graphics/embedded_assets_bongocat.h"
+#include "../../include/graphics/embedded_assets/bongocat.h"
 #include "graphics/embedded_assets.h"
 #include <pthread.h>
 #include <limits.h>
@@ -43,9 +46,6 @@ static void config_clamp_int(int *value, int min, int max, const char *name) {
 static void config_validate_dimensions(config_t *config) {
     config_clamp_int(&config->cat_height, MIN_CAT_HEIGHT, MAX_CAT_HEIGHT, "cat_height");
     config_clamp_int(&config->overlay_height, MIN_OVERLAY_HEIGHT, MAX_OVERLAY_HEIGHT, "overlay_height");
-
-    config_clamp_int(&config->padding_x, 0, MAX_CAT_HEIGHT, "padding_x");
-    config_clamp_int(&config->padding_y, 0, MAX_CAT_HEIGHT, "padding_y");
 }
 
 static void config_validate_timing(config_t *config) {
@@ -123,7 +123,6 @@ static bongocat_error_t config_validate(config_t *config) {
     // Normalize boolean values
     config->enable_debug = config->enable_debug ? 1 : 0;
     config->invert_color = config->invert_color ? 1 : 0;
-    config->crop_sprite = config->crop_sprite ? 1 : 0;
     
     return BONGOCAT_SUCCESS;
 }
@@ -215,8 +214,6 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->animation_index = int_value;
     } else if (strcmp(key, "invert_color") == 0) {
         config->invert_color = int_value;
-    } else if (strcmp(key, "crop_sprite") == 0) {
-        config->crop_sprite = int_value;
     } else if (strcmp(key, "padding_x") == 0) {
         config->padding_x = int_value;
     } else if (strcmp(key, "padding_y") == 0) {
@@ -248,12 +245,25 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
             config->overlay_position = POSITION_TOP;
         }
     } else if (strcmp(key, "animation_name") == 0) {
-        if (strcmp(value, "bongocat") == 0) {
+        char lower_value[256] = {0};
+        memset(lower_value, 0, sizeof(lower_value));
+        for(size_t i = 0; i < strlen(value); i++) {
+            lower_value[i] = (char)tolower(value[i]);
+        }
+
+        config->animation_index = 0;
+        if (strcmp(lower_value, "bongocat") == 0) {
             config->animation_index = BONGOCAT_ANIM_INDEX;
-        } else if (strcmp(value, "agumon") == 0 || strcmp(value, "dm20:agumon") == 0) {
-            config->animation_index = DM20_AGUMON_ANIM_INDEX;
-        } else {
-            bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
+        }
+
+        #ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
+        if (strcmp(lower_value, "agumon") == 0 || strcmp(lower_value, "dm:agumon") == 0) {
+            config->animation_index = DM_AGUMON_ANIM_INDEX;
+        }
+        #endif
+
+        if (config->animation_index < 0) {
+            bongocat_log_warning("Invalid overlay_position '%s', using 'bongocat'", value);
             config->animation_index = BONGOCAT_ANIM_INDEX;
         }
     }else {

@@ -1,22 +1,47 @@
 #ifndef BONGOCAT_EMBEDDED_ASSETS_H
 #define BONGOCAT_EMBEDDED_ASSETS_H
 
-#include "context.h"
-#include <stddef.h>
-//#include <assert.h>
+#include "embedded_assets/bongocat.h"
 
-/// @TODO: add more digimons
-extern const unsigned char dm20_agumon_png[];
-extern const size_t dm20_agumon_png_size;
-#define DM20_AGUMON_SPRITE_SHEET_COLS 9
-#define DM20_AGUMON_SPRITE_SHEET_ROWS 1
+#ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
+#include "embedded_assets/dm.h"
+#else
+//#define DM_ANIM_COUNT 0
+#include "embedded_assets/min_dm.h"
+#endif
+#define DM_ANIM_START_INDEX 0
 
+#ifdef FEATURE_INCLUDE_DM20_EMBEDDED_ASSETS
+#include "embedded_assets/dm20.h"
+#else
+#define DM20_ANIM_COUNT 0
+#endif
+#define DM20_ANIM_START_INDEX (DM_ANIM_START_INDEX+DM_ANIM_COUNT)
 
-// anim indexes
-#define BONGOCAT_ANIM_INDEX         0
-#define DM20_AGUMON_ANIM_INDEX      1
+#ifdef FEATURE_INCLUDE_DMC_EMBEDDED_ASSETS
+#include "embedded_assets/dmc.h"
+#else
+#define DMC_ANIM_COUNT 0
+#endif
+#define DMC_ANIM_START_INDEX (DM20_ANIM_START_INDEX+DM20_ANIM_COUNT)
 
-static_assert(TOTAL_DIGIMON_ANIMATIONS == 1);
-static_assert(TOTAL_ANIMATIONS == 2);
+#ifdef FEATURE_INCLUDE_DMX_EMBEDDED_ASSETS
+#include "embedded_assets/dmx.h"
+#else
+#define DMX_ANIM_COUNT 0
+#endif
+#define DMX_ANIM_START_INDEX (DMC_ANIM_START_INDEX+DMC_ANIM_COUNT)
+
+#ifdef FEATURE_INCLUDE_PEN20_EMBEDDED_ASSETS
+#include "embedded_assets/pen20.h"
+#else
+#define PEN20_ANIM_COUNT 0
+#endif
+#define DMX_ANIM_START_INDEX (DMC_ANIM_START_INDEX+DMC_ANIM_COUNT)
+
+#define COUNT_DIGIMON_ANIMATIONS (DM_ANIM_COUNT+DM20_ANIM_COUNT+DMC_ANIM_COUNT+DMX_ANIM_COUNT+PEN20_ANIM_COUNT)
+
+#define TOTAL_DIGIMON_ANIMATIONS COUNT_DIGIMON_ANIMATIONS
+#define TOTAL_ANIMATIONS (1+COUNT_DIGIMON_ANIMATIONS)
 
 #endif // EMBEDDED_ASSETS_H

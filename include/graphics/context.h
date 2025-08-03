@@ -1,6 +1,7 @@
 #ifndef BONGOCAT_ANIMATION_CONTEXT_H
 #define BONGOCAT_ANIMATION_CONTEXT_H
 
+#include "embedded_assets.h"
 #include "core/bongocat.h"
 #include "config/config.h"
 #include <stdatomic.h>
@@ -13,12 +14,6 @@
 // both-up, left-down, right-down, both-down, ...
 #define MAX_NUM_FRAMES 9
 #define MAX_DIGIMON_FRAMES 9
-
-// Animations
-#define TOTAL_DIGIMON_ANIMATIONS 1
-
-// bongocat + digimons
-#define TOTAL_ANIMATIONS (1+TOTAL_DIGIMON_ANIMATIONS)
 
 
 typedef struct {

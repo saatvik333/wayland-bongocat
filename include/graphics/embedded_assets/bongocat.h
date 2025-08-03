@@ -16,4 +16,6 @@ extern const size_t bongo_cat_right_down_png_size;
 extern const unsigned char bongo_cat_both_down_png[];
 extern const size_t bongo_cat_both_down_png_size;
 
+#define BONGOCAT_ANIM_INDEX         0
+
 #endif // EMBEDDED_ASSETS_BINGOCAT_H

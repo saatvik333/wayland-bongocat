@@ -5,6 +5,12 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type." FORCE)
 endif()
 
+option(INCLUDE_DM_EMBEDDED_ASSETS "Include dm embedded assets (fully)" OFF)
+option(INCLUDE_DM20_EMBEDDED_ASSETS "Include dm20 embedded assets" OFF)
+option(INCLUDE_DMC_EMBEDDED_ASSETS "Include dmc embedded assets" OFF)
+option(INCLUDE_DMX_EMBEDDED_ASSETS "Include dmx embedded assets" OFF)
+#option(INCLUDE_PEN20_EMBEDDED_ASSETS "Include pen20 embedded assets" ON)
+
 set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 set(PROTOCOLS_DIR ${CMAKE_SOURCE_DIR}/protocols)
 set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
@@ -51,20 +57,47 @@ add_custom_command(OUTPUT ${GENERATED_PROTOCOLS}
 add_custom_target(protocols DEPENDS ${GENERATED_PROTOCOLS})
 
 
+add_executable(bongocat)
 set(SOURCES
     ${SRC_DIR}/config/config.c
     ${SRC_DIR}/config/config_watcher.c
     ${SRC_DIR}/core/main.c
     ${SRC_DIR}/graphics/animation.c
     ${SRC_DIR}/graphics/embedded_assets.c
-    ${SRC_DIR}/graphics/embedded_assets_bongocat.c
+    ${SRC_DIR}/graphics/embedded_assets/bongocat.c
     ${SRC_DIR}/platform/input.c
     ${SRC_DIR}/platform/wayland.c
     ${SRC_DIR}/utils/error.c
     ${SRC_DIR}/utils/memory.c
     ${SRC_DIR}/utils/time.c
 )
-add_executable(bongocat ${SOURCES} ${GENERATED_PROTOCOLS_SOURCES})
+if (INCLUDE_DM_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/dm.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_DM_EMBEDDED_ASSETS)
+endif()
+if (INCLUDE_DM20_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/dm20.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_DM20_EMBEDDED_ASSETS)
+endif()
+if (INCLUDE_DMC_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/dmc.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_DMC_EMBEDDED_ASSETS)
+endif()
+if (INCLUDE_DMX_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/dmx.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_DMX_EMBEDDED_ASSETS)
+endif()
+if (INCLUDE_PEN20_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/pen20.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_PEN20_EMBEDDED_ASSETS)
+endif()
+# Fallback
+if (NOT INCLUDE_DM_EMBEDDED_ASSETS AND NOT INCLUDE_DM20_EMBEDDED_ASSETS AND NOT INCLUDE_DMC_EMBEDDED_ASSETS AND NOT INCLUDE_DMX_EMBEDDED_ASSETS AND NOT INCLUDE_PEN20_EMBEDDED_ASSETS)
+    set(SOURCES ${SOURCES} "${SRC_DIR}/graphics/embedded_assets/min_dm.c")
+    target_compile_definitions(bongocat PRIVATE FEATURE_INCLUDE_DM_EMBEDDED_ASSETS)
+endif()
+
+target_sources(bongocat PRIVATE ${SOURCES} ${GENERATED_PROTOCOLS_SOURCES})
 add_dependencies(bongocat protocols)
 target_include_directories(bongocat PRIVATE ${INCLUDE_DIR})
 target_include_directories(bongocat SYSTEM PRIVATE ${PROTOCOLS_DIR} ${CMAKE_SOURCE_DIR}/lib)

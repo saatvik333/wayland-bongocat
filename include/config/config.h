@@ -41,7 +41,6 @@ typedef struct {
 
     int animation_index;
     int invert_color;
-    int crop_sprite;
     int padding_x;
     int padding_y;
 } config_t;
