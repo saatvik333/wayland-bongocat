@@ -37,9 +37,9 @@ OBJDIR = $(BUILDDIR)/obj
 PROTOCOLDIR = protocols
 WAYLAND_PROTOCOLS_DIR ?= /usr/share/wayland-protocols
 
-# Source files (excluding embedded assets which is generated)
+# Source files (including embedded assets which are now committed)
 SOURCES = $(shell find $(SRCDIR) -name "*.c")
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o) $(OBJDIR)/graphics/embedded_assets.o
+OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Protocol files
 C_PROTOCOL_SRC = $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c $(PROTOCOLDIR)/xdg-shell-protocol.c $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-protocol.c
@@ -66,7 +66,7 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)/utils
 	mkdir -p $(BUILDDIR)
 
-# Compile source files (depends on protocol headers and embedded assets)
+# Compile source files (depends on protocol headers)
 $(OBJDIR)/%.o: $(SRCDIR)/%.c $(H_PROTOCOL_HDR) | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 

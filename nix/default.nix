@@ -12,7 +12,8 @@ stdenv.mkDerivation (finalAttrs: {
   src = ../.;
 
   # Build toolchain and dependencies
-  nativeBuildInputs = [pkg-config];
+  strictDeps = true;
+  nativeBuildInputs = [pkg-config, wayland-scanner];
   buildInputs = [
     wayland
     wayland-protocols
