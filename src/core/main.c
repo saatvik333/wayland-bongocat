@@ -9,11 +9,11 @@
 #include "utils/memory.h"
 #include <signal.h>
 #include <sys/wait.h>
-#include <stdbool.h>
 #include <sys/file.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <fcntl.h>
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION

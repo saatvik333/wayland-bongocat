@@ -6,8 +6,11 @@
 #include "utils/memory.h"
 #include "graphics/embedded_assets_bongocat.h"
 #include "graphics/embedded_assets.h"
+#include "utils/time.h"
 #include <time.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include "../lib/stb_image.h"
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -413,17 +416,11 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
 // =============================================================================
 
 typedef struct {
-    long hold_until;
+    timestamp_us_t hold_until_us;
     int test_counter;
     int test_interval_frames;
-    long frame_time_ns;
+    time_ns_t frame_time_ns;
 } animation_state_t;
-
-static long anim_get_current_time_us(void) {
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    return now.tv_sec * 1000000 + now.tv_usec;
-}
 
 static int anim_get_random_active_frame(animation_context_t* ctx) {
     if (ctx->anim_index == BONGOCAT_ANIM_INDEX) {
@@ -449,10 +446,10 @@ static void anim_trigger_frame_change(animation_context_t* ctx,
     }
     
     ctx->anim_frame_index = new_frame;
-    state->hold_until = current_time_us + duration_us;
+    state->hold_until_us = current_time_us + duration_us;
 }
 
-static void anim_handle_test_animation(animation_context_t* ctx, animation_state_t *state, long current_time_us) {
+static void anim_handle_test_animation(animation_context_t* ctx, animation_state_t *state, timestamp_us_t current_time_us) {
     if (ctx->_current_config->test_animation_interval <= 0) {
         return;
     }
@@ -468,7 +465,7 @@ static void anim_handle_test_animation(animation_context_t* ctx, animation_state
     }
 }
 
-static void anim_handle_key_press(animation_context_t* ctx, input_context_t *input, animation_state_t *state, long current_time_us) {
+static void anim_handle_key_press(animation_context_t* ctx, input_context_t *input, animation_state_t *state, timestamp_us_t current_time_us) {
     if (!*input->any_key_pressed) {
         return;
     }
@@ -483,8 +480,8 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
     state->test_counter = 0; // Reset test counter
 }
 
-static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t *state, long current_time_us) {
-    if (current_time_us <= state->hold_until) {
+static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t *state, timestamp_us_t current_time_us) {
+    if (current_time_us <= state->hold_until_us) {
         return;
     }
     
@@ -495,7 +492,7 @@ static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t 
 }
 
 static void anim_update_state(animation_context_t* ctx, input_context_t *input, animation_state_t *state) {
-    long current_time_us = anim_get_current_time_us();
+    timestamp_us_t current_time_us = get_current_time_us();
     
     pthread_mutex_lock(&ctx->anim_lock);
     
@@ -511,7 +508,7 @@ static void anim_update_state(animation_context_t* ctx, input_context_t *input, 
 // =============================================================================
 
 static void anim_init_state(animation_context_t* ctx, animation_state_t *state) {
-    state->hold_until = 0;
+    state->hold_until_us = 0;
     state->test_counter = 0;
     state->test_interval_frames = ctx->_current_config->test_animation_interval * ctx->_current_config->fps;
     state->frame_time_ns = 1000000000L / ctx->_current_config->fps;
@@ -534,7 +531,7 @@ static void *anim_thread_main(void *arg) {
     animation_state_t state;
     anim_init_state(animate_params->ctx, &state);
     
-    struct timespec frame_delay = {0, state.frame_time_ns};
+    const struct timespec frame_delay = {0, state.frame_time_ns};
     
     atomic_store(&animate_params->ctx->_animation_running, true);
     bongocat_log_debug("Animation thread main loop started");

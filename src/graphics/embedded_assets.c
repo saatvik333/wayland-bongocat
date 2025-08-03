@@ -1,5 +1,4 @@
 #include "graphics/embedded_assets.h"
-#include <stddef.h>
 
 const unsigned char dm20_agumon_png[] = {
 #embed "../../assets/dm20/Agumon.png"

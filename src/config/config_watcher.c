@@ -2,12 +2,14 @@
 #define _DEFAULT_SOURCE
 #include "core/bongocat.h"
 #include "utils/error.h"
-#include "config/config.h"
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/select.h>
 #include <assert.h>
+#include <sys/inotify.h>
+#include <sys/mman.h>
+#include <sys/time.h>
 
 static void *config_watcher_thread(void *arg) {
     assert(arg);

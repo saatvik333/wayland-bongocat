@@ -1,5 +1,5 @@
-#ifndef ANIMATION_CONTEXT_H
-#define ANIMATION_CONTEXT_H
+#ifndef BONGOCAT_ANIMATION_CONTEXT_H
+#define BONGOCAT_ANIMATION_CONTEXT_H
 
 #include "core/bongocat.h"
 #include "config/config.h"

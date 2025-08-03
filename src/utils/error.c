@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <sys/time.h>
+#include <stdio.h>
 
 static int debug_enabled = 1;
 

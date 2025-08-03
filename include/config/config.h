@@ -1,5 +1,5 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef BONGOCAT_CONFIG_H
+#define BONGOCAT_CONFIG_H
 
 #include "core/bongocat.h"
 #include "utils/error.h"

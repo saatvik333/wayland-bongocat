@@ -1,5 +1,5 @@
-#ifndef EMBEDDED_ASSETS_H
-#define EMBEDDED_ASSETS_H
+#ifndef BONGOCAT_EMBEDDED_ASSETS_H
+#define BONGOCAT_EMBEDDED_ASSETS_H
 
 #include "context.h"
 #include <stddef.h>

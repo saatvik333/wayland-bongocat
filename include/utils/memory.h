@@ -1,5 +1,5 @@
-#ifndef MEMORY_H
-#define MEMORY_H
+#ifndef BONGOCAT_MEMORY_H
+#define BONGOCAT_MEMORY_H
 
 #include <stdlib.h>
 #include <stdint.h>

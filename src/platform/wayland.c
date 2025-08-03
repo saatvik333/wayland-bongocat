@@ -1,13 +1,23 @@
 #define _POSIX_C_SOURCE 200809L
-#include "platform/wayland.h"
-
-#include <assert.h>
-
 #include "graphics/animation.h"
-#include <poll.h>
-#include <sys/time.h>
-#include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
+#include "platform/wayland.h"
 #include "graphics/embedded_assets.h"
+#include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
+#include <assert.h>
+#include <poll.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/ioctl.h>
+#include <pthread.h>
+#include <linux/input.h>
+#include <sys/inotify.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdlib.h>
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION

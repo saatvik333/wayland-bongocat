@@ -5,6 +5,7 @@
 #include "graphics/context.h"
 #include "graphics/embedded_assets_bongocat.h"
 #include "graphics/embedded_assets.h"
+#include <pthread.h>
 #include <limits.h>
 
 // =============================================================================

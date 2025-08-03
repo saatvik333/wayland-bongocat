@@ -1,10 +1,11 @@
-#ifndef ANIMATION_H
-#define ANIMATION_H
+#ifndef BONGOCAT_ANIMATION_H
+#define BONGOCAT_ANIMATION_H
 
 #include "core/bongocat.h"
 #include "config/config.h"
 #include "utils/error.h"
 #include "platform/wayland.h"
+#include "platform/input_context.h"
 #include "context.h"
 
 bongocat_error_t animation_init(animation_context_t *ctx, config_t *config);

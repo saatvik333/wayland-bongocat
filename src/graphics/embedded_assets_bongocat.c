@@ -1,5 +1,4 @@
 #include "graphics/embedded_assets_bongocat.h"
-#include <stddef.h>
 
 const unsigned char bongo_cat_both_up_png[] = {
 #embed "../../assets/bongo-cat-both-up.png"

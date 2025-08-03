@@ -1,5 +1,5 @@
-#ifndef ERROR_H
-#define ERROR_H
+#ifndef BONGOCAT_ERROR_H
+#define BONGOCAT_ERROR_H
 
 #include <stdio.h>
 #include <stdlib.h>

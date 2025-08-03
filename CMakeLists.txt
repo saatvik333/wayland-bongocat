@@ -62,6 +62,7 @@ set(SOURCES
     ${SRC_DIR}/platform/wayland.c
     ${SRC_DIR}/utils/error.c
     ${SRC_DIR}/utils/memory.c
+    ${SRC_DIR}/utils/time.c
 )
 add_executable(bongocat ${SOURCES} ${GENERATED_PROTOCOLS_SOURCES})
 add_dependencies(bongocat protocols)

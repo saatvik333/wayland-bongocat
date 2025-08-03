@@ -1,7 +1,8 @@
-#ifndef INPUT_H
-#define INPUT_H
+#ifndef BONGOCAT_INPUT_H
+#define BONGOCAT_INPUT_H
 
 #include "core/bongocat.h"
+#include "platform/input_context.h"
 #include "utils/error.h"
 
 bongocat_error_t input_start_monitoring(input_context_t *ctx, char **device_paths, int num_devices, int enable_debug);
