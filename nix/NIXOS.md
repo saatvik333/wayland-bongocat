@@ -37,7 +37,7 @@ If you use flakes for your NixOS configuration (Which you should):
         {
           programs.wayland-bongocat = {
             enable = true;
-            autoStart = true;
+            autostart = true;
           };
         }
       ];
