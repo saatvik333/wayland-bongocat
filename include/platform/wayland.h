@@ -25,14 +25,14 @@ typedef struct {
     bool fullscreen_detected;
 
     config_t *_current_config;
-    animation_context_t* _anim;
+    animation_context_t *_anim;
 } wayland_context_t;
 
 bongocat_error_t wayland_init(wayland_context_t* ctx, config_t *config, animation_context_t* anim);
 bongocat_error_t wayland_run(wayland_context_t* ctx, volatile sig_atomic_t *running);
-void wayland_cleanup(wayland_context_t* ctx);
-void wayland_update_config(wayland_context_t* ctx, config_t *config, animation_context_t* anim);
-void draw_bar(wayland_context_t* ctx);
+void wayland_cleanup(wayland_context_t *ctx);
+void wayland_update_config(wayland_context_t *ctx, config_t *config, animation_context_t* anim);
+void draw_bar(wayland_context_t *ctx);
 int create_shm(int size);
 int wayland_get_screen_width(void);
 const char* wayland_get_current_layer_name(void);

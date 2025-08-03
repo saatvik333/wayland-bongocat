@@ -43,8 +43,8 @@ static void config_validate_dimensions(config_t *config) {
     config_clamp_int(&config->cat_height, MIN_CAT_HEIGHT, MAX_CAT_HEIGHT, "cat_height");
     config_clamp_int(&config->overlay_height, MIN_OVERLAY_HEIGHT, MAX_OVERLAY_HEIGHT, "overlay_height");
 
-    config_clamp_int(&config->padding_x, MIN_CAT_HEIGHT, MAX_CAT_HEIGHT, "padding_x");
-    config_clamp_int(&config->padding_y, MIN_CAT_HEIGHT, MAX_CAT_HEIGHT, "padding_y");
+    config_clamp_int(&config->padding_x, 0, MAX_CAT_HEIGHT, "padding_x");
+    config_clamp_int(&config->padding_y, 0, MAX_CAT_HEIGHT, "padding_y");
 }
 
 static void config_validate_timing(config_t *config) {
@@ -246,7 +246,16 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
             bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
             config->overlay_position = POSITION_TOP;
         }
-    } else {
+    } else if (strcmp(key, "animation_name") == 0) {
+        if (strcmp(value, "bongocat") == 0) {
+            config->animation_index = BONGOCAT_ANIM_INDEX;
+        } else if (strcmp(value, "agumon") == 0 || strcmp(value, "dm20:agumon") == 0) {
+            config->animation_index = DM20_AGUMON_ANIM_INDEX;
+        } else {
+            bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
+            config->animation_index = BONGOCAT_ANIM_INDEX;
+        }
+    }else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
     

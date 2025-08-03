@@ -7,10 +7,12 @@
 typedef enum {
     POSITION_TOP,
     POSITION_BOTTOM,
+    /*
     POSITION_TOP_LEFT,
     POSITION_BOTTOM_LEFT,
     POSITION_TOP_RIGHT,
     POSITION_BOTTOM_RIGHT,
+    */
 } overlay_position_t;
 
 typedef enum {

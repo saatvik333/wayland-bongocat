@@ -19,14 +19,14 @@
 // GLOBAL STATE AND CONFIGURATION
 // =============================================================================
 
-static volatile sig_atomic_t running = 1;
+static volatile sig_atomic_t running = 0;
 
-static config_t g_config;
-static config_watcher_t g_config_watcher;
+static config_t g_config = {0};
+static config_watcher_t g_config_watcher = {0};
 
-static input_context_t g_input_ctx;
-static animation_context_t g_animation_ctx;
-static wayland_context_t g_wayland_ctx;
+static input_context_t g_input_ctx = {0};
+static animation_context_t g_animation_ctx = {0};
+static wayland_context_t g_wayland_ctx = {0};
 
 #define PID_FILE "/tmp/bongocat.pid"
 
@@ -163,9 +163,6 @@ static void signal_handler(int sig) {
         case SIGINT:
         case SIGTERM:
             bongocat_log_info("Received signal %d, shutting down gracefully", sig);
-            /// @FIXME: term ALL threads ... sometimes it didn't shotdown fully
-            //g_input_ctx->_capture_input_running = 0;
-            //g_animation_ctx->_running = 0;
             running = 0;
             break;
         case SIGCHLD:

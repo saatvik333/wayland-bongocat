@@ -7,6 +7,7 @@
 #include <poll.h>
 #include <sys/time.h>
 #include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
+#include "graphics/embedded_assets.h"
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -257,7 +258,7 @@ void draw_bar(wayland_context_t* ctx) {
     int effective_opacity = ctx->fullscreen_detected ? 0 : ctx->_current_config->overlay_opacity;
     
     // Clear buffer with transparency
-    for (int i = 0; i < ctx->_current_config->screen_width * ctx->_current_config->bar_height * 4; i += 4) {
+    for (int i = 0; i < ctx->_current_config->screen_width * ctx->_current_config->bar_height * RGBA_CHANNELS; i += RGBA_CHANNELS) {
         ctx->pixels[i] = 0;       // B
         ctx->pixels[i + 1] = 0;   // G
         ctx->pixels[i + 2] = 0;   // R
@@ -267,17 +268,40 @@ void draw_bar(wayland_context_t* ctx) {
     // Draw cat if visible
     if (!ctx->fullscreen_detected) {
         pthread_mutex_lock(&ctx->_anim->anim_lock);
-        // @NOTE: assume ctx->_current_config is the same as anim->_current_config
-        int cat_height = ctx->_current_config->cat_height;
-        int cat_width = (cat_height * 779) / 320;
-        int cat_x = (ctx->_current_config->screen_width - cat_width) / 2 + ctx->_current_config->cat_x_offset;
-        int cat_y = (ctx->_current_config->bar_height - cat_height) / 2 + ctx->_current_config->cat_y_offset;
 
-        blit_image_scaled(ctx->pixels, ctx->_current_config->screen_width, ctx->_current_config->bar_height,
-                          ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].pixels,
-                          ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].width,
-                          ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].height,
-                          cat_x, cat_y, cat_width, cat_height);
+        const uint8_t* frame_pixels = ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].pixels;
+        const int frame_width = ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].width;
+        const int frame_height = ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].height;
+
+        if (frame_pixels && frame_width > 0 && frame_height > 0) {
+            if (ctx->_anim->anim_index == BONGOCAT_ANIM_INDEX) {
+                // @NOTE: assume ctx->_current_config is the same as anim->_current_config
+                const int cat_height = ctx->_current_config->cat_height;
+                const int cat_width = (cat_height * 779) / 320;
+                const int cat_x = (ctx->_current_config->screen_width - cat_width) / 2 + ctx->_current_config->cat_x_offset;
+                const int cat_y = (ctx->_current_config->bar_height - cat_height) / 2 + ctx->_current_config->cat_y_offset;
+
+                blit_image_scaled(ctx->pixels, ctx->_current_config->screen_width, ctx->_current_config->bar_height,
+                                  ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].pixels,
+                                  frame_width,
+                                  frame_height,
+                                  cat_x, cat_y, cat_width, cat_height);
+            } else {
+                // draw Digimon
+                const int cat_height = ctx->_current_config->cat_height;
+                const int cat_width = frame_width * (float)frame_width/ctx->_current_config->cat_height;
+                const int cat_x = (ctx->_current_config->screen_width - cat_width) / 2 + ctx->_current_config->cat_x_offset;
+                const int cat_y = (ctx->_current_config->bar_height - cat_height) / 2 + ctx->_current_config->cat_y_offset;
+
+                blit_image_scaled(ctx->pixels, ctx->_current_config->screen_width, ctx->_current_config->bar_height,
+                                  ctx->_anim->anims[ctx->_anim->anim_index].frames[ctx->_anim->anim_frame_index].pixels,
+                                  frame_width,
+                                  frame_height,
+                                  cat_x, cat_y, cat_width, cat_height);
+            }
+        } else {
+            bongocat_log_debug("Skip drawing empty frame, index: %d, frame: %d", ctx->_anim->anim_index, ctx->_anim->anim_frame_index);
+        }
         pthread_mutex_unlock(&ctx->_anim->anim_lock);
     } else {
         bongocat_log_debug("Cat hidden due to fullscreen detection");
@@ -595,6 +619,7 @@ bongocat_error_t wayland_run(wayland_context_t* ctx, volatile sig_atomic_t *runn
     bongocat_log_info("Starting Wayland event loop");
     const int check_interval_ms = 100;
 
+    *running = 1;
     while (*running && ctx->display) {
         // Periodic fullscreen check for fallback detection
         struct timeval now;
@@ -643,6 +668,7 @@ bongocat_error_t wayland_run(wayland_context_t* ctx, volatile sig_atomic_t *runn
 
         wl_display_flush(ctx->display);
     }
+    *running = 0;
 
     bongocat_log_info("Wayland event loop exited");
     return BONGOCAT_SUCCESS;
@@ -669,6 +695,7 @@ void wayland_update_config(wayland_context_t* ctx, config_t *config, animation_c
 
     ctx->_current_config = config;
     ctx->_anim = anim;
+    animation_update_config(anim, config);
     if (ctx->configured) {
         draw_bar(ctx);
     }

@@ -7,10 +7,11 @@
 #include "platform/wayland.h"
 #include "context.h"
 
-bongocat_error_t animation_init(animation_context_t* ctx, config_t *config);
-bongocat_error_t animation_start(animation_context_t* ctx, input_context_t *input, wayland_context_t *wayland);
-void animation_cleanup(animation_context_t* ctx);
+bongocat_error_t animation_init(animation_context_t *ctx, config_t *config);
+bongocat_error_t animation_start(animation_context_t *ctx, input_context_t *input, wayland_context_t *wayland);
+void animation_cleanup(animation_context_t *ctx);
 void animation_trigger(input_context_t *input);
+void animation_update_config(animation_context_t *ctx, config_t *config);
 
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
                       const unsigned char *src, int src_w, int src_h,

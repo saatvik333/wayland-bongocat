@@ -32,6 +32,7 @@
 // Common constants
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
+#define RGBA_CHANNELS 4
 
 
 // Config watcher constants

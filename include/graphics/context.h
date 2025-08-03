@@ -11,8 +11,8 @@
 
 // Idle 1, Idle 2, Angry, Down1, Happy, Eat1, Sleep1, Refuse, Down2 ~~, Eat2, Sleep2, Attack~~
 // both-up, left-down, right-down, both-down, ...
-#define MAX_NUM_FRAMES 12
-#define MAX_DIGIMON_FRAMES 12
+#define MAX_NUM_FRAMES 9
+#define MAX_DIGIMON_FRAMES 9
 
 // Animations
 #define TOTAL_DIGIMON_ANIMATIONS 1
@@ -25,7 +25,7 @@ typedef struct {
     int width;
     int height;
     int channels;
-    uint8_t* pixels;
+    uint8_t *pixels;
 } animation_frame_t;
 
 typedef struct {
@@ -40,10 +40,10 @@ typedef struct {
     animation_frame_t sad;
 
     // optional
-    animation_frame_t down_2;
-    animation_frame_t eat_2;
-    animation_frame_t sleep_2;
-    animation_frame_t attack;
+    //animation_frame_t down_2;
+    //animation_frame_t eat_2;
+    //animation_frame_t sleep_2;
+    //animation_frame_t attack;
 
     // extra frames
     //animation_frame_t movement_1;
@@ -59,11 +59,14 @@ typedef struct {
     animation_frame_t _placeholder[MAX_DIGIMON_FRAMES-4];
 } bongocat_animation_t;
 
+static_assert(sizeof(digimon_animation_t) == sizeof(bongocat_animation_t));
 typedef union {
     bongocat_animation_t bongocat;
     digimon_animation_t digimon;
     animation_frame_t frames[MAX_NUM_FRAMES];
 } animation_t;
+static_assert(sizeof(animation_frame_t[MAX_NUM_FRAMES]) == sizeof(bongocat_animation_t));
+static_assert(sizeof(animation_frame_t[MAX_NUM_FRAMES]) == sizeof(digimon_animation_t));
 
 
 typedef struct {
@@ -74,7 +77,7 @@ typedef struct {
     pthread_mutex_t anim_lock;
 
     // Animation system state
-    config_t* _current_config;
+    config_t *_current_config;
     pthread_t _anim_thread;
     atomic_bool _animation_running;
 } animation_context_t;

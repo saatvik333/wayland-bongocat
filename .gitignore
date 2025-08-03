@@ -36,7 +36,7 @@ Thumbs.db
 # Log files
 *.log
 
-
+debug.bongocat.conf
 
 # Created by https://www.toptal.com/developers/gitignore/api/windows,macos,osx,linux,clion,cmake
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,osx,linux,clion,cmake

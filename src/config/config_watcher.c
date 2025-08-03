@@ -11,13 +11,15 @@
 
 static void *config_watcher_thread(void *arg) {
     assert(arg);
+
     config_watcher_t *watcher = (config_watcher_t *)arg;
     char buffer[INOTIFY_BUF_LEN];
     time_t last_reload_time = 0;
     
     bongocat_log_info("Config watcher started for: %s", watcher->config_path);
 
-    while (watcher->_running) {
+    atomic_store(&watcher->_running, true);
+    while (atomic_load(&watcher->_running)) {
         fd_set read_fds;
         struct timeval timeout;
         
@@ -33,7 +35,6 @@ static void *config_watcher_thread(void *arg) {
         if (select_result < 0) {
             if (errno == EINTR) continue;
             bongocat_log_error("Config watcher select failed: %s", strerror(errno));
-            watcher->_running = false;
             break;
         }
         
@@ -79,7 +80,7 @@ static void *config_watcher_thread(void *arg) {
             }
         }
     }
-    watcher->_running = false;
+    atomic_store(&watcher->_running, false);
     
     bongocat_log_info("Config watcher stopped");
     return NULL;
@@ -126,10 +127,8 @@ void config_watcher_start(config_watcher_t *watcher) {
         return;
     }
 
-
-    watcher->_running = 1;
     if (pthread_create(&watcher->watcher_thread, NULL, config_watcher_thread, watcher) != 0) {
-        watcher->_running = 0;
+        atomic_store(&watcher->_running, false);
         bongocat_log_error("Failed to create config watcher thread: %s", strerror(errno));
         return;
     }
@@ -142,7 +141,7 @@ void config_watcher_stop(config_watcher_t *watcher) {
         return;
     }
     
-    watcher->_running = 0;
+    atomic_store(&watcher->_running, false);
     //pthread_cancel(watcher->watcher_thread);
     // Wait for thread to finish
     if (pthread_join(watcher->watcher_thread, NULL) != 0) {

@@ -15,6 +15,13 @@
 
 #define THRESHOLD_ALPHA 127
 
+// Bongocat Frames
+#define BONGOCAT_FRAME_BOTH_DOWN 0
+#define BONGOCAT_FRAME_LEFT_DOWN 1
+#define BONGOCAT_FRAME_RIGHT_DOWN 2
+#define BONGOCAT_FRAME_BOTH_UP 3
+
+// Digimon (Sprite Sheet) Frames
 #define DIGIMON_FRAME_IDLE1 0
 #define DIGIMON_FRAME_IDLE2 1
 #define DIGIMON_FRAME_ANGRY 2 // Angry/Refuse or Hit (Fallback), Eat Frame Fallback
@@ -25,10 +32,11 @@
 #define DIGIMON_FRAME_REFUSE 7
 #define DIGIMON_FRAME_SAD 8
 
-#define DIGIMON_FRAME_DOWN2 9
-#define DIGIMON_FRAME_EAT2 10
-#define DIGIMON_FRAME_SLEEP2 11
-#define DIGIMON_FRAME_ATTACK 12
+// optional frames
+//#define DIGIMON_FRAME_DOWN2 9
+//#define DIGIMON_FRAME_EAT2 10
+//#define DIGIMON_FRAME_SLEEP2 11
+//#define DIGIMON_FRAME_ATTACK 12
 
 //#define DIGIMON_FRAME_MOVEMENT1 13
 //#define DIGIMON_FRAME_MOVEMENT2 14
@@ -36,13 +44,39 @@
 static const animation_frame_t empty_sprite_sheet_frame = (animation_frame_t){
     .width = 0,
     .height = 0,
-    .channels = 4,
+    .channels = RGBA_CHANNELS,
     .pixels = NULL,
 };
 
 // =============================================================================
 // DRAWING OPERATIONS MODULE
 // =============================================================================
+
+static bool drawing_is_pixel_in_bounds(int x, int y, int width, int height) {
+    return (x >= 0 && y >= 0 && x < width && y < height);
+}
+
+typedef enum {
+    COPY_PIXEL_OPTION_NORMAL,
+    COPY_PIXEL_OPTION_INVERT,
+} drawing_copy_pixel_color_option_t;
+static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src, int dest_idx, int src_idx, drawing_copy_pixel_color_option_t option) {
+    switch (option) {
+        case COPY_PIXEL_OPTION_NORMAL:
+            dest[dest_idx + 0] = src[src_idx + 2]; // B
+            dest[dest_idx + 1] = src[src_idx + 1]; // G
+            dest[dest_idx + 2] = src[src_idx + 0]; // R
+            dest[dest_idx + 3] = src[src_idx + 3]; // A
+            break;
+        case COPY_PIXEL_OPTION_INVERT:
+            dest[dest_idx + 0] = 255 - src[src_idx + 2]; // B
+            dest[dest_idx + 1] = 255 - src[src_idx + 1]; // G
+            dest[dest_idx + 2] = 255 - src[src_idx + 0]; // R
+            dest[dest_idx + 3] = src[src_idx + 3]; // A
+            break;
+    }
+}
+
 
 typedef struct {
     int min_x;
@@ -53,8 +87,8 @@ typedef struct {
     int crop_height;
     int padded_width;
     int padded_height;
-} get_cropped_sizes_result_t;
-static get_cropped_sizes_result_t get_cropped_sizes(animation_frame_t loaded_frame, int padding_x, int padding_y) {
+} get_cropped_size_result_t;
+static get_cropped_size_result_t get_cropped_size(animation_frame_t loaded_frame, int padding_x, int padding_y) {
     const int width = loaded_frame.width;
     const int height = loaded_frame.height;
     const int channels = loaded_frame.channels;
@@ -87,7 +121,7 @@ static get_cropped_sizes_result_t get_cropped_sizes(animation_frame_t loaded_fra
     int padded_width = crop_width + 2 * padding_x;
     int padded_height = crop_height + 2 * padding_y;
 
-    return (get_cropped_sizes_result_t) {
+    return (get_cropped_size_result_t) {
         .min_x = min_x,
         .min_y = min_y,
         .max_x = max_x,
@@ -101,15 +135,15 @@ static get_cropped_sizes_result_t get_cropped_sizes(animation_frame_t loaded_fra
 
 static bongocat_error_t copy_cropped_frame(animation_frame_t* out_frame,
                                            animation_frame_t in_frame,
-                                           int padding_x, int padding_y, bool invert_color,
-                                           const get_cropped_sizes_result_t* cropping_size) {
+                                           int padding_x, int padding_y, drawing_copy_pixel_color_option_t drawing_option,
+                                           const get_cropped_size_result_t* cropping_size) {
     *out_frame = empty_sprite_sheet_frame;
     const int width = in_frame.width;
     const int height = in_frame.height;
     const int channels = in_frame.channels;
     const unsigned char *src_pixels = in_frame.pixels;
 
-    get_cropped_sizes_result_t padding_sizes = get_cropped_sizes(in_frame, padding_x, padding_y);
+    get_cropped_size_result_t padding_sizes = get_cropped_size(in_frame, padding_x, padding_y);
 
     int start_x = 0;
     int start_y = 0;
@@ -141,7 +175,7 @@ static bongocat_error_t copy_cropped_frame(animation_frame_t* out_frame,
             const int dst_x = start_x + x;
             const int dst_y = start_y + y;
 
-            const size_t src_pixel_index = (src_y * width + src_x) * channels;
+            const int src_pixel_index = (src_y * width + src_x) * channels;
 
             // skip frame
             if (dst_x < 0 || dst_x >= padding_sizes.padded_width ||
@@ -149,24 +183,14 @@ static bongocat_error_t copy_cropped_frame(animation_frame_t* out_frame,
                 continue; // Skip out-of-bounds
             }
 
-            const size_t dst_pixel_index = (dst_y * padding_sizes.padded_width + dst_x) * channels;
+            const int dst_pixel_index = (dst_y * padding_sizes.padded_width + dst_x) * channels;
 
             if (src_pixel_index >= width * height * channels ||
                 dst_pixel_index >= padding_sizes.padded_width * padding_sizes.padded_height * channels) {
                 continue;
             }
 
-            const unsigned char *src_pixel = &src_pixels[src_pixel_index];
-            unsigned char *dst_pixel = &dest_pixels[dst_pixel_index];
-
-            if (invert_color) {
-                dst_pixel[0] = 255 - src_pixel[0]; //
-                dst_pixel[1] = 255 - src_pixel[1]; //
-                dst_pixel[2] = 255 - src_pixel[2]; //
-                dst_pixel[3] = src_pixel[3];       // A (unchanged)
-            } else {
-                memcpy(dst_pixel, src_pixel, channels);
-            }
+            drawing_copy_pixel(dest_pixels, src_pixels, dst_pixel_index, src_pixel_index, drawing_option);
         }
     }
 
@@ -180,15 +204,15 @@ static bongocat_error_t copy_cropped_frame(animation_frame_t* out_frame,
 
     return BONGOCAT_SUCCESS;
 }
-static get_cropped_sizes_result_t get_biggest_cropped_size(
+static get_cropped_size_result_t get_biggest_cropped_size(
     int frame_width,
     int frame_height,
-    get_cropped_sizes_result_t* cropped_frames,
+    get_cropped_size_result_t* cropped_frames,
     size_t cropped_frames_size,
     int padding_x,
     int padding_y
 ) {
-    get_cropped_sizes_result_t ret = {
+    get_cropped_size_result_t ret = {
         .min_x = frame_width,
         .min_y = frame_height,
         .max_x = 0,
@@ -200,7 +224,7 @@ static get_cropped_sizes_result_t get_biggest_cropped_size(
     };
 
     for (size_t i = 0; i < cropped_frames_size; ++i) {
-        get_cropped_sizes_result_t* crop = &cropped_frames[i];
+        get_cropped_size_result_t* crop = &cropped_frames[i];
 
         if (crop->min_x < ret.min_x) ret.min_x = crop->min_x;
         if (crop->min_y < ret.min_y) ret.min_y = crop->min_y;
@@ -220,11 +244,12 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
                                           const uint8_t* sprite_data, int sprite_size,
                                           int frame_columns, int frame_rows,
                                           int* out_frame_count,
-                                          int padding_x, int padding_y, bool invert_color) {
+                                          int padding_x, int padding_y,
+                                          drawing_copy_pixel_color_option_t drawing_option) {
     int sheet_width, sheet_height, channels;
-    uint8_t* sprite_sheet_pixels = stbi_load_from_memory(sprite_data, sprite_size, &sheet_width, &sheet_height, &channels, 4); // Force RGBA
+    uint8_t* sprite_sheet_pixels = stbi_load_from_memory(sprite_data, sprite_size, &sheet_width, &sheet_height, &channels, RGBA_CHANNELS); // Force RGBA
     if (!sprite_sheet_pixels) {
-        bongocat_log_error("Failed to load sprite sheet.\n");
+        bongocat_log_error("Failed to load sprite sheet.");
         return BONGOCAT_ERROR_FILE_IO;
     }
 
@@ -241,38 +266,38 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
     const int total_frames = frame_columns * frame_rows;
 
     if (total_frames > out_frames_count) {
-        bongocat_log_error("Sprite Sheet does fit in out_frames");
+        bongocat_log_error("Sprite Sheet does not fit in out_frames: %d, total_frames: %d", out_frames_count, total_frames);
         stbi_image_free(sprite_sheet_pixels);
         sprite_sheet_pixels = NULL;
         return BONGOCAT_ERROR_INVALID_PARAM;
     }
 
-    get_cropped_sizes_result_t* cropped_frames = BONGOCAT_MALLOC(sizeof(get_cropped_sizes_result_t) * total_frames);
+    get_cropped_size_result_t* cropped_frames = BONGOCAT_MALLOC(sizeof(get_cropped_size_result_t) * total_frames);
     /// @TODO: optimize search for the biggest padding
     for (int row = 0; row < frame_rows; ++row) {
         for (int col = 0; col < frame_columns; ++col) {
             const int idx = row * frame_columns + col;
 
-            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * 4);
+            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * RGBA_CHANNELS);
             if (!frame_pixels) {
                 continue;
             }
 
             for (int y = 0; y < frame_height; ++y) {
                 memcpy(
-                    frame_pixels + y * frame_width * 4,
-                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * 4,
-                    frame_width * 4
+                    frame_pixels + y * frame_width * RGBA_CHANNELS,
+                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * RGBA_CHANNELS,
+                    frame_width * RGBA_CHANNELS
                 );
             }
 
             const animation_frame_t frame = (animation_frame_t){
                 .width = frame_width,
                 .height = frame_height,
-                .channels = 4,
+                .channels = RGBA_CHANNELS,
                 .pixels = frame_pixels
             };
-            get_cropped_sizes_result_t cropping_result = get_cropped_sizes(frame, padding_x, padding_y);
+            get_cropped_size_result_t cropping_result = get_cropped_size(frame, padding_x, padding_y);
             bongocat_log_debug("Cropped Sprite Frame (%d): %dx%d (%dx%d)", idx, cropping_result.padded_width, cropping_result.padded_height, frame_width, frame_height);
 
             cropped_frames[idx] = cropping_result;
@@ -281,14 +306,14 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
             frame_pixels = NULL;
         }
     }
-    const get_cropped_sizes_result_t cropping_size = get_biggest_cropped_size(frame_width,frame_height, cropped_frames, total_frames, padding_x, padding_y);
+    const get_cropped_size_result_t cropping_size = get_biggest_cropped_size(frame_width,frame_height, cropped_frames, total_frames, padding_x, padding_y);
     BONGOCAT_FREE(cropped_frames);
 
     for (int row = 0; row < frame_rows; ++row) {
         for (int col = 0; col < frame_columns; ++col) {
             const int idx = row * frame_columns + col;
 
-            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * 4);
+            uint8_t* frame_pixels = BONGOCAT_MALLOC(frame_width * frame_height * RGBA_CHANNELS);
             if (!frame_pixels) {
                 bongocat_log_error("Failed to allocate memory for frame %d\n", idx);
                 // Cleanup previously allocated
@@ -301,20 +326,20 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
 
             for (int y = 0; y < frame_height; ++y) {
                 memcpy(
-                    frame_pixels + y * frame_width * 4,
-                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * 4,
-                    frame_width * 4
+                    frame_pixels + y * frame_width * RGBA_CHANNELS,
+                    sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * RGBA_CHANNELS,
+                    frame_width * RGBA_CHANNELS
                 );
             }
 
             const animation_frame_t frame_data = (animation_frame_t){
                 .width = frame_width,
                 .height = frame_height,
-                .channels = 4,
+                .channels = RGBA_CHANNELS,
                 .pixels = frame_pixels
             };
 
-            copy_cropped_frame(&out_frames[idx], frame_data, padding_x, padding_y, invert_color, &cropping_size);
+            copy_cropped_frame(&out_frames[idx], frame_data, padding_x, padding_y, drawing_option, &cropping_size);
 
             bongocat_log_debug("Cropped Sprite Frame (%d): %dx%d (%dx%d)", idx, out_frames[idx].width, out_frames[idx].height, frame_width, frame_height);
 
@@ -325,44 +350,18 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
 
     stbi_image_free(sprite_sheet_pixels);
     sprite_sheet_pixels = NULL;
+
     if (out_frame_count) *out_frame_count = total_frames;
 
     return BONGOCAT_SUCCESS;
 }
 
 static void free_frames(animation_frame_t* frames, size_t frame_count) {
-    for (int i = 0; i < frame_count; ++i) {
-        if (frames[i].pixels) BONGOCAT_FREE(frames[i].pixels);
-        frames[i].pixels = NULL;
+    for (size_t i = 0; i < frame_count; ++i) {
+        BONGOCAT_SAFE_FREE(frames[i].pixels);
     }
     BONGOCAT_FREE(frames);
     frames = NULL;
-}
-
-
-static bool drawing_is_pixel_in_bounds(int x, int y, int width, int height) {
-    return (x >= 0 && y >= 0 && x < width && y < height);
-}
-
-typedef enum {
-    COPY_PIXEL_OPTION_NORMAL,
-    COPY_PIXEL_OPTION_INVERT,
-} drawing_copy_pixel_color_option_t;
-static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src, int dest_idx, int src_idx, drawing_copy_pixel_color_option_t option) {
-    switch (option) {
-        case COPY_PIXEL_OPTION_NORMAL:
-            dest[dest_idx + 0] = src[src_idx + 2]; // B
-            dest[dest_idx + 1] = src[src_idx + 1]; // G
-            dest[dest_idx + 2] = src[src_idx + 0]; // R
-            dest[dest_idx + 3] = src[src_idx + 3]; // A
-            break;
-        case COPY_PIXEL_OPTION_INVERT:
-            dest[dest_idx + 0] = 255 - src[src_idx + 2]; // B
-            dest[dest_idx + 1] = 255 - src[src_idx + 1]; // G
-            dest[dest_idx + 2] = 255 - src[src_idx + 0]; // R
-            dest[dest_idx + 3] = src[src_idx + 3]; // A
-            break;
-    }
 }
 
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
@@ -381,8 +380,8 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
             int sx = (x * src_w) / target_w;
             int sy = (y * src_h) / target_h;
 
-            int dest_idx = (dy * dest_w + dx) * 4;
-            int src_idx = (sy * src_w + sx) * 4;
+            int dest_idx = (dy * dest_w + dx) * RGBA_CHANNELS;
+            int src_idx = (sy * src_w + sx) * RGBA_CHANNELS;
 
             // Only draw non-transparent pixels
             if (src[src_idx + 3] > THRESHOLD_ALPHA) {
@@ -400,7 +399,7 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
                 continue;
             }
             
-            int idx = (j * width + i) * 4;
+            int idx = (j * width + i) * RGBA_CHANNELS;
             dest[idx + 0] = b;
             dest[idx + 1] = g;
             dest[idx + 2] = r;
@@ -426,8 +425,20 @@ static long anim_get_current_time_us(void) {
     return now.tv_sec * 1000000 + now.tv_usec;
 }
 
-static int anim_get_random_active_frame(void) {
-    return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
+static int anim_get_random_active_frame(animation_context_t* ctx) {
+    if (ctx->anim_index == BONGOCAT_ANIM_INDEX) {
+        return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
+    }
+
+    // toggle frame
+    const int current_frame = ctx->anim_frame_index;
+    if (current_frame == DIGIMON_FRAME_IDLE1) {
+        return DIGIMON_FRAME_IDLE2;
+    } else if (current_frame == DIGIMON_FRAME_IDLE2) {
+        return DIGIMON_FRAME_IDLE1;
+    }
+
+    return rand() % 2; // Frame 0 or 1 (active frames)
 }
 
 static void anim_trigger_frame_change(animation_context_t* ctx,
@@ -448,7 +459,7 @@ static void anim_handle_test_animation(animation_context_t* ctx, animation_state
     
     state->test_counter++;
     if (state->test_counter > state->test_interval_frames) {
-        int new_frame = anim_get_random_active_frame();
+        int new_frame = anim_get_random_active_frame(ctx);
         long duration_us = ctx->_current_config->test_animation_duration * 1000;
         
         bongocat_log_debug("Test animation trigger");
@@ -462,7 +473,7 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
         return;
     }
     
-    int new_frame = anim_get_random_active_frame();
+    int new_frame = anim_get_random_active_frame(ctx);
     long duration_us = ctx->_current_config->keypress_duration * 1000;
     
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
@@ -477,9 +488,9 @@ static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t 
         return;
     }
     
-    if (ctx->anim_index != ctx->_current_config->idle_frame) {
+    if (ctx->anim_frame_index != ctx->_current_config->idle_frame) {
         bongocat_log_debug("Returning to idle frame %d", ctx->_current_config->idle_frame);
-        ctx->anim_index = ctx->_current_config->idle_frame;
+        ctx->anim_frame_index = ctx->_current_config->idle_frame;
     }
 }
 
@@ -513,7 +524,12 @@ typedef struct {
     wayland_context_t* wayland;
 } anim_thread_main_params_t;
 static void *anim_thread_main(void *arg) {
+    assert(arg);
     anim_thread_main_params_t* animate_params = arg;
+
+    assert(animate_params->input);
+    assert(animate_params->ctx);
+    assert(animate_params->wayland);
 
     animation_state_t state;
     anim_init_state(animate_params->ctx, &state);
@@ -547,19 +563,21 @@ typedef struct {
     const char *name;
 } embedded_image_t;
 
+#define BONGOCAT_EMBEDDED_IMAGES_COUNT BONGOCAT_NUM_FRAMES
 static embedded_image_t* init_bongocat_embedded_images(void) {
-    static embedded_image_t bongocat_embedded_images[BONGOCAT_NUM_FRAMES];
+    static embedded_image_t bongocat_embedded_images[BONGOCAT_EMBEDDED_IMAGES_COUNT];
 
-    bongocat_embedded_images[0] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
-    bongocat_embedded_images[1] = (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size, "embedded bongo-cat-left-down.png"};
-    bongocat_embedded_images[2] = (embedded_image_t){bongo_cat_right_down_png, bongo_cat_right_down_png_size, "embedded bongo-cat-right-down.png"};
-    bongocat_embedded_images[3] = (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size, "embedded bongo-cat-both-down.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_DOWN] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_LEFT_DOWN] = (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size, "embedded bongo-cat-left-down.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_RIGHT_DOWN] = (embedded_image_t){bongo_cat_right_down_png, bongo_cat_right_down_png_size, "embedded bongo-cat-right-down.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_UP] = (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size, "embedded bongo-cat-both-down.png"};
 
     return bongocat_embedded_images;
 }
 
+#define DIGIMON_SPRITE_SHEET_EMBEDDED_IMAGES_COUNT TOTAL_ANIMATIONS
 static embedded_image_t* init_digimon_embedded_images(void) {
-    static embedded_image_t digimon_sprite_sheet_embedded_images[TOTAL_ANIMATIONS];
+    static embedded_image_t digimon_sprite_sheet_embedded_images[DIGIMON_SPRITE_SHEET_EMBEDDED_IMAGES_COUNT];
 
     // index 0 is reserved for bongocat, no sprite sheet exists
     digimon_sprite_sheet_embedded_images[BONGOCAT_ANIM_INDEX] = (embedded_image_t){NULL, 0, "bongocat.png"};
@@ -582,14 +600,25 @@ static void anim_cleanup_loaded_images(animation_frame_t *anim_imgs, size_t coun
     }
 }
 
+static void anim_free_pixels(animation_frame_t *anim_imgs, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        if (anim_imgs[i].pixels) {
+            BONGOCAT_SAFE_FREE(anim_imgs[i].pixels);
+        }
+        anim_imgs[i].width = 0;
+        anim_imgs[i].height = 0;
+    }
+}
+
 static bongocat_error_t anim_load_embedded_images(animation_frame_t *anim_imgs, size_t anim_imgs_count, embedded_image_t *embedded_images, size_t embedded_images_count) {
     for (size_t i = 0; i < anim_imgs_count && i < embedded_images_count; i++) {
         const embedded_image_t *img = &embedded_images[i];
         
         bongocat_log_debug("Loading embedded image: %s", img->name);
 
-        anim_imgs[i].channels = 4;
-        anim_imgs[i].pixels = stbi_load_from_memory(img->data, img->size,
+        anim_imgs[i].channels = RGBA_CHANNELS;
+        assert(img->size <= INT_MAX);
+        anim_imgs[i].pixels = stbi_load_from_memory(img->data, (int)img->size,
                                                   &anim_imgs[i].width,
                                                   &anim_imgs[i].height,
                                                   NULL, anim_imgs[i].channels);
@@ -621,7 +650,8 @@ static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs
                                   sprite_sheet_image->data, (int)sprite_sheet_image->size,
                                   sprite_sheet_cols, sprite_sheet_rows,
                                   &sprite_sheet_count,
-                                  config->padding_x, config->padding_y, config->invert_color);
+                                  config->padding_x, config->padding_y,
+                                  config->invert_color ? COPY_PIXEL_OPTION_INVERT : COPY_PIXEL_OPTION_NORMAL);
     if (result != 0) {
         bongocat_log_error("Sprite Sheet load failed: %s", sprite_sheet_image->name);
         return -1;
@@ -638,7 +668,7 @@ static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs
 }
 
 static bongocat_error_t init_digimon_anim(animation_context_t* ctx, int anim_index, embedded_image_t* sprite_sheet_image, int sprite_sheet_cols, int sprite_sheet_rows) {
-    int sprite_sheet_count = anim_load_sprite_sheet(ctx->_current_config, ctx->anims[anim_index].frames, TOTAL_ANIMATIONS, sprite_sheet_image, sprite_sheet_cols, sprite_sheet_rows);
+    int sprite_sheet_count = anim_load_sprite_sheet(ctx->_current_config, ctx->anims[anim_index].frames, MAX_NUM_FRAMES, sprite_sheet_image, sprite_sheet_cols, sprite_sheet_rows);
     if (sprite_sheet_count < 0) {
         bongocat_log_error("Load Digimon Animation failed: %s, index: %d", sprite_sheet_image->name, anim_index);
 
@@ -653,12 +683,12 @@ static bongocat_error_t init_digimon_anim(animation_context_t* ctx, int anim_ind
 // =============================================================================
 
 bongocat_error_t animation_init(animation_context_t* ctx, config_t *config) {
+    BONGOCAT_CHECK_NULL(ctx, BONGOCAT_ERROR_INVALID_PARAM);
     BONGOCAT_CHECK_NULL(config, BONGOCAT_ERROR_INVALID_PARAM);
 
     bongocat_log_info("Initializing animation system");
 
-    ctx->_current_config = config;
-    ctx->anim_index = config->animation_index;
+    animation_update_config(ctx, config);
     ctx->anim_frame_index = config->idle_frame;
 
     ctx->anim_lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
@@ -675,12 +705,13 @@ bongocat_error_t animation_init(animation_context_t* ctx, config_t *config) {
     embedded_image_t* bongocat_embedded_images = init_bongocat_embedded_images();
     embedded_image_t* digimon_sprite_sheet_embedded_images = init_digimon_embedded_images();
     
-    int result = anim_load_embedded_images(ctx->anims[BONGOCAT_ANIM_INDEX].frames, TOTAL_ANIMATIONS, bongocat_embedded_images, BONGOCAT_NUM_FRAMES);
+    int result = anim_load_embedded_images(ctx->anims[BONGOCAT_ANIM_INDEX].frames, MAX_NUM_FRAMES,
+                                           bongocat_embedded_images, BONGOCAT_EMBEDDED_IMAGES_COUNT);
     if (result != 0) {
         return result;
     }
 
-    /// @TODO: load digimon frames
+    /// @TODO: load more digimon frames
     init_digimon_anim(ctx, DM20_AGUMON_ANIM_INDEX, &digimon_sprite_sheet_embedded_images[DM20_AGUMON_ANIM_INDEX], DM20_AGUMON_SPRITE_SHEET_COLS, DM20_AGUMON_SPRITE_SHEET_ROWS);
     
     bongocat_log_info("Animation system initialized successfully with embedded assets");
@@ -717,6 +748,8 @@ bongocat_error_t animation_start(animation_context_t* ctx, input_context_t *inpu
 }
 
 void animation_cleanup(animation_context_t* ctx) {
+    assert(ctx);
+
     if (atomic_load(&ctx->_animation_running)) {
         bongocat_log_debug("Stopping animation thread");
         atomic_store(&ctx->_animation_running, false);
@@ -725,10 +758,14 @@ void animation_cleanup(animation_context_t* ctx) {
         pthread_join(ctx->_anim_thread, NULL);
         bongocat_log_debug("Animation thread stopped");
     }
-    
+
     // Cleanup loaded images
-    for (size_t i = 0;i < TOTAL_ANIMATIONS; i++) {
-        anim_cleanup_loaded_images(ctx->anims[i].frames, MAX_NUM_FRAMES);
+    // free bongocat images loaded from stbi
+    anim_cleanup_loaded_images(ctx->anims[BONGOCAT_ANIM_INDEX].frames, MAX_NUM_FRAMES);
+    // free allocated pixels (copied pixels)
+    assert(BONGOCAT_ANIM_INDEX == 0);
+    for (size_t i = 1;i < TOTAL_ANIMATIONS; i++) {
+        anim_free_pixels(ctx->anims[i].frames, MAX_NUM_FRAMES);
     }
     
     // Cleanup mutex
@@ -740,4 +777,12 @@ void animation_cleanup(animation_context_t* ctx) {
 void animation_trigger(input_context_t *input) {
     assert(input);
     *input->any_key_pressed = 1;
+}
+
+void animation_update_config(animation_context_t *ctx, config_t *config) {
+    assert(ctx);
+    assert(config);
+
+    ctx->_current_config = config;
+    ctx->anim_index = config->animation_index;
 }
