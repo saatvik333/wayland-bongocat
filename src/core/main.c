@@ -322,7 +322,7 @@ static bongocat_error_t system_initialize_components(void) {
 
 [[ noreturn ]] static void system_cleanup_and_exit(int exit_code) {
     bongocat_log_info("Performing cleanup...");
-    
+
     // Remove PID file
     process_remove_pid_file();
     
@@ -340,11 +340,13 @@ static bongocat_error_t system_initialize_components(void) {
     
     // Cleanup configuration
     config_cleanup(&g_config);
-    
+
+#ifndef DISABLE_MEMORY_STATISTICS
     // Print memory statistics in debug mode
     if (g_config.enable_debug) {
         memory_print_stats();
     }
+#endif
 
 #ifdef DEBUG
     memory_leak_check();

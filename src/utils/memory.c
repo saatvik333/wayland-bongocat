@@ -3,8 +3,10 @@
 #include <string.h>
 #include <pthread.h>
 
+#ifndef DISABLE_MEMORY_STATISTICS
 static memory_stats_t g_memory_stats = {0};
 static pthread_mutex_t memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 #ifdef DEBUG
 typedef struct allocation_record {
@@ -29,7 +31,8 @@ void* bongocat_malloc(size_t size) {
         bongocat_log_error("Failed to allocate %zu bytes", size);
         return NULL;
     }
-    
+
+#ifndef DISABLE_MEMORY_STATISTICS
     pthread_mutex_lock(&memory_mutex);
     g_memory_stats.total_allocated += size;
     g_memory_stats.current_allocated += size;
@@ -38,6 +41,7 @@ void* bongocat_malloc(size_t size) {
     }
     g_memory_stats.allocation_count++;
     pthread_mutex_unlock(&memory_mutex);
+#endif
     
     return ptr;
 }
@@ -59,7 +63,8 @@ void* bongocat_calloc(size_t count, size_t size) {
         bongocat_log_error("Failed to allocate %zu bytes", count * size);
         return NULL;
     }
-    
+
+#ifndef DISABLE_MEMORY_STATISTICS
     pthread_mutex_lock(&memory_mutex);
     size_t total_size = count * size;
     g_memory_stats.total_allocated += total_size;
@@ -69,6 +74,7 @@ void* bongocat_calloc(size_t count, size_t size) {
     }
     g_memory_stats.allocation_count++;
     pthread_mutex_unlock(&memory_mutex);
+#endif
     
     return ptr;
 }
@@ -95,10 +101,12 @@ void bongocat_free(void *ptr) {
     if (!ptr) return;
     
     free(ptr);
-    
+
+#ifndef DISABLE_MEMORY_STATISTICS
     pthread_mutex_lock(&memory_mutex);
     g_memory_stats.free_count++;
     pthread_mutex_unlock(&memory_mutex);
+#endif
 }
 
 memory_pool_t* memory_pool_create(size_t size, size_t alignment) {
@@ -153,6 +161,7 @@ void memory_pool_destroy(memory_pool_t *pool) {
     }
 }
 
+#ifndef DISABLE_MEMORY_STATISTICS
 void memory_get_stats(memory_stats_t *stats) {
     if (!stats) return;
     
@@ -166,13 +175,14 @@ void memory_print_stats(void) {
     memory_get_stats(&stats);
     
     bongocat_log_info("Memory Statistics:");
-    bongocat_log_info("  Total allocated: %zu bytes", stats.total_allocated);
-    bongocat_log_info("  Current allocated: %zu bytes", stats.current_allocated);
-    bongocat_log_info("  Peak allocated: %zu bytes", stats.peak_allocated);
+    bongocat_log_info("  Total allocated: %zu bytes (%.2f MB)", stats.total_allocated, stats.total_allocated / (1024.0 * 1024.0));
+    bongocat_log_info("  Current allocated: %zu bytes (%.2f MB)", stats.current_allocated, stats.current_allocated / (1024.0 * 1024.0));
+    bongocat_log_info("  Peak allocated: %zu bytes (%.2f MB)", stats.peak_allocated, stats.peak_allocated / (1024.0 * 1024.0));
     bongocat_log_info("  Allocations: %zu", stats.allocation_count);
     bongocat_log_info("  Frees: %zu", stats.free_count);
     bongocat_log_info("  Potential leaks: %zu", stats.allocation_count - stats.free_count);
 }
+#endif
 
 #ifdef DEBUG
 void* bongocat_malloc_debug(size_t size, const char *file, int line) {

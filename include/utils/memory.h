@@ -1,9 +1,10 @@
 #ifndef BONGOCAT_MEMORY_H
 #define BONGOCAT_MEMORY_H
 
+#include "utils/error.h"
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include "utils/error.h"
 
 // Memory pool for efficient allocation
 typedef struct memory_pool {
@@ -25,17 +26,19 @@ void* memory_pool_alloc(memory_pool_t *pool, size_t size);
 void memory_pool_reset(memory_pool_t *pool);
 void memory_pool_destroy(memory_pool_t *pool);
 
+#ifndef DISABLE_MEMORY_STATISTICS
 // Memory statistics
 typedef struct {
-    size_t total_allocated;
-    size_t current_allocated;
-    size_t peak_allocated;
-    size_t allocation_count;
-    size_t free_count;
+    atomic_size_t total_allocated;
+    atomic_size_t current_allocated;
+    atomic_size_t peak_allocated;
+    atomic_size_t allocation_count;
+    atomic_size_t free_count;
 } memory_stats_t;
 
 void memory_get_stats(memory_stats_t *stats);
 void memory_print_stats(void);
+#endif
 
 // Memory leak detection (debug builds)
 #ifdef DEBUG
