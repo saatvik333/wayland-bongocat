@@ -18,10 +18,10 @@
 #define THRESHOLD_ALPHA 127
 
 // Bongocat Frames
-#define BONGOCAT_FRAME_BOTH_DOWN 0
-#define BONGOCAT_FRAME_LEFT_DOWN 1
-#define BONGOCAT_FRAME_RIGHT_DOWN 2
-#define BONGOCAT_FRAME_BOTH_UP 3
+#define BONGOCAT_FRAME_BOTH_UP 0
+#define BONGOCAT_FRAME_BOTH_DOWN 1
+#define BONGOCAT_FRAME_LEFT_DOWN 2
+#define BONGOCAT_FRAME_RIGHT_DOWN 3
 
 // Digimon (Sprite Sheet) Frames
 #define DIGIMON_FRAME_IDLE1 0
@@ -274,6 +274,25 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
 // ANIMATION STATE MANAGEMENT MODULE
 // =============================================================================
 
+static bool is_sleep_time(const config_t *config) {
+    time_t raw_time;
+    struct tm *time_info;
+
+    time(&raw_time);
+    time_info = localtime(&raw_time);
+
+    const int now_minutes = time_info->tm_hour * 60 + time_info->tm_min;
+    const int begin = config->sleep_begin.hour * 60 + config->sleep_begin.min;
+    const int end = config->sleep_end.hour * 60 + config->sleep_end.min;
+
+    // Normal range (e.g., 10:00–22:00): begin < end && (now_minutes >= begin && now_minutes < end)
+    // Overnight range (e.g., 22:00–06:00): begin > end && (now_minutes >= begin || now_minutes < end)
+
+    return (begin == end) ||
+           (begin < end ? (now_minutes >= begin && now_minutes < end)
+                        : (now_minutes >= begin || now_minutes < end));
+}
+
 typedef struct {
     timestamp_us_t hold_until_us;
     int test_counter;
@@ -286,8 +305,32 @@ static int anim_get_random_active_frame(animation_context_t* ctx) {
         return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
     }
 
-    // toggle frame
     const int current_frame = ctx->anim_frame_index;
+
+    // toggle sleep frame (if 2 frame exists for sleeping)
+    if (ctx->_current_config->enable_sleep_mode && is_sleep_time(ctx->_current_config)) {
+        if (current_frame == DIGIMON_FRAME_SLEEP1) {
+            if (ctx->anims[ctx->anim_index].digimon.sleep_2.pixels) {
+                return DIGIMON_FRAME_SLEEP2;
+            } else if (ctx->anims[ctx->anim_index].digimon.sleep1.pixels) {
+                return DIGIMON_FRAME_SLEEP1;
+            } else if (ctx->anims[ctx->anim_index].digimon.down1.pixels) {
+                bongocat_log_debug("No Sleeping Frame for %d", ctx->anim_index);
+                // fallback frame
+                return DIGIMON_FRAME_DOWN1;
+            }
+        } else if (current_frame == DIGIMON_FRAME_SLEEP2) {
+            if (ctx->anims[ctx->anim_index].digimon.sleep1.pixels) {
+                return DIGIMON_FRAME_SLEEP1;
+            } else if (ctx->anims[ctx->anim_index].digimon.down1.pixels) {
+                bongocat_log_debug("No Sleeping Frame for %d", ctx->anim_index);
+                // fallback frame
+                return DIGIMON_FRAME_DOWN1;
+            }
+        }
+    }
+
+    // toggle frame
     if (current_frame == DIGIMON_FRAME_IDLE1) {
         return DIGIMON_FRAME_IDLE2;
     } else if (current_frame == DIGIMON_FRAME_IDLE2) {
@@ -316,7 +359,7 @@ static void anim_handle_test_animation(animation_context_t* ctx, animation_state
     state->test_counter++;
     if (state->test_counter > state->test_interval_frames) {
         const int new_frame = anim_get_random_active_frame(ctx);
-        time_us_t duration_us = ctx->_current_config->test_animation_duration * 1000L;
+        const time_us_t duration_us = ctx->_current_config->test_animation_duration * 1000L;
         
         bongocat_log_debug("Test animation trigger");
         anim_trigger_frame_change(ctx, new_frame, duration_us, current_time_us, state);
@@ -330,7 +373,7 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
     }
     
     const int new_frame = anim_get_random_active_frame(ctx);
-    time_us_t duration_us = ctx->_current_config->keypress_duration * 1000;
+    const time_us_t duration_us = ctx->_current_config->keypress_duration * 1000;
     
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
     anim_trigger_frame_change(ctx, new_frame, duration_us, current_time_us, state);
@@ -340,6 +383,26 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
 }
 
 static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t *state, timestamp_us_t current_time_us) {
+    if (ctx->_current_config->enable_sleep_mode) {
+        if (is_sleep_time(ctx->_current_config)) {
+            bongocat_log_debug("Sleeping Frame");
+            if (ctx->anim_index == BONGOCAT_ANIM_INDEX) {
+                ctx->anim_frame_index = BONGOCAT_FRAME_BOTH_DOWN;
+                return;
+            } else {
+                // assume it's a digimon
+                if (ctx->anims[ctx->anim_index].digimon.sleep1.pixels) {
+                    ctx->anim_frame_index = DIGIMON_FRAME_SLEEP1;
+                    return;
+                } else if (ctx->anims[ctx->anim_index].digimon.down1.pixels) {
+                    // fallback frame
+                    ctx->anim_frame_index = DIGIMON_FRAME_DOWN1;
+                    return;
+                }
+            }
+        }
+    }
+
     if (current_time_us <= state->hold_until_us) {
         return;
     }
@@ -423,10 +486,10 @@ typedef struct {
 static embedded_image_t* init_bongocat_embedded_images(void) {
     static embedded_image_t bongocat_embedded_images[BONGOCAT_EMBEDDED_IMAGES_COUNT];
 
-    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_DOWN] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_UP] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
     bongocat_embedded_images[BONGOCAT_FRAME_LEFT_DOWN] = (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size, "embedded bongo-cat-left-down.png"};
     bongocat_embedded_images[BONGOCAT_FRAME_RIGHT_DOWN] = (embedded_image_t){bongo_cat_right_down_png, bongo_cat_right_down_png_size, "embedded bongo-cat-right-down.png"};
-    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_UP] = (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size, "embedded bongo-cat-both-down.png"};
+    bongocat_embedded_images[BONGOCAT_FRAME_BOTH_DOWN] = (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size, "embedded bongo-cat-both-down.png"};
 
     return bongocat_embedded_images;
 }
@@ -449,6 +512,7 @@ static embedded_image_t* init_digimon_embedded_images(void) {
     return digimon_sprite_sheet_embedded_images;
 }
 
+// clean up image data loaded with stbi
 static void anim_cleanup_loaded_images(animation_frame_t *anim_imgs, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (anim_imgs[i].pixels) {
@@ -460,6 +524,7 @@ static void anim_cleanup_loaded_images(animation_frame_t *anim_imgs, size_t coun
     }
 }
 
+// clean up image data allocated (copied)
 static void anim_free_pixels(animation_frame_t *anim_imgs, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (anim_imgs[i].pixels) {

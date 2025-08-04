@@ -21,6 +21,11 @@ typedef enum {
 } layer_type_t;
 
 typedef struct {
+    int hour;
+    int min;
+} config_time_t;
+
+typedef struct {
     int screen_width;
     int bar_height;
     char **keyboard_devices;
@@ -43,6 +48,10 @@ typedef struct {
     int invert_color;
     int padding_x;
     int padding_y;
+
+    int enable_sleep_mode;
+    config_time_t sleep_begin;
+    config_time_t sleep_end;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "config/config.h"
 
+#include <assert.h>
 #include <ctype.h>
 
 #include "utils/error.h"
@@ -37,6 +38,7 @@ static int config_num_devices = 0;
 // =============================================================================
 
 static void config_clamp_int(int *value, int min, int max, const char *name) {
+    assert(value);
     if (*value < min || *value > max) {
         bongocat_log_warning("%s %d out of range [%d-%d], clamping", name, *value, min, max);
         *value = (*value < min) ? min : max;
@@ -44,11 +46,13 @@ static void config_clamp_int(int *value, int min, int max, const char *name) {
 }
 
 static void config_validate_dimensions(config_t *config) {
+    assert(config);
     config_clamp_int(&config->cat_height, MIN_CAT_HEIGHT, MAX_CAT_HEIGHT, "cat_height");
     config_clamp_int(&config->overlay_height, MIN_OVERLAY_HEIGHT, MAX_OVERLAY_HEIGHT, "overlay_height");
 }
 
 static void config_validate_timing(config_t *config) {
+    assert(config);
     config_clamp_int(&config->fps, MIN_FPS, MAX_FPS, "fps");
     config_clamp_int(&config->keypress_duration, MIN_DURATION, MAX_DURATION, "keypress_duration");
     config_clamp_int(&config->test_animation_duration, MIN_DURATION, MAX_DURATION, "test_animation_duration");
@@ -62,6 +66,7 @@ static void config_validate_timing(config_t *config) {
 }
 
 static void config_validate_appearance(config_t *config) {
+    assert(config);
     // Validate opacity
     config_clamp_int(&config->overlay_opacity, 0, 255, "overlay_opacity");
 
@@ -90,6 +95,7 @@ static void config_validate_appearance(config_t *config) {
 }
 
 static void config_validate_enums(config_t *config) {
+    assert(config);
     // Validate layer
     if (config->layer != LAYER_TOP && config->layer != LAYER_OVERLAY) {
         bongocat_log_warning("Invalid layer %d, resetting to top", config->layer);
@@ -103,7 +109,45 @@ static void config_validate_enums(config_t *config) {
     }
 }
 
+static void config_validate_time(config_t *config) {
+    assert(config);
+    if (config->enable_sleep_mode) {
+        int begin_minutes = config->sleep_begin.hour * 60 + config->sleep_begin.min;
+        int end_minutes = config->sleep_end.hour * 60 + config->sleep_end.min;
+
+        if (end_minutes < begin_minutes) {
+            bongocat_log_warning("Invalid time %02dx%02d - %02dx%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min, config->sleep_end.hour, config->sleep_end.min);
+
+            config->enable_sleep_mode = 0;
+            config->sleep_begin.hour = 0;
+            config->sleep_begin.min = 0;
+            config->sleep_end.hour = 0;
+            config->sleep_end.min = 0;
+        }else if (begin_minutes == end_minutes) {
+            bongocat_log_warning("Sleep mode is enabled, but time is equal: %02dx%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min);
+
+            config->enable_sleep_mode = 0;
+            //config->sleep_begin.hour = 0;
+            //config->sleep_begin.min = 0;
+            //config->sleep_end.hour = 0;
+            //config->sleep_end.min = 0;
+        }
+    }
+    // Validate layer
+    if (config->layer != LAYER_TOP && config->layer != LAYER_OVERLAY) {
+        bongocat_log_warning("Invalid layer %d, resetting to top", config->layer);
+        config->layer = LAYER_TOP;
+    }
+
+    // Validate overlay_position
+    if (config->overlay_position != POSITION_TOP && config->overlay_position != POSITION_BOTTOM) {
+        bongocat_log_warning("Invalid overlay_position %d, resetting to top", config->overlay_position);
+        config->overlay_position = POSITION_TOP;
+    }
+}
+
 static void config_validate_positioning(config_t *config) {
+    assert(config);
     // Validate cat positioning doesn't go off-screen
     if (abs(config->cat_x_offset) > config->screen_width) {
         bongocat_log_warning("cat_x_offset %d may position cat off-screen (screen width: %d)", 
@@ -113,16 +157,18 @@ static void config_validate_positioning(config_t *config) {
 
 static bongocat_error_t config_validate(config_t *config) {
     BONGOCAT_CHECK_NULL(config, BONGOCAT_ERROR_INVALID_PARAM);
-    
+
+    // Normalize boolean values
+    config->enable_debug = config->enable_debug ? 1 : 0;
+    config->invert_color = config->invert_color ? 1 : 0;
+    config->enable_sleep_mode = config->enable_sleep_mode ? 1 : 0;
+
     config_validate_dimensions(config);
     config_validate_timing(config);
     config_validate_appearance(config);
     config_validate_enums(config);
     config_validate_positioning(config);
-    
-    // Normalize boolean values
-    config->enable_debug = config->enable_debug ? 1 : 0;
-    config->invert_color = config->invert_color ? 1 : 0;
+    config_validate_time(config);
     
     return BONGOCAT_SUCCESS;
 }
@@ -218,6 +264,8 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->padding_x = int_value;
     } else if (strcmp(key, "padding_y") == 0) {
         config->padding_y = int_value;
+    } else if (strcmp(key, "enable_sleep_mode") == 0) {
+        config->enable_sleep_mode = int_value;
     } else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
@@ -270,10 +318,70 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
             bongocat_log_warning("Invalid overlay_position '%s', using 'bongocat'", value);
             config->animation_index = BONGOCAT_ANIM_INDEX;
         }
-    }else {
+    } else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
     
+    return BONGOCAT_SUCCESS;
+}
+
+static bongocat_error_t config_parse_string(config_t *config, const char *key, const char *value) {
+    if (strcmp(key, "sleep_begin") == 0) {
+        if (value && value[0] != '\0') {
+            int hour, min;
+            if (sscanf(value, "%2d:%2d", &hour, &min) != 2 || hour < 0 || hour > 23 || min < 0 || min > 59) {
+                return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+            }
+
+            config->sleep_begin.hour = hour;
+            config->sleep_begin.min = min;
+        } else {
+            config->sleep_begin.hour = 0;
+            config->sleep_begin.min = 0;
+        }
+    } else if (strcmp(key, "sleep_end") == 0) {
+        if (value && value[0] != '\0') {
+            int hour, min;
+            if (sscanf(value, "%2d:%2d", &hour, &min) != 2 || hour < 0 || hour > 23 || min < 0 || min > 59) {
+                return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+            }
+
+            config->sleep_end.hour = hour;
+            config->sleep_end.min = min;
+        } else {
+            config->sleep_end.hour = 0;
+            config->sleep_end.min = 0;
+        }
+    } else if (strcmp(key, "animation_name") == 0) {
+        char lower_value[256] = {0};
+        memset(lower_value, 0, sizeof(lower_value));
+        for(size_t i = 0; i < strlen(value); i++) {
+            lower_value[i] = (char)tolower(value[i]);
+        }
+
+        config->animation_index = -1;
+
+        if (strcmp(lower_value, "bongocat") == 0) {
+            config->animation_index = BONGOCAT_ANIM_INDEX;
+        }
+
+#ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
+        /// @TODO: add full assets
+#else
+        //if (strcmp(lower_value, "agumon") == 0) {
+        //    config->animation_index = DM_AGUMON_ANIM_INDEX;
+        //}
+#include "../graphics/embedded_assets/min_dm_config_parse_enum_key.c.inl"
+#endif
+
+        if (config->animation_index < 0) {
+            bongocat_log_warning("Invalid overlay_position '%s', using 'bongocat'", value);
+            config->animation_index = BONGOCAT_ANIM_INDEX;
+        }
+    } else {
+        return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
+    }
+
     return BONGOCAT_SUCCESS;
 }
 
@@ -285,6 +393,11 @@ static bongocat_error_t config_parse_key_value(config_t *config, const char *key
     
     // Try enum keys
     if (config_parse_enum_key(config, key, value) == BONGOCAT_SUCCESS) {
+        return BONGOCAT_SUCCESS;
+    }
+
+    // Try string
+    if (config_parse_string(config, key, value) == BONGOCAT_SUCCESS) {
         return BONGOCAT_SUCCESS;
     }
     
@@ -385,7 +498,16 @@ static void config_set_defaults(config_t *config) {
         .overlay_opacity = 150,
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
-        .overlay_position = POSITION_TOP
+        .overlay_position = POSITION_TOP,
+
+        .animation_index = 0,
+        .invert_color = 0,
+        .padding_x = 0,
+        .padding_y = 0,
+
+        .enable_sleep_mode = 0,
+        .sleep_begin = {0},
+        .sleep_end = {0},
     };
 }
 
