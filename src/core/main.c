@@ -47,7 +47,7 @@ typedef struct {
 // =============================================================================
 
 static int process_create_pid_file(void) {
-    int fd = open(PID_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    const int fd = open(PID_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (fd < 0) {
         bongocat_log_error("Failed to create PID file: %s", strerror(errno));
         return -1;
@@ -123,7 +123,7 @@ static pid_t process_get_running_pid(void) {
 }
 
 static int process_handle_toggle(void) {
-    pid_t running_pid = process_get_running_pid();
+    const pid_t running_pid = process_get_running_pid();
     
     if (running_pid > 0) {
         // Process is running, kill it
@@ -456,7 +456,7 @@ int main(int argc, char *argv[]) {
     }
     
     // Create PID file to track this instance
-    int pid_fd = process_create_pid_file();
+    const int pid_fd = process_create_pid_file();
     if (pid_fd == -2) {
         bongocat_log_error("Another instance of bongocat is already running");
         return EXIT_FAILURE;

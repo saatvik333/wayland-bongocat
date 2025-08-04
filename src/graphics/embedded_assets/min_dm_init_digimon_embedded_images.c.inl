@@ -1,0 +1,17 @@
+digimon_sprite_sheet_embedded_images[DM_BOTAMON_ANIM_INDEX] = (embedded_image_t){dm_botamon_png, dm_botamon_png_size, "embedded botamon"};
+digimon_sprite_sheet_embedded_images[DM_KOROMON_ANIM_INDEX] = (embedded_image_t){dm_koromon_png, dm_koromon_png_size, "embedded koromon"};
+digimon_sprite_sheet_embedded_images[DM_AGUMON_ANIM_INDEX] = (embedded_image_t){dm_agumon_png, dm_agumon_png_size, "embedded agumon"};
+digimon_sprite_sheet_embedded_images[DM_BETAMON_ANIM_INDEX] = (embedded_image_t){dm_betamon_png, dm_betamon_png_size, "embedded betamon"};
+digimon_sprite_sheet_embedded_images[DM_GREYMON_ANIM_INDEX] = (embedded_image_t){dm_greymon_png, dm_greymon_png_size, "embedded greymon"};
+digimon_sprite_sheet_embedded_images[DM_TYRANOMON_ANIM_INDEX] = (embedded_image_t){dm_tyranomon_png, dm_tyranomon_png_size, "embedded tyranomon"};
+digimon_sprite_sheet_embedded_images[DM_DEVIMON_ANIM_INDEX] = (embedded_image_t){dm_devimon_png, dm_devimon_png_size, "embedded devimon"};
+digimon_sprite_sheet_embedded_images[DM_MERAMON_ANIM_INDEX] = (embedded_image_t){dm_meramon_png, dm_meramon_png_size, "embedded meramon"};
+digimon_sprite_sheet_embedded_images[DM_AIRDRAMON_ANIM_INDEX] = (embedded_image_t){dm_airdramon_png, dm_airdramon_png_size, "embedded airdramon"};
+digimon_sprite_sheet_embedded_images[DM_SEADRAMON_ANIM_INDEX] = (embedded_image_t){dm_seadramon_png, dm_seadramon_png_size, "embedded seadramon"};
+digimon_sprite_sheet_embedded_images[DM_NUMEMON_ANIM_INDEX] = (embedded_image_t){dm_numemon_png, dm_numemon_png_size, "embedded numemon"};
+digimon_sprite_sheet_embedded_images[DM_METAL_GREYMON_ANIM_INDEX] = (embedded_image_t){dm_metal_greymon_png, dm_metal_greymon_png_size, "embedded metal_greymon"};
+digimon_sprite_sheet_embedded_images[DM_MAMEMON_ANIM_INDEX] = (embedded_image_t){dm_mamemon_png, dm_mamemon_png_size, "embedded mamemon"};
+digimon_sprite_sheet_embedded_images[DM_MONZAEMON_ANIM_INDEX] = (embedded_image_t){dm_monzaemon_png, dm_monzaemon_png_size, "embedded monzaemon"};
+digimon_sprite_sheet_embedded_images[DM_BLITZ_GREYMON_ANIM_INDEX] = (embedded_image_t){dm_blitz_greymon_png, dm_blitz_greymon_png_size, "embedded blitz_greymon"};
+digimon_sprite_sheet_embedded_images[DM_BANCHO_MAMEMON_ANIM_INDEX] = (embedded_image_t){dm_bancho_mamemon_png, dm_bancho_mamemon_png_size, "embedded bancho_mamemon"};
+digimon_sprite_sheet_embedded_images[DM_OMEGAMON_ALTER_S_ANIM_INDEX] = (embedded_image_t){dm_omegamon_alter_s_png, dm_omegamon_alter_s_png_size, "embedded omegamon_alter_s"};

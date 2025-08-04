@@ -35,15 +35,15 @@
 #define DIGIMON_FRAME_SAD 8
 
 // optional frames
-//#define DIGIMON_FRAME_DOWN2 9
-//#define DIGIMON_FRAME_EAT2 10
-//#define DIGIMON_FRAME_SLEEP2 11
-//#define DIGIMON_FRAME_ATTACK 12
+#define DIGIMON_FRAME_DOWN2 9
+#define DIGIMON_FRAME_EAT2 10
+#define DIGIMON_FRAME_SLEEP2 11
+#define DIGIMON_FRAME_ATTACK 12
 
-//#define DIGIMON_FRAME_MOVEMENT1 13
-//#define DIGIMON_FRAME_MOVEMENT2 14
+#define DIGIMON_FRAME_MOVEMENT1 13
+#define DIGIMON_FRAME_MOVEMENT2 14
 
-static const animation_frame_t empty_sprite_sheet_frame = (animation_frame_t){
+static const animation_frame_t empty_sprite_sheet_frame = {
     .width = 0,
     .height = 0,
     .channels = RGBA_CHANNELS,
@@ -156,8 +156,8 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
         return BONGOCAT_ERROR_INVALID_PARAM;
     }
 
-    int frame_width = sheet_width / frame_columns;
-    int frame_height = sheet_height / frame_rows;
+    const int frame_width = sheet_width / frame_columns;
+    const int frame_height = sheet_height / frame_rows;
     const int total_frames = frame_columns * frame_rows;
 
     assert(out_frames_count <= INT_MAX);
@@ -184,6 +184,7 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
             }
 
             for (int y = 0; y < frame_height; ++y) {
+                // copy pixels line
                 memcpy(
                     frame_pixels + y * frame_width * RGBA_CHANNELS,
                     sprite_sheet_pixels + ((row * frame_height + y) * sheet_width + (col * frame_width)) * RGBA_CHANNELS,
@@ -215,6 +216,7 @@ static bongocat_error_t load_sprite_sheet_from_memory(animation_frame_t* out_fra
     return BONGOCAT_SUCCESS;
 }
 
+/*
 static void free_frames(animation_frame_t* frames, size_t frame_count) {
     for (size_t i = 0; i < frame_count; ++i) {
         BONGOCAT_SAFE_FREE(frames[i].pixels);
@@ -222,6 +224,7 @@ static void free_frames(animation_frame_t* frames, size_t frame_count) {
     BONGOCAT_FREE(frames);
     frames = NULL;
 }
+*/
 
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
                        const unsigned char *src, int src_w, int src_h,
@@ -236,11 +239,11 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
             }
 
             // Map destination pixel to source pixel
-            int sx = (x * src_w) / target_w;
-            int sy = (y * src_h) / target_h;
+            const int sx = (x * src_w) / target_w;
+            const int sy = (y * src_h) / target_h;
 
-            int dest_idx = (dy * dest_w + dx) * RGBA_CHANNELS;
-            int src_idx = (sy * src_w + sx) * RGBA_CHANNELS;
+            const int dest_idx = (dy * dest_w + dx) * RGBA_CHANNELS;
+            const int src_idx = (sy * src_w + sx) * RGBA_CHANNELS;
 
             // Only draw non-transparent pixels
             if (src[src_idx + 3] > THRESHOLD_ALPHA) {
@@ -258,7 +261,7 @@ void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
                 continue;
             }
             
-            int idx = (j * width + i) * RGBA_CHANNELS;
+            const int idx = (j * width + i) * RGBA_CHANNELS;
             dest[idx + 0] = b;
             dest[idx + 1] = g;
             dest[idx + 2] = r;
@@ -312,8 +315,8 @@ static void anim_handle_test_animation(animation_context_t* ctx, animation_state
     
     state->test_counter++;
     if (state->test_counter > state->test_interval_frames) {
-        int new_frame = anim_get_random_active_frame(ctx);
-        long duration_us = ctx->_current_config->test_animation_duration * 1000;
+        const int new_frame = anim_get_random_active_frame(ctx);
+        time_us_t duration_us = ctx->_current_config->test_animation_duration * 1000L;
         
         bongocat_log_debug("Test animation trigger");
         anim_trigger_frame_change(ctx, new_frame, duration_us, current_time_us, state);
@@ -326,8 +329,8 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
         return;
     }
     
-    int new_frame = anim_get_random_active_frame(ctx);
-    long duration_us = ctx->_current_config->keypress_duration * 1000;
+    const int new_frame = anim_get_random_active_frame(ctx);
+    time_us_t duration_us = ctx->_current_config->keypress_duration * 1000;
     
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
     anim_trigger_frame_change(ctx, new_frame, duration_us, current_time_us, state);
@@ -367,7 +370,7 @@ static void anim_init_state(animation_context_t* ctx, animation_state_t *state) 
     state->hold_until_us = 0;
     state->test_counter = 0;
     state->test_interval_frames = ctx->_current_config->test_animation_interval * ctx->_current_config->fps;
-    state->frame_time_ns = 1000000000L / ctx->_current_config->fps;
+    state->frame_time_ns = 1000000000LL / ctx->_current_config->fps;
 }
 
 
@@ -436,8 +439,11 @@ static embedded_image_t* init_digimon_embedded_images(void) {
     digimon_sprite_sheet_embedded_images[BONGOCAT_ANIM_INDEX] = (embedded_image_t){NULL, 0, "bongocat.png"};
 
 #ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
+    /// @TODO: add full assets
+#else
+    //digimon_sprite_sheet_embedded_images[DM_AGUMON_ANIM_INDEX] = (embedded_image_t){dm_agumon_png, dm_agumon_png_size, "embedded agumon"};
+    #include "embedded_assets/min_dm_init_digimon_embedded_images.c.inl"
     /// @TODO: index more digimons here
-    digimon_sprite_sheet_embedded_images[DM_AGUMON_ANIM_INDEX] = (embedded_image_t){dm_agumon_png, dm_agumon_png_size, "embedded dm/Agumon.png"};
 #endif
 
     return digimon_sprite_sheet_embedded_images;
@@ -464,7 +470,7 @@ static void anim_free_pixels(animation_frame_t *anim_imgs, size_t count) {
     }
 }
 
-static bongocat_error_t anim_load_embedded_images(animation_frame_t *anim_imgs, size_t anim_imgs_count, embedded_image_t *embedded_images, size_t embedded_images_count) {
+static bongocat_error_t anim_load_embedded_images(animation_frame_t *anim_imgs, size_t anim_imgs_count, const embedded_image_t *embedded_images, size_t embedded_images_count) {
     for (size_t i = 0; i < anim_imgs_count && i < embedded_images_count; i++) {
         const embedded_image_t *img = &embedded_images[i];
         
@@ -488,7 +494,7 @@ static bongocat_error_t anim_load_embedded_images(animation_frame_t *anim_imgs, 
     return BONGOCAT_SUCCESS;
 }
 
-static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs, size_t anim_imgs_count, embedded_image_t *sprite_sheet_image, int sprite_sheet_cols, int sprite_sheet_rows) {
+static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs, size_t anim_imgs_count, const embedded_image_t *sprite_sheet_image, int sprite_sheet_cols, int sprite_sheet_rows) {
     BONGOCAT_CHECK_NULL(config, -1);
     BONGOCAT_CHECK_NULL(anim_imgs, -1);
     BONGOCAT_CHECK_NULL(sprite_sheet_image, -1);
@@ -500,7 +506,7 @@ static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs
     assert(sprite_sheet_image->size <= INT_MAX);
 
     int sprite_sheet_count = 0;
-    int result = load_sprite_sheet_from_memory(anim_imgs, anim_imgs_count,
+    const int result = load_sprite_sheet_from_memory(anim_imgs, anim_imgs_count,
                                   sprite_sheet_image->data, (int)sprite_sheet_image->size,
                                   sprite_sheet_cols, sprite_sheet_rows,
                                   &sprite_sheet_count,
@@ -521,8 +527,8 @@ static int anim_load_sprite_sheet(config_t *config, animation_frame_t *anim_imgs
     return sprite_sheet_count;
 }
 
-static bongocat_error_t init_digimon_anim(animation_context_t* ctx, int anim_index, embedded_image_t* sprite_sheet_image, int sprite_sheet_cols, int sprite_sheet_rows) {
-    int sprite_sheet_count = anim_load_sprite_sheet(ctx->_current_config, ctx->anims[anim_index].frames, MAX_NUM_FRAMES, sprite_sheet_image, sprite_sheet_cols, sprite_sheet_rows);
+static bongocat_error_t init_digimon_anim(animation_context_t* ctx, int anim_index, const embedded_image_t* sprite_sheet_image, int sprite_sheet_cols, int sprite_sheet_rows) {
+    const int sprite_sheet_count = anim_load_sprite_sheet(ctx->_current_config, ctx->anims[anim_index].frames, MAX_NUM_FRAMES, sprite_sheet_image, sprite_sheet_cols, sprite_sheet_rows);
     if (sprite_sheet_count < 0) {
         bongocat_log_error("Load Digimon Animation failed: %s, index: %d", sprite_sheet_image->name, anim_index);
 
@@ -556,18 +562,21 @@ bongocat_error_t animation_init(animation_context_t* ctx, config_t *config) {
     }
     
     // Initialize embedded images data
-    embedded_image_t* bongocat_embedded_images = init_bongocat_embedded_images();
-    embedded_image_t* digimon_sprite_sheet_embedded_images = init_digimon_embedded_images();
+    const embedded_image_t* bongocat_embedded_images = init_bongocat_embedded_images();
+    const embedded_image_t* digimon_sprite_sheet_embedded_images = init_digimon_embedded_images();
     
-    int result = anim_load_embedded_images(ctx->anims[BONGOCAT_ANIM_INDEX].frames, MAX_NUM_FRAMES,
-                                           bongocat_embedded_images, BONGOCAT_EMBEDDED_IMAGES_COUNT);
+    const int result = anim_load_embedded_images(ctx->anims[BONGOCAT_ANIM_INDEX].frames, MAX_NUM_FRAMES,
+                                                 bongocat_embedded_images, BONGOCAT_EMBEDDED_IMAGES_COUNT);
     if (result != 0) {
         return result;
     }
 
 #ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
-    /// @TODO: load more digimon frames
-    init_digimon_anim(ctx, DM_AGUMON_ANIM_INDEX, &digimon_sprite_sheet_embedded_images[DM_AGUMON_ANIM_INDEX], DM_AGUMON_SPRITE_SHEET_COLS, DM_AGUMON_SPRITE_SHEET_ROWS);
+
+#else
+    (void)init_digimon_anim;
+    //init_digimon_anim(ctx, DM_AGUMON_ANIM_INDEX, &digimon_sprite_sheet_embedded_images[DM_AGUMON_ANIM_INDEX], DM_AGUMON_SPRITE_SHEET_COLS, DM_AGUMON_SPRITE_SHEET_ROWS);
+    #include "embedded_assets/min_dm_init_digimon_anim.c.inl"
 #endif
     
     bongocat_log_info("Animation system initialized successfully with embedded assets");
@@ -590,7 +599,7 @@ bongocat_error_t animation_start(animation_context_t* ctx, input_context_t *inpu
 
     bongocat_log_info("Starting animation thread");
     
-    int result = pthread_create(&ctx->_anim_thread, NULL, anim_thread_main, anim_thread_main_arg);
+    const int result = pthread_create(&ctx->_anim_thread, NULL, anim_thread_main, anim_thread_main_arg);
     if (result != 0) {
         BONGOCAT_FREE(anim_thread_main_arg);
         bongocat_log_error("Failed to create animation thread: %s", strerror(result));

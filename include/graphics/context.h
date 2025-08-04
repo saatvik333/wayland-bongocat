@@ -12,8 +12,8 @@
 
 // Idle 1, Idle 2, Angry, Down1, Happy, Eat1, Sleep1, Refuse, Down2 ~~, Eat2, Sleep2, Attack~~
 // both-up, left-down, right-down, both-down, ...
-#define MAX_NUM_FRAMES 9
-#define MAX_DIGIMON_FRAMES 9
+#define MAX_NUM_FRAMES 15
+#define MAX_DIGIMON_FRAMES 15
 
 
 typedef struct {
@@ -35,14 +35,14 @@ typedef struct {
     animation_frame_t sad;
 
     // optional
-    //animation_frame_t down_2;
-    //animation_frame_t eat_2;
-    //animation_frame_t sleep_2;
-    //animation_frame_t attack;
+    animation_frame_t down_2;
+    animation_frame_t eat_2;
+    animation_frame_t sleep_2;
+    animation_frame_t attack;
 
     // extra frames
-    //animation_frame_t movement_1;
-    //animation_frame_t movement_2;
+    animation_frame_t movement_1;
+    animation_frame_t movement_2;
 } digimon_animation_t;
 
 typedef struct {

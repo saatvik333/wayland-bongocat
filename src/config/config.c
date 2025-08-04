@@ -251,15 +251,19 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
             lower_value[i] = (char)tolower(value[i]);
         }
 
-        config->animation_index = 0;
+        config->animation_index = -1;
+
         if (strcmp(lower_value, "bongocat") == 0) {
             config->animation_index = BONGOCAT_ANIM_INDEX;
         }
 
         #ifdef FEATURE_INCLUDE_DM_EMBEDDED_ASSETS
-        if (strcmp(lower_value, "agumon") == 0 || strcmp(lower_value, "dm:agumon") == 0) {
-            config->animation_index = DM_AGUMON_ANIM_INDEX;
-        }
+        /// @TODO: add full assets
+        #else
+        //if (strcmp(lower_value, "agumon") == 0) {
+        //    config->animation_index = DM_AGUMON_ANIM_INDEX;
+        //}
+        #include "../graphics/embedded_assets/min_dm_config_parse_enum_key.c.inl"
         #endif
 
         if (config->animation_index < 0) {

@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "utils/time.h"
 #include <time.h>
 #include <sys/time.h>

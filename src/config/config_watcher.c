@@ -32,7 +32,7 @@ static void *config_watcher_thread(void *arg) {
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         
-        int select_result = select(watcher->inotify_fd + 1, &read_fds, NULL, NULL, &timeout);
+        const int select_result = select(watcher->inotify_fd + 1, &read_fds, NULL, NULL, &timeout);
         
         if (select_result < 0) {
             if (errno == EINTR) continue;

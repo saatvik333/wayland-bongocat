@@ -23,10 +23,10 @@ RELEASE_CFLAGS += -fomit-frame-pointer -funroll-loops -finline-functions
 # Set flags based on build type
 ifeq ($(BUILD_TYPE),debug)
     CFLAGS = $(DEBUG_CFLAGS)
-    LDFLAGS = -lwayland-client -lm -lpthread $(DEBUG_LDFLAGS)
+    LDFLAGS = -lwayland-client -lm -lpthread -lrt $(DEBUG_LDFLAGS)
 else
     CFLAGS = $(RELEASE_CFLAGS)
-    LDFLAGS = -lwayland-client -lm -lpthread -flto
+    LDFLAGS = -lwayland-client -lm -lpthread -lrt -flto
 endif
 
 # Directories
@@ -38,7 +38,7 @@ PROTOCOLDIR = protocols
 WAYLAND_PROTOCOLS_DIR ?= /usr/share/wayland-protocols
 
 # Source files (including embedded assets which are now committed)
-SOURCES = $(shell find $(SRCDIR) -name "*.c")
+SOURCES = src/utils/memory.c src/utils/time.c src/utils/error.c src/core/main.c src/platform/wayland.c src/platform/input.c src/graphics/animation.c src/graphics/embedded_assets/bongocat.c src/graphics/embedded_assets/min_dm.c src/graphics/embedded_assets.c src/config/config_watcher.c src/config/config.c
 OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Protocol files
@@ -61,6 +61,7 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)
 	mkdir -p $(OBJDIR)/core
 	mkdir -p $(OBJDIR)/graphics
+	mkdir -p $(OBJDIR)/graphics/embedded_assets
 	mkdir -p $(OBJDIR)/platform
 	mkdir -p $(OBJDIR)/config
 	mkdir -p $(OBJDIR)/utils
