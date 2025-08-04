@@ -25,6 +25,7 @@
 #define MIN_DURATION 10
 #define MAX_DURATION 5000
 #define MAX_INTERVAL 3600
+#define MAX_KPM 5000
 
 // =============================================================================
 // GLOBAL STATE FOR DEVICE MANAGEMENT
@@ -63,6 +64,11 @@ static void config_validate_timing(config_t *config) {
                            config->test_animation_interval, MAX_INTERVAL);
         config->test_animation_interval = (config->test_animation_interval < 0) ? 0 : MAX_INTERVAL;
     }
+}
+
+static void config_validate_kpm(config_t *config) {
+    assert(config);
+    config_clamp_int(&config->happy_kpm, 0, MAX_KPM, "happy_kpm");
 }
 
 static void config_validate_appearance(config_t *config) {
@@ -115,16 +121,8 @@ static void config_validate_time(config_t *config) {
         int begin_minutes = config->sleep_begin.hour * 60 + config->sleep_begin.min;
         int end_minutes = config->sleep_end.hour * 60 + config->sleep_end.min;
 
-        if (end_minutes < begin_minutes) {
-            bongocat_log_warning("Invalid time %02dx%02d - %02dx%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min, config->sleep_end.hour, config->sleep_end.min);
-
-            config->enable_sleep_mode = 0;
-            config->sleep_begin.hour = 0;
-            config->sleep_begin.min = 0;
-            config->sleep_end.hour = 0;
-            config->sleep_end.min = 0;
-        }else if (begin_minutes == end_minutes) {
-            bongocat_log_warning("Sleep mode is enabled, but time is equal: %02dx%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min);
+        if (begin_minutes == end_minutes) {
+            bongocat_log_warning("Sleep mode is enabled, but time is equal: %02d:%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min);
 
             config->enable_sleep_mode = 0;
             //config->sleep_begin.hour = 0;
@@ -169,6 +167,7 @@ static bongocat_error_t config_validate(config_t *config) {
     config_validate_enums(config);
     config_validate_positioning(config);
     config_validate_time(config);
+    config_validate_kpm(config);
     
     return BONGOCAT_SUCCESS;
 }
@@ -266,6 +265,8 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->padding_y = int_value;
     } else if (strcmp(key, "enable_sleep_mode") == 0) {
         config->enable_sleep_mode = int_value;
+    } else if (strcmp(key, "happy_kpm") == 0) {
+        config->happy_kpm = int_value;
     } else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
@@ -508,12 +509,14 @@ static void config_set_defaults(config_t *config) {
         .enable_sleep_mode = 0,
         .sleep_begin = {0},
         .sleep_end = {0},
+
+        .happy_kpm = 0,
     };
 }
 
 static bongocat_error_t config_set_default_devices(config_t *config) {
     if (config_num_devices == 0) {
-        const char *default_device = "/dev/input/event4";
+        static const char *default_device = "/dev/input/event4";
         return config_add_keyboard_device(config, default_device);
     }
     return BONGOCAT_SUCCESS;

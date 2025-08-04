@@ -52,6 +52,8 @@ typedef struct {
     int enable_sleep_mode;
     config_time_t sleep_begin;
     config_time_t sleep_end;
+
+    int happy_kpm;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

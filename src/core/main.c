@@ -253,7 +253,7 @@ static void config_reload_callback(const char *config_path) {
     // Check if input devices changed and restart monitoring if needed
     if (config_devices_changed(&old_config, &g_config)) {
         bongocat_log_info("Input devices changed, restarting input monitoring");
-        bongocat_error_t input_result = input_restart_monitoring(&g_input_ctx,
+        bongocat_error_t input_result = input_restart_monitoring(&g_input_ctx, &g_config,
                                                                  g_config.keyboard_devices,
                                                                  g_config.num_keyboard_devices,
                                                                  g_config.enable_debug);
@@ -304,7 +304,7 @@ static bongocat_error_t system_initialize_components(void) {
     }
     
     // Start input monitoring
-    result = input_start_monitoring(&g_input_ctx, g_config.keyboard_devices, g_config.num_keyboard_devices, g_config.enable_debug);
+    result = input_start_monitoring(&g_input_ctx, &g_config, g_config.keyboard_devices, g_config.num_keyboard_devices, g_config.enable_debug);
     if (result != BONGOCAT_SUCCESS) {
         bongocat_log_error("Failed to start input monitoring: %s", bongocat_error_string(result));
         return result;

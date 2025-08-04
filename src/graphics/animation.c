@@ -43,6 +43,8 @@
 #define DIGIMON_FRAME_MOVEMENT1 13
 #define DIGIMON_FRAME_MOVEMENT2 14
 
+#define HAPPY_CHANCE_PERCENT 60
+
 static const animation_frame_t empty_sprite_sheet_frame = {
     .width = 0,
     .height = 0,
@@ -300,7 +302,7 @@ typedef struct {
     time_ns_t frame_time_ns;
 } animation_state_t;
 
-static int anim_get_random_active_frame(animation_context_t* ctx) {
+static int anim_get_random_active_frame(animation_context_t* ctx, const input_context_t* input) {
     if (ctx->anim_index == BONGOCAT_ANIM_INDEX) {
         return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
     }
@@ -332,6 +334,16 @@ static int anim_get_random_active_frame(animation_context_t* ctx) {
 
     // toggle frame
     if (current_frame == DIGIMON_FRAME_IDLE1) {
+        if (*input->kpm > 0) {
+            if (ctx->_current_config->happy_kpm > 0 && *input->kpm >= ctx->_current_config->happy_kpm) {
+                if (ctx->anims[ctx->anim_index].digimon.happy.pixels) {
+                    if (rand() % 100 < HAPPY_CHANCE_PERCENT) {
+                        return DIGIMON_FRAME_HAPPY;
+                    }
+                }
+            }
+        }
+
         return DIGIMON_FRAME_IDLE2;
     } else if (current_frame == DIGIMON_FRAME_IDLE2) {
         return DIGIMON_FRAME_IDLE1;
@@ -351,14 +363,14 @@ static void anim_trigger_frame_change(animation_context_t* ctx,
     state->hold_until_us = current_time_us + duration_us;
 }
 
-static void anim_handle_test_animation(animation_context_t* ctx, animation_state_t *state, timestamp_us_t current_time_us) {
+static void anim_handle_test_animation(animation_context_t* ctx, const input_context_t* input, animation_state_t *state, timestamp_us_t current_time_us) {
     if (ctx->_current_config->test_animation_interval <= 0) {
         return;
     }
     
     state->test_counter++;
     if (state->test_counter > state->test_interval_frames) {
-        const int new_frame = anim_get_random_active_frame(ctx);
+        const int new_frame = anim_get_random_active_frame(ctx, input);
         const time_us_t duration_us = ctx->_current_config->test_animation_duration * 1000L;
         
         bongocat_log_debug("Test animation trigger");
@@ -372,12 +384,12 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
         return;
     }
     
-    const int new_frame = anim_get_random_active_frame(ctx);
+    const int new_frame = anim_get_random_active_frame(ctx, input);
     const time_us_t duration_us = ctx->_current_config->keypress_duration * 1000;
     
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
     anim_trigger_frame_change(ctx, new_frame, duration_us, current_time_us, state);
-    
+
     *input->any_key_pressed = 0;
     state->test_counter = 0; // Reset test counter
 }
@@ -385,20 +397,20 @@ static void anim_handle_key_press(animation_context_t* ctx, input_context_t *inp
 static void anim_handle_idle_return(animation_context_t* ctx, animation_state_t *state, timestamp_us_t current_time_us) {
     if (ctx->_current_config->enable_sleep_mode) {
         if (is_sleep_time(ctx->_current_config)) {
-            bongocat_log_debug("Sleeping Frame");
             if (ctx->anim_index == BONGOCAT_ANIM_INDEX) {
                 ctx->anim_frame_index = BONGOCAT_FRAME_BOTH_DOWN;
                 return;
-            } else {
-                // assume it's a digimon
-                if (ctx->anims[ctx->anim_index].digimon.sleep1.pixels) {
-                    ctx->anim_frame_index = DIGIMON_FRAME_SLEEP1;
-                    return;
-                } else if (ctx->anims[ctx->anim_index].digimon.down1.pixels) {
-                    // fallback frame
-                    ctx->anim_frame_index = DIGIMON_FRAME_DOWN1;
-                    return;
-                }
+            }
+
+            // assume it's a digimon
+            if (ctx->anims[ctx->anim_index].digimon.sleep1.pixels) {
+                ctx->anim_frame_index = DIGIMON_FRAME_SLEEP1;
+                return;
+            }
+            if (ctx->anims[ctx->anim_index].digimon.down1.pixels) {
+                // fallback frame
+                ctx->anim_frame_index = DIGIMON_FRAME_DOWN1;
+                return;
             }
         }
     }
@@ -418,7 +430,7 @@ static void anim_update_state(animation_context_t* ctx, input_context_t *input, 
     
     pthread_mutex_lock(&ctx->anim_lock);
     
-    anim_handle_test_animation(ctx, state, current_time_us);
+    anim_handle_test_animation(ctx, input, state, current_time_us);
     anim_handle_key_press(ctx, input, state, current_time_us);
     anim_handle_idle_return(ctx, state, current_time_us);
     

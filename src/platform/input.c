@@ -22,7 +22,7 @@ static void child_signal_handler(int sig) {
     exit(0);
 }
 
-static void capture_input_multiple(input_context_t *input, char **device_paths, int num_devices, int enable_debug) {
+static void capture_input_multiple(input_context_t *input, const config_t *config, char **device_paths, int num_devices, int enable_debug) {
     assert(input);
 
     // Set up child-specific signal handlers to avoid duplicate logging
@@ -219,20 +219,23 @@ static void capture_input_multiple(input_context_t *input, char **device_paths, 
                 if (key_pressed) {
                     // update KPM
                     const timestamp_ms_t now = get_current_time_ms();
-                    if (input->_latest_pressed_key_timestamp_ms != now) {
-                        const time_ms_t duration_ms = now - input->_latest_pressed_key_timestamp_ms;
+                    if (now - input->_latest_kpm_update_ms >= 1000.0/config->fps) {
+                        if (input->_input_kpm_counter > 0) {
+                            const time_ms_t duration_ms = now - input->_latest_kpm_update_ms;
 
-                        const double duration_min = duration_ms / 60000.0;
-                        input->kpm = input->_input_kpm_counter / duration_min;
+                            const double duration_min = duration_ms / 60000.0;
+                            *input->kpm = input->_input_kpm_counter / duration_min;
+                            bongocat_log_debug("Input KPM: %d, delta: %dms, counter: %d", *input->kpm, duration_ms, input->_input_kpm_counter);
 
-                        input->_input_kpm_counter = 0;
-                        bongocat_log_debug("Input KPM: %d, delta: %dms", input->kpm, duration_ms);
+                            input->_input_kpm_counter = 0;
+                            input->_latest_kpm_update_ms = now;
+                        }
                     }
-                    input->_latest_pressed_key_timestamp_ms = now;
 
-                    input->input_counter++;
+                    *input->input_counter = *input->input_counter + 1;
                     input->_input_kpm_counter++;
                     animation_trigger(input);
+                    bongocat_log_debug("Input KPM: %d, counter: %d", *input->kpm, *input->input_counter);
                 }
             }
         }
@@ -257,7 +260,7 @@ static void capture_input_multiple(input_context_t *input, char **device_paths, 
     bongocat_log_info("Input monitoring stopped");
 }
 
-bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug) {
+bongocat_error_t input_start_monitoring(input_context_t* ctx, const config_t* config, char **device_paths, int num_devices, int enable_debug) {
     BONGOCAT_CHECK_NULL(device_paths, BONGOCAT_ERROR_INVALID_PARAM);
     
     if (num_devices <= 0) {
@@ -267,9 +270,8 @@ bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_path
 
     ctx->_input_child_pid = -1;
     ctx->_capture_input_running = false;
-    ctx->input_counter = 0;
     ctx->_input_kpm_counter = 0;
-    ctx->_latest_pressed_key_timestamp_ms = get_current_time_ms();
+    ctx->_latest_kpm_update_ms = get_current_time_ms();
 
     bongocat_log_info("Initializing input monitoring system for %d devices", num_devices);
     
@@ -282,19 +284,41 @@ bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_path
     }
     *ctx->any_key_pressed = 0;
 
+    // Initialize shared memory for KPM
+    ctx->kpm = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (ctx->kpm == MAP_FAILED) {
+        bongocat_log_error("Failed to create shared memory for input monitoring: %s", strerror(errno));
+        return BONGOCAT_ERROR_MEMORY;
+    }
+    *ctx->kpm = 0;
+
+    // Initialize shared memory for KPM
+    ctx->input_counter = (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (ctx->input_counter == MAP_FAILED) {
+        bongocat_log_error("Failed to create shared memory for input monitoring: %s", strerror(errno));
+        return BONGOCAT_ERROR_MEMORY;
+    }
+    *ctx->input_counter = 0;
+
     // Fork process for input monitoring
     ctx->_input_child_pid = fork();
     if (ctx->_input_child_pid < 0) {
         atomic_store(&ctx->_capture_input_running, false);
         bongocat_log_error("Failed to fork input monitoring process: %s", strerror(errno));
         munmap(ctx->any_key_pressed, sizeof(int));
+        munmap(ctx->kpm, sizeof(int));
+        munmap(ctx->input_counter, sizeof(atomic_int));
         ctx->any_key_pressed = NULL;
+        ctx->kpm = NULL;
+        ctx->input_counter = NULL;
         return BONGOCAT_ERROR_THREAD;
     }
     if (ctx->_input_child_pid == 0) {
         // Child process - handle keyboard input from multiple devices
         bongocat_log_debug("Input monitoring child process started (PID: %d)", getpid());
-        capture_input_multiple(ctx, device_paths, num_devices, enable_debug);
+        capture_input_multiple(ctx, config, device_paths, num_devices, enable_debug);
         exit(0);
     }
     
@@ -302,11 +326,11 @@ bongocat_error_t input_start_monitoring(input_context_t* ctx, char **device_path
     return BONGOCAT_SUCCESS;
 }
 
-bongocat_error_t input_restart_monitoring(input_context_t* ctx, char **device_paths, int num_devices, int enable_debug) {
+bongocat_error_t input_restart_monitoring(input_context_t* ctx, const config_t* config, char **device_paths, int num_devices, int enable_debug) {
     bongocat_log_info("Restarting input monitoring system");
 
     ctx->_input_kpm_counter = 0;
-    ctx->_latest_pressed_key_timestamp_ms = get_current_time_ms();
+    ctx->_latest_kpm_update_ms = get_current_time_ms();
     
     // Stop current monitoring
     if (ctx->_input_child_pid > 0) {
@@ -371,7 +395,7 @@ bongocat_error_t input_restart_monitoring(input_context_t* ctx, char **device_pa
         atomic_store(&ctx->_capture_input_running, false);
         // Child process - handle keyboard input from multiple devices
         bongocat_log_debug("Input monitoring child process restarted (PID: %d)", getpid());
-        capture_input_multiple(ctx, device_paths, num_devices, enable_debug);
+        capture_input_multiple(ctx, config, device_paths, num_devices, enable_debug);
         exit(0);
     }
     
@@ -392,7 +416,7 @@ void input_cleanup(input_context_t* ctx) {
         int status;
         int wait_attempts = 0;
         while (wait_attempts < 10) {
-            pid_t result = waitpid(ctx->_input_child_pid, &status, WNOHANG);
+            const pid_t result = waitpid(ctx->_input_child_pid, &status, WNOHANG);
             if (result == ctx->_input_child_pid) {
                 atomic_store(&ctx->_capture_input_running, false);
                 bongocat_log_debug("Input monitoring child process terminated gracefully");
@@ -423,11 +447,17 @@ void input_cleanup(input_context_t* ctx) {
         munmap(ctx->any_key_pressed, sizeof(int));
         ctx->any_key_pressed = NULL;
     }
+    if (ctx->kpm && ctx->kpm != MAP_FAILED) {
+        munmap(ctx->kpm, sizeof(int));
+        ctx->kpm = NULL;
+    }
+    if (ctx->input_counter && ctx->input_counter != MAP_FAILED) {
+        munmap(ctx->input_counter, sizeof(atomic_int));
+        ctx->input_counter = NULL;
+    }
 
-    ctx->kpm = 0;
-    ctx->input_counter = 0;
     ctx->_input_kpm_counter = 0;
-    ctx->_latest_pressed_key_timestamp_ms = 0;
+    ctx->_latest_kpm_update_ms = 0;
     
     bongocat_log_debug("Input monitoring cleanup complete");
 }
