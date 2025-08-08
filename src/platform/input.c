@@ -15,8 +15,22 @@ static pid_t input_child_pid = -1;
 
 // Child process signal handler - exits quietly without logging
 static void child_signal_handler(int sig) {
-    (void)sig; // Suppress unused parameter warning
-    exit(0);
+    switch (sig) {
+        case SIGINT:
+        case SIGTERM:
+            exit(0);
+            break;
+        case SIGCHLD:
+            // Handle child process termination
+            //while (waitpid(-1, NULL, WNOHANG) > 0);
+            break;
+        case SIGUSR2:
+            // ignore reload in child process
+            break;
+        default:
+            bongocat_log_warning("Received unexpected signal %d", sig);
+            break;
+    }
 }
 
 static void capture_input_multiple(char **device_paths, int num_devices, int enable_debug) {
@@ -26,7 +40,9 @@ static void capture_input_multiple(char **device_paths, int num_devices, int ena
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);;
+    sigaction(SIGUSR2, &sa, NULL);
+    signal(SIGPIPE, SIG_IGN);
     
     bongocat_log_debug("Starting input capture on %d devices", num_devices);
     
