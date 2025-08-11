@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "platform/wayland.h"
 #include "graphics/animation.h"
-#include <poll.h>
-#include <sys/time.h>
 #include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
 #include "../protocols/xdg-output-unstable-v1-client-protocol.h"
+#include <poll.h>
+#include <sys/time.h>
+#include <sys/signalfd.h>
+#include <sys/wait.h>
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -635,7 +637,7 @@ bongocat_error_t wayland_init(config_t *config) {
     return BONGOCAT_SUCCESS;
 }
 
-bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
+bongocat_error_t wayland_run(volatile sig_atomic_t *running, int signal_fd, config_reload_callback_t config_reload_callback) {
     BONGOCAT_CHECK_NULL(running, BONGOCAT_ERROR_INVALID_PARAM);
 
     bongocat_log_info("Starting Wayland event loop");
@@ -656,10 +658,10 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
             fs_detector.last_check = now;
         }
 
-        // Handle Wayland events
-        struct pollfd pfd = {
-            .fd = wl_display_get_fd(display),
-            .events = POLLIN,
+        // Handle Wayland and signal events
+        struct pollfd pfds[2] = {
+            { .fd = wl_display_get_fd(display), .events = POLLIN, },
+            { .fd = signal_fd, .events = POLLIN },
         };
         
         while (wl_display_prepare_read(display) != 0) {
@@ -669,13 +671,52 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
             }
         }
         
-        int poll_result = poll(&pfd, 1, 100);
-        
+        int poll_result = poll(pfds, 2, 100);
         if (poll_result > 0) {
-            if (wl_display_read_events(display) == -1 ||
-                wl_display_dispatch_pending(display) == -1) {
-                bongocat_log_error("Failed to handle Wayland events");
-                return BONGOCAT_ERROR_WAYLAND;
+            // signal events
+            if (pfds[1].revents & POLLIN) {
+                struct signalfd_siginfo fdsi;
+                ssize_t s = read(pfds[1].fd, &fdsi, sizeof(fdsi));
+                if (s != sizeof(fdsi)) {
+                    bongocat_log_error("Failed to read signal fd");
+                } else {
+                    switch (fdsi.ssi_signo) {
+                        case SIGINT:
+                        case SIGTERM:
+                            bongocat_log_info("Received signal %d, shutting down gracefully", fdsi.ssi_signo);
+                            *running = 0;
+                            break;
+                        case SIGCHLD:
+                            while (waitpid(-1, NULL, WNOHANG) > 0);
+                            break;
+                        case SIGUSR2:
+                            bongocat_log_info("Received SIGUSR2, reloading config");
+                            if (config_reload_callback) {
+                                config_reload_callback();
+                            }
+                            break;
+                        default:
+                            bongocat_log_warning("Received unexpected signal %d", fdsi.ssi_signo);
+                            break;
+                    }
+                }
+            }
+            if (!*running) {
+                wl_display_cancel_read(display);
+                break;
+            }
+
+
+            // wayland events
+            if (pfds[0].revents & POLLIN) {
+                if (wl_display_read_events(display) == -1 ||
+                    wl_display_dispatch_pending(display) == -1) {
+                    bongocat_log_error("Failed to handle Wayland events");
+                    *running = 0;
+                    return BONGOCAT_ERROR_WAYLAND;
+                }
+            } else {
+                wl_display_cancel_read(display);
             }
         } else if (poll_result == 0) {
             wl_display_cancel_read(display);

@@ -39,6 +39,7 @@
 typedef struct {
     int inotify_fd;
     int watch_fd;
+    int signal_fd;
     pthread_t watcher_thread;
     bool watching;
     char *config_path;
@@ -55,7 +56,7 @@ typedef struct {
 } output_ref_t;
 
 // Config watcher function declarations
-int config_watcher_init(ConfigWatcher *watcher, const char *config_path, void (*callback)(const char *));
+int config_watcher_init(ConfigWatcher *watcher, int signal_fd, const char *config_path, void (*callback)(const char *));
 void config_watcher_start(ConfigWatcher *watcher);
 void config_watcher_stop(ConfigWatcher *watcher);
 void config_watcher_cleanup(ConfigWatcher *watcher);
