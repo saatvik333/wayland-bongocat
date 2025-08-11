@@ -13,6 +13,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/signalfd.h>
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -222,6 +223,9 @@ static void config_reload_callback(const char *config_path) {
     bongocat_log_info("Configuration reloaded successfully!");
     bongocat_log_info("New screen dimensions: %dx%d", g_config.screen_width, g_config.bar_height);
 }
+static void current_config_reload_callback() {
+    config_reload_callback(current_config_file);
+}
 
 static bongocat_error_t config_setup_watcher(const char *config_file) {
     const char *watch_path = config_file ? config_file : DEFAULT_BONGOCAT_CONF;
@@ -313,59 +317,26 @@ static void system_cleanup_and_exit(int exit_code) {
 // SIGNAL HANDLING MODULE
 // =============================================================================
 
-static void signal_handler(int sig) {
-    char *reload_config_file;
-    switch (sig) {
-        case SIGINT:
-        case SIGTERM:
-            bongocat_log_info("Received signal %d, shutting down gracefully", sig);
-            running = 0;
-            break;
-        case SIGCHLD:
-            // Handle child process termination
-            while (waitpid(-1, NULL, WNOHANG) > 0);
-            break;
-        case SIGUSR2:
-            bongocat_log_info("Received signal %d, reload config", sig);
-            reload_config_file = current_config_file ? current_config_file : DEFAULT_BONGOCAT_CONF;
-            config_reload_callback(reload_config_file);
-            break;
-        default:
-            bongocat_log_warning("Received unexpected signal %d", sig);
-            break;
-    }
-}
 
-static bongocat_error_t signal_setup_handlers(void) {
-    struct sigaction sa;
+static bongocat_error_t signal_setup_handlers(int *signal_fd) {
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGCHLD);
+    sigaddset(&mask, SIGUSR2);
 
-    // Setup signal handler
-    sa.sa_handler = signal_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        bongocat_log_error("Failed to setup SIGINT handler: %s", strerror(errno));
+    // Block signals globally so they are only delivered via signalfd
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
+        bongocat_log_error("Failed to block signals: %s", strerror(errno));
         return BONGOCAT_ERROR_THREAD;
     }
 
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        bongocat_log_error("Failed to setup SIGTERM handler: %s", strerror(errno));
-        return BONGOCAT_ERROR_THREAD;
+    *signal_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+    if (*signal_fd == -1) {
+        bongocat_log_error("Failed to create signalfd: %s", strerror(errno));
+        return -1;
     }
-
-    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-        bongocat_log_error("Failed to setup SIGCHLD handler: %s", strerror(errno));
-        return BONGOCAT_ERROR_THREAD;
-    }
-
-    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
-        bongocat_log_error("Failed to setup SIGUSR2 handler: %s", strerror(errno));
-        return BONGOCAT_ERROR_THREAD;
-    }
-
-    // Ignore SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
 
     return BONGOCAT_SUCCESS;
 }
@@ -463,9 +434,10 @@ int main(int argc, char *argv[]) {
         }
         // toggle_result == -1 means continue with startup
     }
-    
+
     // Setup signal handlers
-    result = signal_setup_handlers();
+    int signal_fd = -1;
+    result = signal_setup_handlers(&signal_fd);
     if (result != BONGOCAT_SUCCESS) {
         bongocat_log_error("Failed to setup signal handlers: %s", bongocat_error_string(result));
         return 1;
@@ -474,9 +446,11 @@ int main(int argc, char *argv[]) {
     // Create PID file to track this instance
     int pid_fd = process_create_pid_file();
     if (pid_fd == -2) {
+        close(signal_fd);
         bongocat_log_error("Another instance of bongocat is already running");
         return 1;
     } else if (pid_fd < 0) {
+        close(signal_fd);
         bongocat_log_error("Failed to create PID file");
         return 1;
     }
@@ -484,6 +458,7 @@ int main(int argc, char *argv[]) {
     // Load configuration
     result = load_config(&g_config, args.config_file);
     if (result != BONGOCAT_SUCCESS) {
+        close(signal_fd);
         bongocat_log_error("Failed to load configuration: %s", bongocat_error_string(result));
         return 1;
     }
@@ -499,19 +474,22 @@ int main(int argc, char *argv[]) {
     // Initialize all system components
     result = system_initialize_components();
     if (result != BONGOCAT_SUCCESS) {
+        close(signal_fd);
         system_cleanup_and_exit(1);
     }
     
     bongocat_log_info("Bongo Cat Overlay started successfully");
     
     // Main Wayland event loop with graceful shutdown
-    result = wayland_run(&running);
+    result = wayland_run(&running, signal_fd, current_config_reload_callback);
     if (result != BONGOCAT_SUCCESS) {
+        close(signal_fd);
         bongocat_log_error("Wayland event loop error: %s", bongocat_error_string(result));
         system_cleanup_and_exit(1);
     }
     
     bongocat_log_info("Main loop exited, shutting down");
+    close(signal_fd);
     system_cleanup_and_exit(0);
     
     return 0; // Never reached

@@ -22,8 +22,10 @@ extern uint8_t *pixels;
 extern bool configured;
 extern bool fullscreen_detected;
 
+typedef void (*config_reload_callback_t)();
+
 bongocat_error_t wayland_init(config_t *config);
-bongocat_error_t wayland_run(volatile sig_atomic_t *running);
+bongocat_error_t wayland_run(volatile sig_atomic_t *running, int signal_fd, config_reload_callback_t config_reload_callback);
 void wayland_cleanup(void);
 void wayland_update_config(config_t *config);
 void draw_bar(void);
