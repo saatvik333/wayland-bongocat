@@ -37,6 +37,8 @@ typedef struct {
     int test_animation_interval;
     int fps;
     int overlay_opacity;
+    int mirror_x; // reflect across Y axis (horizontal flip)
+    int mirror_y; // reflect across X axis (vertical flip)
     int enable_debug;
     layer_type_t layer;
     overlay_position_t overlay_position;
