@@ -99,6 +99,8 @@ static bongocat_error_t config_validate(config_t *config) {
     
     // Normalize boolean values
     config->enable_debug = config->enable_debug ? 1 : 0;
+    config->mirror_x = config->mirror_x ? 1 : 0;
+    config->mirror_y = config->mirror_y ? 1 : 0;
     
     return BONGOCAT_SUCCESS;
 }
@@ -184,6 +186,10 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->fps = int_value;
     } else if (strcmp(key, "overlay_opacity") == 0) {
         config->overlay_opacity = int_value;
+    } else if (strcmp(key, "mirror_x") == 0) {
+        config->mirror_x = int_value;
+    } else if (strcmp(key, "mirror_y") == 0) {
+        config->mirror_y = int_value;
     } else if (strcmp(key, "enable_debug") == 0) {
         config->enable_debug = int_value;
     } else if (strcmp(key, "monitor") == 0) {
@@ -344,6 +350,8 @@ static void config_set_defaults(config_t *config) {
         .test_animation_interval = 3,
         .fps = 60,
         .overlay_opacity = 150,
+    .mirror_x = 0,
+    .mirror_y = 0,
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
         .overlay_position = POSITION_TOP,
@@ -374,6 +382,7 @@ static void config_log_summary(const config_t *config) {
                       config->cat_height, (config->cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT,
                       config->cat_x_offset, config->cat_y_offset);
     bongocat_log_debug("  FPS: %d, Opacity: %d", config->fps, config->overlay_opacity);
+    bongocat_log_debug("  Mirror: X=%d, Y=%d", config->mirror_x, config->mirror_y);
     bongocat_log_debug("  Position: %s", config->overlay_position == POSITION_TOP ? "top" : "bottom");
     bongocat_log_debug("  Layer: %s", config->layer == LAYER_TOP ? "top" : "overlay");
 }

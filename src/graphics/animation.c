@@ -53,6 +53,14 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
             int sx = (x * src_w) / target_w;
             int sy = (y * src_h) / target_h;
 
+            // Apply mirroring based on configuration
+            if (current_config && current_config->mirror_x) {
+                sx = (src_w - 1) - sx;
+            }
+            if (current_config && current_config->mirror_y) {
+                sy = (src_h - 1) - sy;
+            }
+
             int dest_idx = (dy * dest_w + dx) * 4;
             int src_idx = (sy * src_w + sx) * 4;
 
