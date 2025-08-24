@@ -52,15 +52,31 @@ static struct zxdg_output_manager_v1 *xdg_output_manager = NULL;
 static void handle_xdg_output_name(void *data, struct zxdg_output_v1 *xdg_output __attribute__((unused)),
                                    const char *name) {
     output_ref_t *oref = data;
+
     snprintf(oref->name_str, sizeof(oref->name_str), "%s", name);
     oref->name_received = true;
+
     bongocat_log_debug("xdg-output name received: %s", name);
 }
 
 static void handle_xdg_output_logical_position(void *data, struct zxdg_output_v1 *xdg_output,
-                                               int32_t x, int32_t y) {}
+                                               int32_t x, int32_t y) {
+    output_ref_t *oref = data;
+
+    oref->x = x;
+    oref->y = y;
+
+    bongocat_log_debug("xdg-output logical position received: %d,%d", x, y);
+}
 static void handle_xdg_output_logical_size(void *data, struct zxdg_output_v1 *xdg_output,
-                                           int32_t width, int32_t height) {}
+int32_t width, int32_t height) {
+    output_ref_t *oref = data;
+
+    oref->width = width;
+    oref->height = height;
+
+    bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
+}
 static void handle_xdg_output_done(void *data, struct zxdg_output_v1 *xdg_output) {}
 
 static void handle_xdg_output_description(void *data, struct zxdg_output_v1 *xdg_output, const char *description) {
@@ -96,6 +112,13 @@ static fullscreen_detector_t fs_detector = {0};
 static tracked_toplevel_t track_toplevels[MAX_TOPLEVELS] = {0};
 static size_t track_toplevels_count = 0;
 
+typedef struct {
+    int monitor_id;     // monitor number in Hyprland
+    int x, y;
+    int width, height;
+    bool fullscreen;
+} window_info_t;
+
 // =============================================================================
 // FULLSCREEN DETECTION IMPLEMENTATION
 // =============================================================================
@@ -114,34 +137,84 @@ static void fs_update_state(bool new_state) {
     }
 }
 
+static void hypr_update_outputs_with_monitor_ids(void) {
+    FILE *fp = popen("hyprctl monitors 2>/dev/null", "r");
+    if (!fp) return;
+
+    char line[512];
+    while (fgets(line, sizeof(line), fp)) {
+        int id = -1;
+        char name[256];
+        int result = sscanf(line, "Monitor %d \"%255[^\"]\"", &id, name);
+        if (result < 2) {
+            result = sscanf(line, "Monitor %255s (ID %d)", name, &id);
+        }
+        if (result == 2) {
+            for (size_t i = 0; i < output_count; i++) {
+                // match by xdg-output name
+                if (outputs[i].name_received && strcmp(outputs[i].name_str, name) == 0) {
+                    outputs[i].hypr_id = id;
+                    bongocat_log_debug("Mapped xdg-output '%s' to Hyprland ID %d\n", name, id);
+                    break;
+                }
+            }
+        }
+    }
+
+    pclose(fp);
+}
+
+static bool hypr_get_active_window(window_info_t *win) {
+    FILE *fp = popen("hyprctl activewindow 2>/dev/null", "r");
+    if (!fp) return false;
+
+    char line[512];
+    bool has_window = false;
+    win->monitor_id = -1;
+    win->fullscreen = false;
+
+    while (fgets(line, sizeof(line), fp)) {
+        // monitor: 0
+        if (strstr(line, "monitor:")) {
+            sscanf(line, "%*[\t ]monitor: %d", &win->monitor_id);
+            has_window = true;
+        }
+        // fullscreen: 0/1/2
+        if (strstr(line, "fullscreen:")) {
+            int val;
+            if (sscanf(line, "%*[\t ]fullscreen: %d", &val) == 1) {
+                win->fullscreen = (val != 0);
+            }
+        }
+        // at: X,Y
+        if (strstr(line, "at:")) {
+            if (sscanf(line, "%*[\t ]at: [%d, %d]", &win->x, &win->y) < 2) {
+                sscanf(line, "%*[\t ]at: %d,%d", &win->x, &win->y);
+            }
+        }
+        // size: W,H
+        if (strstr(line, "size:")) {
+            if (sscanf(line, "%*[\t ]size: [%d, %d]", &win->width, &win->height) < 2) {
+                sscanf(line, "%*[\t ]size: %d,%d", &win->width, &win->height);
+            }
+        }
+    }
+
+    pclose(fp);
+    return has_window;
+}
+
 static bool fs_check_compositor_fallback(void) {
     bongocat_log_debug("Using compositor-specific fullscreen detection");
     
     // Try Hyprland first
-    FILE *fp = popen("hyprctl activewindow 2>/dev/null", "r");
-    if (fp) {
-        char line[512];
-        bool is_fullscreen = false;
-        
-        while (fgets(line, sizeof(line), fp)) {
-            size_t len = strlen(line);
-            if (len > 0 && line[len-1] == '\n') {
-                line[len-1] = '\0';
-            }
-            
-            if (strstr(line, "fullscreen: 1") || strstr(line, "fullscreen: 2") || 
-                strstr(line, "fullscreen: true")) {
-                is_fullscreen = true;
-                bongocat_log_debug("Fullscreen detected in Hyprland");
-                break;
-            }
-        }
-        pclose(fp);
-        return is_fullscreen;
+    window_info_t win;
+    if (hypr_get_active_window(&win)) {
+        return win.fullscreen;
     }
     
     // Try Sway as fallback
-    fp = popen("swaymsg -t get_tree 2>/dev/null", "r");
+    FILE *fp = popen("swaymsg -t get_tree 2>/dev/null", "r");
     if (fp) {
         char sway_buffer[4096];
         bool is_fullscreen = false;
@@ -181,6 +254,28 @@ static bool update_fullscreen_state_toplevel(tracked_toplevel_t *tracked, bool i
 
     return false;
 }
+static bool hypr_fs_update_state(void) {
+    window_info_t win;
+    if (hypr_get_active_window(&win)) {
+        bool fullscreen_on_same_output = false;
+        for (size_t i = 0; i < output_count; i++) {
+            if (outputs[i].hypr_id == win.monitor_id) {
+                if (output == outputs[i].wl_output) {
+                    fullscreen_on_same_output = true;
+                    break;
+                }
+            }
+        }
+        if (fullscreen_on_same_output) {
+            fs_update_state(win.fullscreen);
+        } else {
+            fs_update_state(false);
+        }
+        return true;
+    }
+
+    return false;
+}
 // Foreign toplevel protocol event handlers
 static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle, 
                                      struct wl_array *state) {
@@ -196,7 +291,7 @@ static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_ha
         }
     }
 
-    /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave event were triggert
+    /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave event were triggerd
     for (size_t i = 0; i < track_toplevels_count; i++) {
         if (track_toplevels[i].handle == handle) {
             bool output_found = update_fullscreen_state_toplevel(&track_toplevels[i], is_fullscreen);
@@ -205,7 +300,13 @@ static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_ha
             }
         }
     }
-    
+
+    // check for hyprland
+    if (hypr_fs_update_state()) {
+        return;
+    }
+
+    // Fallback: global update
     fs_update_state(is_fullscreen);
 }
 
@@ -567,11 +668,18 @@ static bongocat_error_t wayland_setup_protocols(void) {
     if (xdg_output_manager) {
         for (size_t i = 0; i < output_count; ++i) {
             outputs[i].xdg_output = zxdg_output_manager_v1_get_xdg_output(xdg_output_manager, outputs[i].wl_output);
+            outputs[i].x = 0;
+            outputs[i].y = 0;
+            outputs[i].width = 0;
+            outputs[i].height = 0;
+            outputs[i].hypr_id = -1;
             zxdg_output_v1_add_listener(outputs[i].xdg_output, &xdg_output_listener, &outputs[i]);
         }
 
         // Wait for all xdg_output events
         wl_display_roundtrip(display);
+
+        hypr_update_outputs_with_monitor_ids();
     }
 
     output = NULL;
@@ -582,7 +690,7 @@ static bongocat_error_t wayland_setup_protocols(void) {
                 output = outputs[i].wl_output;
                 bongocat_log_info("Matched output: %s", outputs[i].name_str);
                 break;
-                }
+            }
         }
 
         if (!output) {

@@ -52,9 +52,12 @@ typedef struct {
 typedef struct {
     struct wl_output *wl_output;
     struct zxdg_output_v1 *xdg_output;
-    uint32_t name;         // Registry name
-    char name_str[128];   // From xdg-output
+    uint32_t name;          // Registry name
+    char name_str[128];     // From xdg-output
     bool name_received;
+    int x, y;
+    int width, height;
+    int hypr_id;            // monitor ID in Hyprland
 } output_ref_t;
 
 // Config watcher function declarations
