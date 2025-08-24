@@ -29,7 +29,8 @@
 #define NUM_FRAMES 3
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
-#define MAX_OUTPUTS 8 // Maximum monitor outputs to store
+#define MAX_OUTPUTS 8                 // Maximum monitor outputs to store
+#define MAX_TOPLEVELS 512
 #define CAT_IMAGE_WIDTH 864
 #define CAT_IMAGE_HEIGHT 360
 

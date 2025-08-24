@@ -85,7 +85,16 @@ typedef struct {
     struct timeval last_check;
 } fullscreen_detector_t;
 
+typedef struct {
+    struct zwlr_foreign_toplevel_handle_v1 *handle;
+    struct wl_output *output;
+    bool is_fullscreen;
+} tracked_toplevel_t;
+
 static fullscreen_detector_t fs_detector = {0};
+
+static tracked_toplevel_t track_toplevels[MAX_TOPLEVELS] = {0};
+static size_t track_toplevels_count = 0;
 
 // =============================================================================
 // FULLSCREEN DETECTION IMPLEMENTATION
@@ -159,6 +168,19 @@ static bool fs_check_status(void) {
     return fs_check_compositor_fallback();
 }
 
+static bool update_fullscreen_state_toplevel(tracked_toplevel_t *tracked, bool is_fullscreen) {
+    bool state_changed = tracked->is_fullscreen != is_fullscreen;
+    tracked->is_fullscreen = is_fullscreen;
+
+    /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave event were triggert
+    // Only trigger overlay update if this fullscreen window is on our output
+    if (tracked->output == output && state_changed) {
+        fs_update_state(is_fullscreen);
+        return true;
+    }
+
+    return false;
+}
 // Foreign toplevel protocol event handlers
 static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle, 
                                      struct wl_array *state) {
@@ -173,6 +195,16 @@ static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_ha
             break;
         }
     }
+
+    /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave event were triggert
+    for (size_t i = 0; i < track_toplevels_count; i++) {
+        if (track_toplevels[i].handle == handle) {
+            bool output_found = update_fullscreen_state_toplevel(&track_toplevels[i], is_fullscreen);
+            if (output_found) {
+                return;
+            }
+        }
+    }
     
     fs_update_state(is_fullscreen);
 }
@@ -180,6 +212,21 @@ static void fs_handle_toplevel_state(void *data, struct zwlr_foreign_toplevel_ha
 static void fs_handle_toplevel_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle) {
     (void)data;
     zwlr_foreign_toplevel_handle_v1_destroy(handle);
+
+    // remove from track_toplevels if present
+    for (size_t i = 0; i < track_toplevels_count; ++i) {
+        if (track_toplevels[i].handle == handle) {
+            track_toplevels[i].handle = NULL;
+            track_toplevels[i].output = NULL;
+            track_toplevels[i].is_fullscreen = false;
+            // compact array to keep contiguous
+            for (size_t j = i; j + 1 < track_toplevels_count; ++j) {
+                track_toplevels[j] = track_toplevels[j+1];
+            }
+            track_toplevels_count--;
+            break;
+        }
+    }
 }
 
 // Minimal event handlers for unused events
@@ -192,11 +239,33 @@ static void fs_handle_app_id(void *data, struct zwlr_foreign_toplevel_handle_v1 
 }
 
 static void fs_handle_output_enter(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle, struct wl_output *output) {
-    (void)data; (void)handle; (void)output;
+    (void)data;
+
+    for (size_t i = 0; i < track_toplevels_count; i++) {
+        if (track_toplevels[i].handle == handle) {
+            track_toplevels[i].output = output;
+            if (track_toplevels[i].is_fullscreen) {
+                if (track_toplevels[i].output == output) {
+                    fs_update_state(true);
+                }
+            }
+            break;
+        }
+    }
 }
 
 static void fs_handle_output_leave(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle, struct wl_output *output) {
-    (void)data; (void)handle; (void)output;
+    (void)data;
+
+    for (size_t i = 0; i < track_toplevels_count; i++) {
+        if (track_toplevels[i].handle == handle && track_toplevels[i].output == output) {
+            if (track_toplevels[i].is_fullscreen && track_toplevels[i].output == output) {
+                fs_update_state(false);
+            }
+            track_toplevels[i].output = NULL;
+            break;
+        }
+    }
 }
 
 static void fs_handle_done(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle) {
@@ -223,6 +292,25 @@ static void fs_handle_manager_toplevel(void *data, struct zwlr_foreign_toplevel_
     (void)data; (void)manager;
     
     zwlr_foreign_toplevel_handle_v1_add_listener(toplevel, &fs_toplevel_listener, NULL);
+
+    if (track_toplevels_count < MAX_TOPLEVELS) {
+        bool already_tracked = false;
+        for (size_t i = 0; i < track_toplevels_count; i++) {
+            if (track_toplevels[i].handle == toplevel) {
+                already_tracked = true;
+                break;
+            }
+        }
+        if (!already_tracked) {
+            track_toplevels[track_toplevels_count].handle = toplevel;
+            track_toplevels[track_toplevels_count].output = NULL;
+            track_toplevels[track_toplevels_count].is_fullscreen = false;
+            track_toplevels_count++;
+        }
+    } else {
+        bongocat_log_error("toplevel tracker is full, %zu max: %d", track_toplevels_count, MAX_TOPLEVELS);
+    }
+
     bongocat_log_debug("New toplevel registered for fullscreen monitoring");
 }
 
