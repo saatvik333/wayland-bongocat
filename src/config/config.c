@@ -88,17 +88,32 @@ static void config_validate_positioning(config_t *config) {
     }
 }
 
+static void config_validate_time(config_t *config) {
+    if (config->enable_scheduled_sleep) {
+        const int begin_minutes = config->sleep_begin.hour * 60 + config->sleep_begin.min;
+        const int end_minutes = config->sleep_end.hour * 60 + config->sleep_end.min;
+
+        if (begin_minutes == end_minutes) {
+            bongocat_log_warning("Sleep mode is enabled, but time is equal: %02d:%02d, disable sleep mode", config->sleep_begin.hour, config->sleep_begin.min);
+
+            config->enable_scheduled_sleep = 0;
+        }
+    }
+}
+
 static bongocat_error_t config_validate(config_t *config) {
     BONGOCAT_CHECK_NULL(config, BONGOCAT_ERROR_INVALID_PARAM);
-    
+
+    // Normalize boolean values
+    config->enable_debug = config->enable_debug ? 1 : 0;
+    config->enable_scheduled_sleep = config->enable_scheduled_sleep ? 1 : 0;
+
     config_validate_dimensions(config);
     config_validate_timing(config);
     config_validate_appearance(config);
     config_validate_enums(config);
     config_validate_positioning(config);
-    
-    // Normalize boolean values
-    config->enable_debug = config->enable_debug ? 1 : 0;
+    config_validate_time(config);
     
     return BONGOCAT_SUCCESS;
 }
@@ -186,6 +201,10 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->overlay_opacity = int_value;
     } else if (strcmp(key, "enable_debug") == 0) {
         config->enable_debug = int_value;
+    } else if (strcmp(key, "enable_scheduled_sleep") == 0) {
+        config->enable_scheduled_sleep = int_value;
+    } else if (strcmp(key, "idle_sleep_timeout") == 0) {
+        config->idle_sleep_timeout_sec = int_value;
     } else if (strcmp(key, "monitor") == 0) {
         // Reallocate new name for monitor output
         config->output_name = realloc(config->output_name, strlen(value) + 1);
@@ -239,6 +258,75 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
     return BONGOCAT_SUCCESS;
 }
 
+static bongocat_error_t config_parse_time(const char *value, int *hour, int *min) {
+    BONGOCAT_CHECK_NULL(value, BONGOCAT_ERROR_INVALID_PARAM);
+    BONGOCAT_CHECK_NULL(hour, BONGOCAT_ERROR_INVALID_PARAM);
+    BONGOCAT_CHECK_NULL(min, BONGOCAT_ERROR_INVALID_PARAM);
+
+    char *endptr = NULL;
+    errno = 0;
+
+    // Parse hour
+    const long h = strtol(value, &endptr, 10);
+    if (endptr == value || *endptr != ':' || errno == ERANGE || h < 0 || h > 23) {
+        return BONGOCAT_ERROR_INVALID_PARAM;
+    }
+
+    // Parse minute
+    value = endptr + 1; // skip ':'
+    errno = 0;
+    const long m = strtol(value, &endptr, 10);
+    if (endptr == value || *endptr != '\0' || errno == ERANGE || m < 0 || m > 59) {
+        return BONGOCAT_ERROR_INVALID_PARAM;
+    }
+
+    *hour = (int)h;
+    *min = (int)m;
+    return BONGOCAT_SUCCESS;
+}
+
+    static bongocat_error_t config_parse_string_key(config_t *config, const char *key, const char *value) {
+        if (strcmp(key, "sleep_begin") == 0) {
+            if (value && value[0] != '\0') {
+                int hour;
+                int min;
+                if (config_parse_time(value, &hour, &min) != 0) {
+                    return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+                }
+                if (hour < 0 || hour > 23 || min < 0 || min > 59) {
+                    return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+                }
+
+                config->sleep_begin.hour = hour;
+                config->sleep_begin.min = min;
+            } else {
+                config->sleep_begin.hour = 0;
+                config->sleep_begin.min = 0;
+            }
+        } else if (strcmp(key, "sleep_end") == 0) {
+            if (value && value[0] != '\0') {
+                int hour;
+                int min;
+                if (config_parse_time(value, &hour, &min) != 0) {
+                    return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+                }
+                if (hour < 0 || hour > 23 || min < 0 || min > 59) {
+                    return BONGOCAT_ERROR_INVALID_PARAM; // Invalid time format
+                }
+
+                config->sleep_end.hour = hour;
+                config->sleep_end.min = min;
+            } else {
+                config->sleep_end.hour = 0;
+                config->sleep_end.min = 0;
+            }
+        } else {
+            return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
+        }
+
+        return BONGOCAT_SUCCESS;
+    }
+
 static bongocat_error_t config_parse_key_value(config_t *config, const char *key, const char *value) {
     // Try integer keys first
     if (config_parse_integer_key(config, key, value) == BONGOCAT_SUCCESS) {
@@ -247,6 +335,12 @@ static bongocat_error_t config_parse_key_value(config_t *config, const char *key
     
     // Try enum keys
     if (config_parse_enum_key(config, key, value) == BONGOCAT_SUCCESS) {
+        return BONGOCAT_SUCCESS;
+    }
+
+
+    // Try string keys
+    if (config_parse_string_key(config, key, value) == BONGOCAT_SUCCESS) {
         return BONGOCAT_SUCCESS;
     }
     
@@ -330,7 +424,8 @@ static void config_set_defaults(config_t *config) {
         .asset_paths = {
             "assets/bongo-cat-both-up.png",
             "assets/bongo-cat-left-down.png", 
-            "assets/bongo-cat-right-down.png"
+            "assets/bongo-cat-right-down.png",
+            "assets/bongo-cat-both-down.png"
         },
         .keyboard_devices = NULL,
         .num_keyboard_devices = 0,
@@ -341,13 +436,17 @@ static void config_set_defaults(config_t *config) {
         .idle_frame = 0,
         .keypress_duration = 100,
         .test_animation_duration = 200,
-        .test_animation_interval = 3,
+        .test_animation_interval = 0,
         .fps = 60,
         .overlay_opacity = 150,
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
         .overlay_position = POSITION_TOP,
-        .cat_align = ALIGN_CENTER
+        .cat_align = ALIGN_CENTER,
+        .enable_scheduled_sleep = 0,
+        .sleep_begin = (config_time_t){0, 0},
+        .sleep_end = (config_time_t){0, 0},
+        .idle_sleep_timeout_sec = 0
     };
 }
 

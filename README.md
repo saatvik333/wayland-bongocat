@@ -154,19 +154,23 @@ enable_debug=1                   # Show debug messages
 ```
 ### Configuration Reference
 
-| Setting                   | Type    | Range             | Default             | Description                                   |
-| ------------------------- | ------- | ----------------- | ------------------- | --------------------------------------------- |
-| `cat_height`              | Integer | 16-128            | 50                  | Height of bongo cat in pixels                 |
-| `cat_x_offset`            | Integer | -9999 to 9999     | 0                   | Horizontal offset from center                 |
-| `cat_y_offset`            | Integer | -9999 to 9999     | 0                   | Vertical offset from center                   |
-| `overlay_opacity`         | Integer | 0-255             | 150                 | Background opacity (0=transparent)            |
-| `overlay_position`        | String  | "top" or "bottom" | "top"               | Position of overlay on screen                 |
-| `fps`                     | Integer | 1-120             | 60                  | Animation frame rate                          |
-| `keypress_duration`       | Integer | 50-5000           | 100                 | Animation duration after keypress (ms)        |
-| `test_animation_interval` | Integer | 0-60              | 3                   | Test animation interval (seconds, 0=disabled) |
-| `keyboard_device`         | String  | Valid path        | `/dev/input/event4` | Input device path (multiple allowed)          |
-| `monitor`                 | String  | Monitor name      | Auto-detect         | Monitor to display on (e.g., "eDP-1", "HDMI-A-1") |
-| `enable_debug`            | Boolean | 0 or 1            | 0                   | Enable debug logging                          |
+| Setting                   | Type    | Range             | Default             | Description                                                 |
+| ------------------------- | ------- |-------------------| ------------------- |-------------------------------------------------------------|
+| `cat_height`              | Integer | 16-128            | 50                  | Height of bongo cat in pixels                               |
+| `cat_x_offset`            | Integer | -9999 to 9999     | 0                   | Horizontal offset from center                               |
+| `cat_y_offset`            | Integer | -9999 to 9999     | 0                   | Vertical offset from center                                 |
+| `overlay_opacity`         | Integer | 0-255             | 150                 | Background opacity (0=transparent)                          |
+| `overlay_position`        | String  | "top" or "bottom" | "top"               | Position of overlay on screen                               |
+| `fps`                     | Integer | 1-120             | 60                  | Animation frame rate                                        |
+| `keypress_duration`       | Integer | 50-5000           | 100                 | Animation duration after keypress (ms)                      |
+| `test_animation_interval` | Integer | 0-60              | 3                   | Test animation interval (seconds, 0=disabled)               |
+| `keyboard_device`         | String  | Valid path        | `/dev/input/event4` | Input device path (multiple allowed)                        |
+| `monitor`                 | String  | Monitor name      | Auto-detect         | Monitor to display on (e.g., "eDP-1", "HDMI-A-1")           |
+| `enable_debug`            | Boolean | 0 or 1            | 0                   | Enable debug logging                                        |
+| `enable_scheduled_sleep`  | Boolean | 0 or 1            | 0                   | Enable Sleep mode                                           |
+| `sleep_begin`             | String  | "00:00" - "23:59" | "00:00"             | Begin of the sleeping phase                                 |
+| `sleep_end`               | String  | "00:00" - "23:59" | "00:00"             | End of the sleeping phase                                   |
+| `idle_sleep_timeout`      | Integer | 0+                | 0                   | Duration of user inactivity before entering sleep (seconds) |
 
 ## 🔧 Usage
 
