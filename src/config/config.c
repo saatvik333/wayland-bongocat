@@ -240,6 +240,17 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
             bongocat_log_warning("Invalid overlay_position '%s', using 'top'", value);
             config->overlay_position = POSITION_TOP;
         }
+    } else if (strcmp(key, "cat_align") == 0) {
+        if (strcmp(value, "left") == 0) {
+            config->cat_align = ALIGN_LEFT;
+        } else if (strcmp(value, "right") == 0) {
+            config->cat_align = ALIGN_RIGHT;
+        } else if (strcmp(value, "center") == 0) {
+            config->cat_align = ALIGN_CENTER;
+        } else {
+            bongocat_log_warning("Invalid cat_align '%s', using 'center'", value);
+            config->cat_align = ALIGN_CENTER;
+        }
     } else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
@@ -431,10 +442,11 @@ static void config_set_defaults(config_t *config) {
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
         .overlay_position = POSITION_TOP,
+        .cat_align = ALIGN_CENTER,
         .enable_scheduled_sleep = 0,
         .sleep_begin = (config_time_t){0, 0},
         .sleep_end = (config_time_t){0, 0},
-        .idle_sleep_timeout_sec = 0,
+        .idle_sleep_timeout_sec = 0
     };
 }
 
@@ -458,7 +470,7 @@ static void config_log_summary(const config_t *config) {
     bongocat_log_debug("Configuration loaded successfully");
     bongocat_log_debug("  Screen: %dx%d", config->screen_width, config->bar_height);
     bongocat_log_debug("  Cat: %dx%d at offset (%d,%d)", 
-                      config->cat_height, (config->cat_height * 954) / 393,
+                      config->cat_height, (config->cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT,
                       config->cat_x_offset, config->cat_y_offset);
     bongocat_log_debug("  FPS: %d, Opacity: %d", config->fps, config->overlay_opacity);
     bongocat_log_debug("  Position: %s", config->overlay_position == POSITION_TOP ? "top" : "bottom");

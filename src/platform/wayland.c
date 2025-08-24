@@ -312,9 +312,21 @@ void draw_bar(void) {
     if (!fullscreen_detected) {
         pthread_mutex_lock(&anim_lock);
         int cat_height = current_config->cat_height;
-        int cat_width = (cat_height * 779) / 320;
-        int cat_x = (current_config->screen_width - cat_width) / 2 + current_config->cat_x_offset;
+        int cat_width = (cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
         int cat_y = (current_config->bar_height - cat_height) / 2 + current_config->cat_y_offset;
+
+        int cat_x = 0;
+        switch (current_config->cat_align) {
+            case ALIGN_CENTER:
+                cat_x = (current_config->screen_width - cat_width) / 2 + current_config->cat_x_offset;
+                break;
+            case ALIGN_LEFT:
+                cat_x = current_config->cat_x_offset;
+                break;
+            case ALIGN_RIGHT:
+                cat_x = current_config->screen_width - cat_width - current_config->cat_x_offset;
+                break;
+        }
 
         blit_image_scaled(pixels, current_config->screen_width, current_config->bar_height,
                           anim_imgs[anim_index], anim_width[anim_index], anim_height[anim_index],

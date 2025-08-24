@@ -1,16 +1,13 @@
 {pkgs ? import <nixpkgs> {}}:
 pkgs.mkShellNoCC {
-  buildInputs = with pkgs; [
+  nativeBuildInputs = with pkgs; [
     # Build dependencies
     # Core
     pkg-config # Finds build dependencies
     gcc # C/C++ compiler and also for `make`
-    xxd # Required for `scripts/embed_assets.sh`
 
     # Wayland
-    wayland
     wayland-scanner
-    wayland-protocols
 
     # Devtools
     gdb # Debugger
@@ -20,10 +17,10 @@ pkgs.mkShellNoCC {
     # Optional tools for input device debugging
     evtest
     udev
-
-    # Documentation tools
-    man-pages
-    man-pages-posix
+  ];
+  buildInputs = with pkgs; [
+    wayland
+    wayland-protocols
   ];
   shellHook = ''
     # Ensure that the Makefile can find and access the Wayland protocols
@@ -43,7 +40,8 @@ pkgs.mkShellNoCC {
     echo "  make memcheck     - Run with valgrind (Requires debug build)"
     echo ""
     echo "Helper scripts:"
-    echo "  ./scripts/find_input_devices.sh    - Find input devices"
-    echo "  ./result/bin/bongocat-find-devices - Find input devices (Run 'nix build' first)"
+    echo "  ./scripts/find_input_devices.sh - Find input devices"
+    echo "  ./scripts/test-nix-build.sh     - Test Nix flake and package"
+    echo "  ./scripts/test_toggle.sh        - Test Bongocat toggle functionality (Install Bongocat first)"
   '';
 }

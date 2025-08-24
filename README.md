@@ -152,7 +152,6 @@ monitor=eDP-1                    # Specify which monitor to display on (optional
 # Debug
 enable_debug=1                   # Show debug messages
 ```
-
 ### Configuration Reference
 
 | Setting                   | Type    | Range             | Default             | Description                                                 |
@@ -219,7 +218,6 @@ bongocat --toggle
 - libwayland-client
 - wayland-protocols
 - wayland-scanner
-
 ### Build Process
 
 ```bash
@@ -414,7 +412,6 @@ monitor=DP-1         # DisplayPort monitor
 - If monitor name is wrong, bongocat falls back to first available monitor
 - Monitor names are case-sensitive
 - Remove or comment out `monitor=` line to use auto-detection
-
 </details>
 
 <details>

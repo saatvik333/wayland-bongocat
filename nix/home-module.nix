@@ -1,16 +1,14 @@
-# NixOS module for wayland-bongocat
 {
-  config,
   lib,
+  config,
   pkgs,
   ...
-}:
-with lib; let
+}: let
   inherit (config._bongocat) cfg configFile;
 in {
   imports = [./common.nix];
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [
+    home.packages = [
       cfg.package
 
       # Helper scripts
@@ -22,13 +20,18 @@ in {
     ];
 
     # SystemD service
-    systemd.user.services.wayland-bongocat = mkIf cfg.autostart {
-      enable = true;
-      description = "Wayland Bongo Cat Overlay";
-      wantedBy = ["graphical-session.target"];
-      partOf = ["graphical-session.target"];
-      after = ["graphical-session.target"];
-      serviceConfig = {
+    systemd.user.services.wayland-bongocat = lib.mkIf cfg.autostart {
+      Unit = {
+        Description = "Wayland Bongo Cat Overlay";
+        PartOf = ["graphical-session.target"];
+        After = ["graphical-session.target"];
+      };
+
+      Install = {
+        WantedBy = ["graphical-session.target"];
+      };
+
+      Service = {
         Type = "exec";
         ExecStart = "${cfg.package}/bin/bongocat --config ${configFile}";
         Restart = "on-failure";

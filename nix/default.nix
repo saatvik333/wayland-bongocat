@@ -17,7 +17,6 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs = [
     wayland
     wayland-protocols
-    wayland-scanner
   ];
 
   # Build phases

@@ -30,6 +30,8 @@
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
 #define MAX_OUTPUTS 8 // Maximum monitor outputs to store
+#define CAT_IMAGE_WIDTH 864
+#define CAT_IMAGE_HEIGHT 360
 
 #define BONGOCAT_FRAME_BOTH_UP 0
 #define BONGOCAT_FRAME_LEFT_DOWN 1

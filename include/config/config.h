@@ -14,6 +14,12 @@ typedef enum {
     LAYER_OVERLAY = 1
 } layer_type_t;
 
+typedef enum {
+    ALIGN_LEFT = -1,
+    ALIGN_CENTER = 0,
+    ALIGN_RIGHT = 1,
+} align_type_t;
+
 typedef struct {
     int hour;
     int min;
@@ -39,6 +45,7 @@ typedef struct {
     int enable_debug;
     layer_type_t layer;
     overlay_position_t overlay_position;
+    align_type_t cat_align;
 
     int enable_scheduled_sleep;
     config_time_t sleep_begin;
