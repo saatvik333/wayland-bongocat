@@ -1,7 +1,7 @@
 # Bongo Cat Wayland Overlay
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.2.4-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.5-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
 
 A delightful Wayland overlay that displays an animated bongo cat reacting to your keyboard input! Perfect for streamers, content creators, or anyone who wants to add some fun to their desktop.
 
@@ -16,6 +16,8 @@ A delightful Wayland overlay that displays an animated bongo cat reacting to you
 - **🖥️ Screen Detection** - Automatic screen detection for all sizes and orientations (v1.2.2)
 - **🎮 Smart Fullscreen Detection** - Automatically hides during fullscreen applications (v1.2.3)
 - **🖥️ Multi-Monitor Support** - Choose which monitor to display on in multi-monitor setups (v1.2.4)
+- **😴 Sleep Mode** - Scheduled or idle-based sleep mode with custom timing (v1.2.5)
+- **🎨 Customizable Appearance** - Fine-tune position, size, alignment, and opacity
 - **💾 Lightweight** - Minimal resource usage (~7MB RAM)
 - **🎛️ Multi-device Support** - Monitor multiple keyboards simultaneously
 - **🏗️ Cross-platform** - Works on x86_64 and ARM64
@@ -39,24 +41,6 @@ bongocat --config ~/.config/bongocat.conf --watch-config
 ```
 
 ### Other Distributions
-
-<details>
-<summary>Ubuntu/Debian</summary>
-
-```bash
-# Install dependencies
-sudo apt install libwayland-dev wayland-protocols build-essential
-
-# Build from source
-git clone https://github.com/saatvik333/wayland-bongocat.git
-cd wayland-bongocat
-make
-
-# Run
-./build/bongocat
-```
-
-</details>
 
 <details>
 <summary>Fedora</summary>
@@ -130,47 +114,73 @@ Bongo Cat uses a simple configuration file format. With hot-reload enabled (`--w
 Create or edit `bongocat.conf`:
 
 ```ini
+# Position settings
+cat_x_offset=0 # Horizontal offset from center position
+cat_y_offset=0 # Vertical offset from default position
+cat_align=center # Horizontal alignment in the bar (left/center/right)
+
+# Size settings
+cat_height=80 # Height of bongo cat (10-200)
+
 # Visual settings
-cat_height=50                    # Size of bongo cat (16-128)
-cat_x_offset=0                   # Horizontal position offset
-cat_y_offset=0                   # Vertical position offset
-mirror_x=0                       # Flip horizontally (mirror across Y axis)
-mirror_y=0                       # Flip vertically (mirror across X axis)
+mirror_x=0 # Flip horizontally (mirror across Y axis)
+mirror_y=0 # Flip vertically (mirror across X axis)
+
+# Overlay settings (requires restart)
+overlay_height=60 # Height of the entire overlay bar (20-300)
+
 overlay_opacity=150              # Background opacity (0-255)
-overlay_position=top             # Position on screen (top/bottom) # Note: hot-reload does not work for this option, requires a restart
+overlay_position=top             # Position on screen (top/bottom)
+layer=top                        # Layer type (top/overlay)
 
 # Animation settings
+idle_frame=0                     # Frame to show when idle (0-3)
 fps=60                           # Frame rate (1-120)
 keypress_duration=100            # Animation duration (ms)
-test_animation_interval=3        # Test animation every N seconds (0=off)
+test_animation_duration=200      # Test animation duration (ms)
+test_animation_interval=0        # Test animation every N seconds (0=off)
 
 # Input devices (add multiple lines for multiple keyboards)
 keyboard_device=/dev/input/event4
-keyboard_device=/dev/input/event20  # External/Bluetooth keyboard
+# keyboard_device=/dev/input/event20  # External/Bluetooth keyboard
 
 # Multi-monitor support
 monitor=eDP-1                    # Specify which monitor to display on (optional)
 
+# Sleep mode settings
+enable_scheduled_sleep=0         # Enable scheduled sleep mode (0=off, 1=on)
+sleep_begin=20:00                # Begin of sleeping phase (HH:MM)
+sleep_end=06:00                  # End of sleeping phase (HH:MM)
+idle_sleep_timeout=0             # Inactivity timeout before sleep (seconds, 0=off)
+
 # Debug
-enable_debug=1                   # Show debug messages
+enable_debug=0                   # Show debug messages
 ```
 ### Configuration Reference
 
-| Setting                   | Type    | Range             | Default             | Description                                   |
-| ------------------------- | ------- | ----------------- | ------------------- | --------------------------------------------- |
-| `cat_height`              | Integer | 16-128            | 50                  | Height of bongo cat in pixels                 |
-| `cat_x_offset`            | Integer | -9999 to 9999     | 0                   | Horizontal offset from center                 |
-| `cat_y_offset`            | Integer | -9999 to 9999     | 0                   | Vertical offset from center                   |
-| `overlay_opacity`         | Integer | 0-255             | 150                 | Background opacity (0=transparent)            |
-| `mirror_x`                | Boolean | 0 or 1            | 0                   | Flip cat horizontally (mirror across Y axis)  |
-| `mirror_y`                | Boolean | 0 or 1            | 0                   | Flip cat vertically (mirror across X axis)    |
-| `overlay_position`        | String  | "top" or "bottom" | "top"               | Position of overlay on screen                 |
-| `fps`                     | Integer | 1-120             | 60                  | Animation frame rate                          |
-| `keypress_duration`       | Integer | 50-5000           | 100                 | Animation duration after keypress (ms)        |
-| `test_animation_interval` | Integer | 0-60              | 3                   | Test animation interval (seconds, 0=disabled) |
-| `keyboard_device`         | String  | Valid path        | `/dev/input/event4` | Input device path (multiple allowed)          |
-| `monitor`                 | String  | Monitor name      | Auto-detect         | Monitor to display on (e.g., "eDP-1", "HDMI-A-1") |
-| `enable_debug`            | Boolean | 0 or 1            | 0                   | Enable debug logging                          |
+| Setting                   | Type   | Range                     | Default            | Description                                                  |
+|---------------------------|--------|---------------------------|--------------------|--------------------------------------------------------------|
+| `cat_align`               | String | "left"/"center"/"right"   | "center"           | Horizontal alignment in the bar                              |
+| `cat_height`              | Integer| 10-200                    | 40                 | Height of bongo cat in pixels                                |
+| `cat_x_offset`            | Integer| -9999 to 9999             | 100                | Horizontal offset from center                                |
+| `cat_y_offset`            | Integer| -9999 to 9999             | 10                 | Vertical offset from center                                  |
+| `enable_debug`            | Boolean| 0 or 1                    | 1                  | Enable debug logging                                         |
+| `enable_scheduled_sleep`  | Boolean| 0 or 1                    | 0                  | Enable Sleep mode                                            |
+| `fps`                     | Integer| 1-120                     | 60                 | Animation frame rate                                         |
+| `idle_frame`              | Integer| 0-3                       | 0                  | Frame to show when idle (0=both up, 1=left down, 2=right down, 3=both down) |
+| `idle_sleep_timeout`      | Integer| 0+                        | 0                  | Duration of user inactivity before entering sleep (seconds)  |
+| `keyboard_device`         | String | Valid path                | "/dev/input/event4"| Input device path (multiple allowed)                         |
+| `keypress_duration`       | Integer| 10-5000                   | 100                | Animation duration after keypress (ms)                      |
+| `mirror_x`                | Boolean| 0 or 1                    | 0                  | Flip cat horizontally (mirror across Y axis)                 |
+| `mirror_y`                | Boolean| 0 or 1                    | 0                  | Flip cat vertically (mirror across X axis)                   |
+| `monitor`                 | String | Monitor name              | Auto-detect        | Monitor to display on (e.g., "eDP-1", "HDMI-A-1")           |
+| `overlay_height`          | Integer| 20-300                    | 50                 | Height of the entire overlay bar                            |
+| `overlay_opacity`         | Integer| 0-255                     | 150                | Background opacity (0=transparent)                           |
+| `overlay_position`        | String | "top" or "bottom"         | "top"              | Position of overlay on screen                                |
+| `sleep_begin`             | String | "00:00" - "23:59"         | "00:00"            | Begin of the sleeping phase                                  |
+| `sleep_end`               | String | "00:00" - "23:59"         | "00:00"            | End of the sleeping phase                                    |
+| `test_animation_duration` | Integer| 10-5000                   | 200                | Test animation duration (ms)                                 |
+| `test_animation_interval` | Integer| 0-3600                    | 0                  | Test animation interval (seconds, 0=disabled)                |
 
 ## 🔧 Usage
 
@@ -180,11 +190,11 @@ enable_debug=1                   # Show debug messages
 bongocat [OPTIONS]
 
 Options:
-  -h, --help         Show this help message
-  -v, --version      Show version information
-  -c, --config       Specify config file (default: bongocat.conf)
-  -w, --watch-config Watch config file for changes and reload automatically
-  --toggle           Toggle bongocat on/off (start if not running, stop if running)
+  -h, --help             Show this help message
+  -v, --version          Show version information
+  -c, --config           Specify config file (default: bongocat.conf)
+  -w, --watch-config     Watch config file for changes and reload automatically
+  -t, --toggle           Toggle bongocat on/off (start if not running, stop if running)
 ```
 
 ### Examples
@@ -250,7 +260,7 @@ The `bongocat-find-devices` tool provides professional input device analysis wit
 $ bongocat-find-devices
 
 ╔══════════════════════════════════════════════════════════════════╗
-║ Wayland Bongo Cat - Input Device Discovery v1.2.4                ║
+║ Wayland Bongo Cat - Input Device Discovery v1.2.0                ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 [SCAN] Scanning for input devices...
@@ -315,21 +325,13 @@ bongocat-find-devices --help
 - **Storage:** ~0.4MB executable size
 - **Compositor:** Wayland with layer shell protocol support
 
-### Performance Metrics (v1.2.4)
-
-- **Input Latency:** <1ms with batch processing
-- **CPU Usage:** <1% on modern systems
-- **Device Monitoring:** Adaptive 5-30 second intervals
-- **Memory:** Optimized with leak detection
-- **Fullscreen Detection:** Intelligent hiding with minimal overhead
-
 ### Tested Compositors
 
 - ✅ **Hyprland** - Full support
 - ✅ **Sway** - Full support
 - ✅ **Wayfire** - Compatible
 - ✅ **KDE Wayland** - Compatiable
-- ❌ **GNOME Wayland** - Support Unknown
+- ❌ **GNOME Wayland** - Unsupported
 
 ## 🐛 Troubleshooting
 
@@ -451,13 +453,6 @@ wayland-bongocat/
 └── nix/               # NixOS integration
 ```
 
-### Key Features (v1.2.4)
-
-- **Screen Detection** -> Automatic screen width/orientation detection
-- **Fullscreen Detection** -> Smart hiding during fullscreen applications
-- **Enhanced Artwork** -> Custom-drawn animations with improved visual quality
-- **Multi-Monitor Support** -> Choose specific monitor for display in multi-monitor setups
-
 ## 🤝 Contributing
 
 This project follows industry best practices with a modular architecture. Contributions are welcome!
@@ -491,4 +486,4 @@ Built with ❤️ for the Wayland community. Special thanks to:
 
 ---
 
-**₍^. .^₎ Wayland Bongo Cat Overlay v1.2.4** - Making desktops more delightful, one keystroke at a time!
+**₍^. .^₎ Wayland Bongo Cat Overlay v1.2.5** - Making desktops more delightful, one keystroke at a time!

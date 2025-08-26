@@ -23,15 +23,20 @@
 #include "../lib/stb_image.h"
 
 // Version
-#define BONGOCAT_VERSION "1.2.4"
+#define BONGOCAT_VERSION "1.2.5"
 
 // Common constants
-#define NUM_FRAMES 3
+#define NUM_FRAMES 4
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
 #define MAX_OUTPUTS 8 // Maximum monitor outputs to store
 #define CAT_IMAGE_WIDTH 864
 #define CAT_IMAGE_HEIGHT 360
+
+#define BONGOCAT_FRAME_BOTH_UP 0
+#define BONGOCAT_FRAME_LEFT_DOWN 1
+#define BONGOCAT_FRAME_RIGHT_DOWN 2
+#define BONGOCAT_FRAME_BOTH_DOWN 3
 
 // Config watcher constants
 #define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))

@@ -25,6 +25,9 @@ extern const size_t bongo_cat_left_down_png_size;
 extern const unsigned char bongo_cat_right_down_png[];
 extern const size_t bongo_cat_right_down_png_size;
 
+extern const unsigned char bongo_cat_both_down_png[];
+extern const size_t bongo_cat_both_down_png_size;
+
 #endif // EMBEDDED_ASSETS_H
 EOF
 
@@ -37,7 +40,7 @@ cat > "$OUTPUT_C_FILE" << 'EOF'
 EOF
 
 # Convert each PNG to C array
-for asset in "bongo-cat-both-up.png" "bongo-cat-left-down.png" "bongo-cat-right-down.png"; do
+for asset in "bongo-cat-both-up.png" "bongo-cat-left-down.png" "bongo-cat-right-down.png" "bongo-cat-both-down.png"; do
     if [ -f "$ASSETS_DIR/$asset" ]; then
         echo "Embedding $asset..."
         

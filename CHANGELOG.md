@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.5] - 2025-08-26
+
+### Added
+- **Enhanced Configuration System** - New config variables for fine-tuning appearance and behavior
+- **Sleep Mode** - Scheduled or idle-based sleep mode with customizable timing
+
+### Fixed
+- **Fixed Positioning** - Fine-tune position, defaults to center
+
+### Improved
+- **Default Values** - Refined default configuration values for better out-of-box experience
+
 ## [1.2.4] - 2025-08-08
 
 ### Added

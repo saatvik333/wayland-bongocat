@@ -98,12 +98,30 @@ typedef struct {
     int test_counter;
     int test_interval_frames;
     long frame_time_ns;
+    long last_key_pressed_timestamp;
 } animation_state_t;
 
 static long anim_get_current_time_us(void) {
     struct timeval now;
     gettimeofday(&now, NULL);
     return now.tv_sec * 1000000 + now.tv_usec;
+}
+
+static bool anim_is_sleep_time(const config_t *config) {
+    time_t raw_time;
+    struct tm time_info;
+    time(&raw_time);
+    localtime_r(&raw_time, &time_info);
+
+    const int now_minutes = time_info.tm_hour * 60 + time_info.tm_min;
+    const int begin = config->sleep_begin.hour * 60 + config->sleep_begin.min;
+    const int end = config->sleep_end.hour * 60 + config->sleep_end.min;
+
+    // Normal range (e.g., 10:00–22:00): begin < end && (now_minutes >= begin && now_minutes < end)
+    // Overnight range (e.g., 22:00–06:00): begin > end && (now_minutes >= begin || now_minutes < end)
+    return (begin == end) ||
+           (begin < end ? (now_minutes >= begin && now_minutes < end)
+                        : (now_minutes >= begin || now_minutes < end));
 }
 
 static int anim_get_random_active_frame(void) {
@@ -140,22 +158,47 @@ static void anim_handle_key_press(animation_state_t *state, long current_time_us
     if (!*any_key_pressed) {
         return;
     }
-    
-    int new_frame = anim_get_random_active_frame();
-    long duration_us = current_config->keypress_duration * 1000;
-    
-    bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
-    anim_trigger_frame_change(new_frame, duration_us, current_time_us, state);
-    
-    *any_key_pressed = 0;
-    state->test_counter = 0; // Reset test counter
+
+    if (!current_config->enable_scheduled_sleep || !anim_is_sleep_time(current_config)) {
+        int new_frame = anim_get_random_active_frame();
+        long duration_us = current_config->keypress_duration * 1000;
+
+        bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
+        anim_trigger_frame_change(new_frame, duration_us, current_time_us, state);
+
+        *any_key_pressed = 0;
+        state->test_counter = 0; // Reset test counter
+        state->last_key_pressed_timestamp = current_time_us;
+    }
 }
 
 static void anim_handle_idle_return(animation_state_t *state, long current_time_us) {
+    int show_sleep_frame = 0;
+    // Sleep Mode
+    if (current_config->enable_scheduled_sleep) {
+        if (anim_is_sleep_time(current_config)) {
+            show_sleep_frame = 1;
+        }
+    }
+    // Idle Sleep
+    if (current_config->idle_sleep_timeout_sec > 0 && state->last_key_pressed_timestamp > 0) {
+        if (anim_get_current_time_us() - state->last_key_pressed_timestamp >= current_config->idle_sleep_timeout_sec*1000000L) {
+            show_sleep_frame = 1;
+        }
+    }
+
+    if (show_sleep_frame) {
+		if (anim_index != BONGOCAT_FRAME_BOTH_DOWN) {
+        	bongocat_log_debug("Returning to sleep frame");
+        	anim_index = BONGOCAT_FRAME_BOTH_DOWN;
+		}
+        return;
+    }
+
     if (current_time_us <= state->hold_until) {
         return;
     }
-    
+
     if (anim_index != current_config->idle_frame) {
         bongocat_log_debug("Returning to idle frame %d", current_config->idle_frame);
         anim_index = current_config->idle_frame;
@@ -166,7 +209,7 @@ static void anim_update_state(animation_state_t *state) {
     long current_time_us = anim_get_current_time_us();
     
     pthread_mutex_lock(&anim_lock);
-    
+
     anim_handle_test_animation(state, current_time_us);
     anim_handle_key_press(state, current_time_us);
     anim_handle_idle_return(state, current_time_us);
@@ -183,6 +226,7 @@ static void anim_init_state(animation_state_t *state) {
     state->test_counter = 0;
     state->test_interval_frames = current_config->test_animation_interval * current_config->fps;
     state->frame_time_ns = 1000000000L / current_config->fps;
+    state->last_key_pressed_timestamp = anim_get_current_time_us();
 }
 
 static void *anim_thread_main(void *arg __attribute__((unused))) {
@@ -217,9 +261,10 @@ typedef struct {
 static embedded_image_t embedded_images[NUM_FRAMES];
 
 static void init_embedded_images(void) {
-    embedded_images[0] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
-    embedded_images[1] = (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size, "embedded bongo-cat-left-down.png"};
-    embedded_images[2] = (embedded_image_t){bongo_cat_right_down_png, bongo_cat_right_down_png_size, "embedded bongo-cat-right-down.png"};
+    embedded_images[BONGOCAT_FRAME_BOTH_UP] = (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size, "embedded bongo-cat-both-up.png"};
+    embedded_images[BONGOCAT_FRAME_LEFT_DOWN] = (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size, "embedded bongo-cat-left-down.png"};
+    embedded_images[BONGOCAT_FRAME_RIGHT_DOWN] = (embedded_image_t){bongo_cat_right_down_png, bongo_cat_right_down_png_size, "embedded bongo-cat-right-down.png"};
+    embedded_images[BONGOCAT_FRAME_BOTH_DOWN] = (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size, "embedded bongo-cat-both-down.png"};
 }
 
 static void anim_cleanup_loaded_images(int count) {
