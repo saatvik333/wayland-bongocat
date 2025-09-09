@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/select.h>
+#include <sys/signalfd.h>
+#include <sys/wait.h>
 
 static void *config_watcher_thread(void *arg) {
     ConfigWatcher *watcher = (ConfigWatcher *)arg;
@@ -21,12 +23,16 @@ static void *config_watcher_thread(void *arg) {
         
         FD_ZERO(&read_fds);
         FD_SET(watcher->inotify_fd, &read_fds);
+        FD_SET(watcher->signal_fd, &read_fds);
+
+        int max_fd = (watcher->inotify_fd > watcher->signal_fd) ?
+                      watcher->inotify_fd : watcher->signal_fd;
         
         // Set timeout to 1 second to allow checking watching flag
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         
-        int select_result = select(watcher->inotify_fd + 1, &read_fds, NULL, NULL, &timeout);
+        int select_result = select(max_fd + 1, &read_fds, NULL, NULL, &timeout);
         
         if (select_result < 0) {
             if (errno == EINTR) continue;
@@ -38,6 +44,21 @@ static void *config_watcher_thread(void *arg) {
             // Timeout, continue to check watching flag
             continue;
         }
+
+        bool should_reload = false;
+
+        if (FD_ISSET(watcher->signal_fd, &read_fds)) {
+            struct signalfd_siginfo fdsi;
+            ssize_t s = read(watcher->signal_fd, &fdsi, sizeof(fdsi));
+            if (s == sizeof(fdsi)) {
+                if (fdsi.ssi_signo == SIGUSR2) {
+                    should_reload = true;
+                }
+                if (fdsi.ssi_signo == SIGTERM) {
+                    break;
+                }
+            }
+        }
         
         if (FD_ISSET(watcher->inotify_fd, &read_fds)) {
             ssize_t length = read(watcher->inotify_fd, buffer, INOTIFY_BUF_LEN);
@@ -46,8 +67,7 @@ static void *config_watcher_thread(void *arg) {
                 bongocat_log_error("Config watcher read failed: %s", strerror(errno));
                 continue;
             }
-            
-            bool should_reload = false;
+
             ssize_t i = 0;
             while (i < length) {
                 struct inotify_event *event = (struct inotify_event *)&buffer[i];
@@ -58,20 +78,20 @@ static void *config_watcher_thread(void *arg) {
                 
                 i += INOTIFY_EVENT_SIZE + event->len;
             }
-            
-            // Debounce: only reload if at least 200ms have passed since last reload
-            if (should_reload) {
-                time_t current_time = time(NULL);
-                if (current_time - last_reload_time >= 1) { // 1 second debounce
-                    bongocat_log_info("Config file changed, reloading...");
-                    last_reload_time = current_time;
-                    
-                    // Small delay to ensure file write is complete
-                    usleep(100000); // 100ms
-                    
-                    if (watcher->reload_callback) {
-                        watcher->reload_callback(watcher->config_path);
-                    }
+        }
+
+        // Debounce: only reload if at least 200ms have passed since last reload
+        if (should_reload) {
+            time_t current_time = time(NULL);
+            if (current_time - last_reload_time >= 1) { // 1 second debounce
+                bongocat_log_info("Config file changed, reloading...");
+                last_reload_time = current_time;
+
+                // Small delay to ensure file write is complete
+                usleep(100000); // 100ms
+
+                if (watcher->reload_callback) {
+                    watcher->reload_callback(watcher->config_path);
                 }
             }
         }
@@ -81,8 +101,8 @@ static void *config_watcher_thread(void *arg) {
     return NULL;
 }
 
-int config_watcher_init(ConfigWatcher *watcher, const char *config_path, void (*callback)(const char *)) {
-    if (!watcher || !config_path || !callback) {
+int config_watcher_init(ConfigWatcher *watcher, int signal_fd, const char *config_path, void (*callback)(const char *)) {
+    if (!watcher || !config_path || !callback || signal_fd < 0) {
         return -1;
     }
     
@@ -114,6 +134,7 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path, void (*
     
     watcher->reload_callback = callback;
     watcher->watching = false;
+    watcher->signal_fd = signal_fd;
     
     return 0;
 }
