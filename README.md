@@ -126,6 +126,9 @@ cat_height=80 # Height of bongo cat (10-200)
 mirror_x=0 # Flip horizontally (mirror across Y axis)
 mirror_y=0 # Flip vertically (mirror across X axis)
 
+# Anti-aliasing settings
+enable_antialiasing=1 # Use bilinear interpolation for smooth scaling (0=off, 1=on)
+
 # Overlay settings (requires restart)
 overlay_height=60 # Height of the entire overlay bar (20-300)
 
@@ -164,6 +167,7 @@ enable_debug=0                   # Show debug messages
 | `cat_height`              | Integer| 10-200                    | 40                 | Height of bongo cat in pixels                                |
 | `cat_x_offset`            | Integer| -9999 to 9999             | 100                | Horizontal offset from center                                |
 | `cat_y_offset`            | Integer| -9999 to 9999             | 10                 | Vertical offset from center                                  |
+| `enable_antialiasing`     | Boolean| 0 or 1                    | 1                  | Enable bilinear interpolation for smooth scaling             |
 | `enable_debug`            | Boolean| 0 or 1                    | 1                  | Enable debug logging                                         |
 | `enable_scheduled_sleep`  | Boolean| 0 or 1                    | 0                  | Enable Sleep mode                                            |
 | `fps`                     | Integer| 1-120                     | 60                 | Animation frame rate                                         |

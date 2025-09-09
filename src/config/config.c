@@ -118,6 +118,7 @@ static bongocat_error_t config_validate(config_t *config) {
     config->enable_debug = config->enable_debug ? 1 : 0;
     config->mirror_x = config->mirror_x ? 1 : 0;
     config->mirror_y = config->mirror_y ? 1 : 0;
+    config->enable_antialiasing = config->enable_antialiasing ? 1 : 0;
     config_validate_time(config);
     return BONGOCAT_SUCCESS;
 }
@@ -207,6 +208,8 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->mirror_x = int_value;
     } else if (strcmp(key, "mirror_y") == 0) {
         config->mirror_y = int_value;
+    } else if (strcmp(key, "enable_antialiasing") == 0) {
+        config->enable_antialiasing = int_value;
     } else if (strcmp(key, "enable_debug") == 0) {
         config->enable_debug = int_value;
     } else if (strcmp(key, "enable_scheduled_sleep") == 0) {
@@ -420,6 +423,7 @@ static void config_set_defaults(config_t *config) {
         .overlay_opacity = 150,
     .mirror_x = 0,
     .mirror_y = 0,
+        .enable_antialiasing = 1,
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
         .overlay_position = POSITION_TOP,
@@ -455,6 +459,7 @@ static void config_log_summary(const config_t *config) {
                       config->cat_x_offset, config->cat_y_offset);
     bongocat_log_debug("  FPS: %d, Opacity: %d", config->fps, config->overlay_opacity);
     bongocat_log_debug("  Mirror: X=%d, Y=%d", config->mirror_x, config->mirror_y);
+    bongocat_log_debug("  Anti-aliasing: %s", config->enable_antialiasing ? "enabled" : "disabled");
     bongocat_log_debug("  Position: %s", config->overlay_position == POSITION_TOP ? "top" : "bottom");
     bongocat_log_debug("  Layer: %s", config->layer == LAYER_TOP ? "top" : "overlay");
 }
