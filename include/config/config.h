@@ -54,6 +54,8 @@ typedef struct {
     config_time_t sleep_end;
     int idle_sleep_timeout_sec;
     align_type_t cat_align;
+
+    int enable_random_frame;
 } config_t;
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path);

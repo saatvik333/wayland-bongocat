@@ -203,6 +203,18 @@ static int anim_get_random_active_frame(void) {
     return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
 }
 
+static int anim_get_next_active_frame(void) {
+    // toggle frames
+    if (anim_index == BONGOCAT_FRAME_LEFT_DOWN) {
+        return BONGOCAT_FRAME_RIGHT_DOWN;
+    }
+    if (anim_index == BONGOCAT_FRAME_RIGHT_DOWN) {
+        return BONGOCAT_FRAME_LEFT_DOWN;
+    }
+
+    return anim_get_random_active_frame();
+}
+
 static void anim_trigger_frame_change(int new_frame, long duration_us, long current_time_us,
                                      animation_state_t *state) {
     if (current_config->enable_debug) {
@@ -220,7 +232,7 @@ static void anim_handle_test_animation(animation_state_t *state, long current_ti
 
     state->test_counter++;
     if (state->test_counter > state->test_interval_frames) {
-        int new_frame = anim_get_random_active_frame();
+        int new_frame = (current_config->enable_random_frame) ? anim_get_random_active_frame() : anim_get_next_active_frame();
         long duration_us = current_config->test_animation_duration * 1000;
 
         bongocat_log_debug("Test animation trigger");
@@ -235,7 +247,7 @@ static void anim_handle_key_press(animation_state_t *state, long current_time_us
     }
 
     if (!current_config->enable_scheduled_sleep || !anim_is_sleep_time(current_config)) {
-        int new_frame = anim_get_random_active_frame();
+        int new_frame = (current_config->enable_random_frame) ? anim_get_random_active_frame() : anim_get_next_active_frame();
         long duration_us = current_config->keypress_duration * 1000;
 
         bongocat_log_debug("Key press detected - switching to frame %d", new_frame);

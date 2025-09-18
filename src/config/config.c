@@ -107,6 +107,7 @@ static bongocat_error_t config_validate(config_t *config) {
     // Normalize boolean values
     config->enable_debug = config->enable_debug ? 1 : 0;
     config->enable_scheduled_sleep = config->enable_scheduled_sleep ? 1 : 0;
+    config->enable_random_frame = config->enable_random_frame ? 1 : 0;
 
     config_validate_dimensions(config);
     config_validate_timing(config);
@@ -216,6 +217,8 @@ static bongocat_error_t config_parse_integer_key(config_t *config, const char *k
         config->enable_scheduled_sleep = int_value;
     } else if (strcmp(key, "idle_sleep_timeout") == 0) {
         config->idle_sleep_timeout_sec = int_value;
+    } else if (strcmp(key, "enable_random_frame") == 0) {
+        config->enable_random_frame = int_value;
     } else {
         return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
     }
@@ -421,8 +424,8 @@ static void config_set_defaults(config_t *config) {
         .test_animation_interval = 0,
         .fps = 60,
         .overlay_opacity = 150,
-    .mirror_x = 0,
-    .mirror_y = 0,
+        .mirror_x = 0,
+        .mirror_y = 0,
         .enable_antialiasing = 1,
         .enable_debug = 1,
         .layer = LAYER_TOP,  // Default to TOP for broader compatibility
@@ -432,6 +435,7 @@ static void config_set_defaults(config_t *config) {
         .sleep_begin = (config_time_t){0, 0},
         .sleep_end = (config_time_t){0, 0},
         .idle_sleep_timeout_sec = 0,
+        .enable_random_frame = 1,
     };
 }
 
