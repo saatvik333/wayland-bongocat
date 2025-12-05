@@ -197,12 +197,15 @@ check_input_group() {
 get_device_status() {
     local device="$1"
 
+    # Check existence
+    if [[ ! -e "$device" ]]; then
+        return 2  # missing
+    fi
+
     if [[ -r "$device" ]]; then
-        echo -e "${GREEN}${CHECK} Accessible${NC}"
-        return 0
+        return 0  # accessible
     else
-        echo -e "${RED}${CROSS} Permission Denied${NC}"
-        return 1
+        return 1  # permission denied
     fi
 }
 
@@ -351,8 +354,19 @@ display_devices() {
             echo -e "${BLUE}│${NC} ${WHITE}Type:${NC}   $(printf "%-50s" "$type") ${BLUE}     │${NC}"
 
             local status
-            status=$(get_device_status "$path")
-            echo -e "${BLUE}│${NC} ${WHITE}Status:${NC} $status $(printf "%*s" $((50 - ${#status} + 10)) "") ${BLUE}     │${NC}"
+            local status_code
+            set +e
+            get_device_status "$path"
+            status_code=$?
+            set -e
+
+            case $status_code in
+                0) status="${GREEN}${CHECK} Accessible${NC}" ;;
+                1) status="${RED}[ERROR] Permission Denied${NC}" ;;
+                2) status="${YELLOW}[MISSING] Device not found${NC}" ;;
+            esac
+
+            echo -e "${BLUE}│${NC} ${WHITE}Status:${NC} $status $(printf "%*s" $((56 - ${#status} + 10)) "") ${BLUE}     │${NC}"
             echo -e "${BLUE}└─────────────────────────────────────────────────────────────────┘${NC}"
             echo
         fi
