@@ -61,6 +61,7 @@ typedef struct {
   int test_animation_duration;
   int test_animation_interval;
   int fps;
+  int enable_hand_mapping;  // 0=random hands, 1=based on key position
 
   // Input devices
   char **keyboard_devices;

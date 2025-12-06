@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# Bongo Cat - Input Device Discovery Tool v1.3.0
+# Bongo Cat - Input Device Discovery Tool v1.3.1
 # Interactive keyboard detection by listening for actual key events
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 SCRIPT_NAME="bongocat-find-devices"
 
 # Colors

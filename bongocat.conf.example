@@ -62,6 +62,9 @@ fps=30
 idle_frame=0
 keypress_duration=100
 
+# Hand mapping: 0=random hands, 1=left keys→left hand, right keys→right hand
+enable_hand_mapping=1
+
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ SLEEP MODE (optional)                                                       │
 # └─────────────────────────────────────────────────────────────────────────────┘

@@ -325,8 +325,51 @@ static bool anim_is_sleep_time(const config_t *config) {
                       : (now_minutes >= begin || now_minutes < end));
 }
 
-static int anim_get_random_active_frame(void) {
-  return (rand() % 2) + 1;  // Frame 1 or 2 (active frames)
+// Get frame based on keyboard position (left=1, right=2)
+// Uses Linux input keycodes from <linux/input-event-codes.h>
+static int get_frame_for_keycode(int keycode) {
+  // Left-hand keys on QWERTY keyboard
+  // clang-format off
+  static const int left_keys[] = {
+    // Number row left half (1-6)
+    2, 3, 4, 5, 6, 7,           // KEY_1 to KEY_6
+    // QWERTY row left half
+    16, 17, 18, 19, 20,         // KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T
+    // Home row left half
+    30, 31, 32, 33, 34,         // KEY_A, KEY_S, KEY_D, KEY_F, KEY_G
+    // Bottom row left half
+    44, 45, 46, 47, 48,         // KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B
+    // Modifiers and special keys (left side)
+    1,                          // KEY_ESC
+    15,                         // KEY_TAB
+    58,                         // KEY_CAPSLOCK
+    42,                         // KEY_LEFTSHIFT
+    29,                         // KEY_LEFTCTRL
+    56,                         // KEY_LEFTALT
+    41,                         // KEY_GRAVE (backtick)
+    125,                        // KEY_LEFTMETA (super)
+  };
+  // clang-format on
+
+  for (size_t i = 0; i < sizeof(left_keys) / sizeof(left_keys[0]); i++) {
+    if (keycode == left_keys[i]) {
+      return 1;  // Left hand
+    }
+  }
+  return 2;  // Right hand (default for all other keys)
+}
+
+static int anim_get_active_frame(void) {
+  if (current_config && current_config->enable_hand_mapping) {
+    int keycode = atomic_load(last_key_code);
+    int frame = get_frame_for_keycode(keycode);
+    // Flip hands when cat is mirrored horizontally
+    if (current_config->mirror_x) {
+      frame = (frame == 1) ? 2 : 1;
+    }
+    return frame;
+  }
+  return (rand() % 2) + 1;  // Random: frame 1 or 2
 }
 
 static void anim_trigger_frame_change(int new_frame, long duration_us,
@@ -349,7 +392,7 @@ static void anim_handle_test_animation(animation_state_t *state,
 
   state->test_counter++;
   if (state->test_counter > state->test_interval_frames) {
-    int new_frame = anim_get_random_active_frame();
+    int new_frame = anim_get_active_frame();
     long duration_us = current_config->test_animation_duration * 1000;
 
     bongocat_log_debug("Test animation trigger");
@@ -366,7 +409,7 @@ static void anim_handle_key_press(animation_state_t *state,
 
   if (!current_config->enable_scheduled_sleep ||
       !anim_is_sleep_time(current_config)) {
-    int new_frame = anim_get_random_active_frame();
+    int new_frame = anim_get_active_frame();
     long duration_us = current_config->keypress_duration * 1000;
 
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);

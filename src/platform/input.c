@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 atomic_int *any_key_pressed;
+atomic_int *last_key_code;
 static pid_t input_child_pid = -1;
 
 // Child process signal handler - exits quietly without logging
@@ -225,10 +226,12 @@ static void capture_input_multiple(char **device_paths, int num_devices,
         // Batch process events for better performance
         int num_events = rd / sizeof(struct input_event);
         bool key_pressed = false;
+        int captured_keycode = 0;
 
         for (int j = 0; j < num_events; j++) {
           if (ev[j].type == EV_KEY && ev[j].value == 1) {
             key_pressed = true;
+            captured_keycode = ev[j].code;  // Store for hand mapping
             if (enable_debug) {
               bongocat_log_debug(
                   "Key event: device=%s, code=%d, time=%ld.%06ld",
@@ -240,6 +243,7 @@ static void capture_input_multiple(char **device_paths, int num_devices,
 
         // Trigger animation only once per batch to reduce overhead
         if (key_pressed) {
+          atomic_store(last_key_code, captured_keycode);
           animation_trigger();
         }
       }
@@ -276,7 +280,7 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   bongocat_log_info("Initializing input monitoring system for %d devices",
                     num_devices);
 
-  // Initialize shared memory for key press flag
+  // Initialize shared memory for key press flag and keycode
   any_key_pressed =
       (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -287,6 +291,18 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
     return BONGOCAT_ERROR_MEMORY;
   }
   atomic_store(any_key_pressed, 0);
+
+  // Shared memory for last key code (for hand mapping)
+  last_key_code =
+      (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (last_key_code == MAP_FAILED) {
+    bongocat_log_error("Failed to create shared memory for key code: %s",
+                       strerror(errno));
+    munmap(any_key_pressed, sizeof(atomic_int));
+    return BONGOCAT_ERROR_MEMORY;
+  }
+  atomic_store(last_key_code, 0);
 
   // Fork process for input monitoring
   input_child_pid = fork();

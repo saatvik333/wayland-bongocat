@@ -1,7 +1,7 @@
 # Bongo Cat Wayland Overlay
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
 
 A cute Wayland overlay that shows an animated bongo cat reacting to your keyboard input.
 

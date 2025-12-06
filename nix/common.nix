@@ -34,6 +34,7 @@
       test_animation_duration=${toString cfg.testAnimationDuration}
       test_animation_interval=${toString cfg.testAnimationInterval}
       fps=${toString cfg.fps}
+      enable_hand_mapping=${if cfg.enableHandMapping then "1" else "0"}
 
       # Sleep mode
       idle_sleep_timeout=${toString cfg.idleSleepTimeout}
@@ -207,6 +208,11 @@ in {
       default = 60;
       example = 120;
       description = "Animation framerate (FPS)";
+    };
+    enableHandMapping = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Map left/right keyboard halves to left/right cat hands";
     };
 
     # Input devices

@@ -230,6 +230,8 @@ config_parse_integer_key(config_t *config, const char *key, const char *value) {
     config->mirror_y = int_value;
   } else if (strcmp(key, "enable_antialiasing") == 0) {
     config->enable_antialiasing = int_value;
+  } else if (strcmp(key, "enable_hand_mapping") == 0) {
+    config->enable_hand_mapping = int_value;
   } else if (strcmp(key, "enable_debug") == 0) {
     config->enable_debug = int_value;
   } else if (strcmp(key, "enable_scheduled_sleep") == 0) {
@@ -454,6 +456,7 @@ static void config_set_defaults(config_t *config) {
       .mirror_x = 0,
       .mirror_y = 0,
       .enable_antialiasing = 1,
+      .enable_hand_mapping = 1, // Enabled by default
       .enable_debug = 1,
       .layer = LAYER_TOP, // Default to TOP for broader compatibility
       .overlay_position = POSITION_TOP,

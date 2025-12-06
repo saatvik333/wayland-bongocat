@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2025-12-06
+
+### Added
+
+- **Keyboard Hand Mapping** - Left half of keyboard triggers left cat hand, right half triggers right hand
+- New config option `enable_hand_mapping=1` (enabled by default)
+- Hand mapping respects `mirror_x` - hands flip when cat is mirrored
+
+### Changed
+
+- `enable_hand_mapping` default is now `1` (enabled)
+- NixOS module `enableHandMapping` default is now `true`
+
+---
+
 ## [1.3.0] - 2025-12-06
 
 ### Added
