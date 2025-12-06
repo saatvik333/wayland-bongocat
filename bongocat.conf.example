@@ -26,7 +26,7 @@ mirror_y=0
 # │ OVERLAY BAR                                                                 │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
-# Bar dimensions
+# Bar dimensions (Attention!: Requires restart of bongocat)
 overlay_height=80
 
 # Background: 0=transparent, 255=opaque
@@ -58,7 +58,7 @@ keyboard_device=/dev/input/event4
 # │ ANIMATION                                                                   │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
-fps=60
+fps=30
 idle_frame=0
 keypress_duration=100
 

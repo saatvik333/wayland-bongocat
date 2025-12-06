@@ -343,7 +343,10 @@ void draw_bar(void) {
     return;
   }
 
-  bool is_fullscreen = atomic_load(&fullscreen_detected);
+  // Skip fullscreen hiding when layer is LAYER_OVERLAY (always visible)
+  bool is_overlay_layer =
+      current_config && current_config->layer == LAYER_OVERLAY;
+  bool is_fullscreen = !is_overlay_layer && atomic_load(&fullscreen_detected);
   int effective_opacity = is_fullscreen ? 0 : current_config->overlay_opacity;
 
   // Clear buffer with transparency

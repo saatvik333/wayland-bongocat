@@ -14,7 +14,7 @@ A cute Wayland overlay that shows an animated bongo cat reacting to your keyboar
 - 🎮 Auto-hides in fullscreen apps
 - 🖥️ Multi-monitor support
 - 😴 Idle/scheduled sleep mode
-- ⚡ Lightweight (~7MB RAM)
+- ⚡ Lightweight (~20MB RAM)
 
 ## Quick Start
 
