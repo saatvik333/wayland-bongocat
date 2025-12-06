@@ -29,7 +29,8 @@
 #define NUM_FRAMES 4
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT 40
-#define MAX_OUTPUTS 8 // Maximum monitor outputs to store
+#define MAX_OUTPUTS 8                 // Maximum monitor outputs to store
+#define MAX_TOPLEVELS 512
 #define CAT_IMAGE_WIDTH 864
 #define CAT_IMAGE_HEIGHT 360
 
@@ -56,9 +57,12 @@ typedef struct {
 typedef struct {
     struct wl_output *wl_output;
     struct zxdg_output_v1 *xdg_output;
-    uint32_t name;         // Registry name
-    char name_str[128];   // From xdg-output
+    uint32_t name;          // Registry name
+    char name_str[128];     // From xdg-output
     bool name_received;
+    int x, y;
+    int width, height;
+    int hypr_id;            // monitor ID in Hyprland
 } output_ref_t;
 
 // Config watcher function declarations
