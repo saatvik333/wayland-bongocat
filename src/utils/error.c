@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 #include "utils/error.h"
+
 #include <stdarg.h>
 #include <sys/time.h>
 #include <time.h>
 
 static int debug_enabled = 1;
 
-void bongocat_error_init(int enable_debug) { debug_enabled = enable_debug; }
+void bongocat_error_init(int enable_debug) {
+  debug_enabled = enable_debug;
+}
 
 static void log_timestamp(FILE *stream) {
   struct timeval tv;
@@ -14,7 +17,7 @@ static void log_timestamp(FILE *stream) {
   char timestamp[64];
 
   gettimeofday(&tv, NULL);
-  localtime_r(&tv.tv_sec, &tm_info); // Thread-safe version
+  localtime_r(&tv.tv_sec, &tm_info);  // Thread-safe version
 
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm_info);
   fprintf(stream, "[%s.%03ld] ", timestamp, tv.tv_usec / 1000);

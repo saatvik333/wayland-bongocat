@@ -1,26 +1,39 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
 #include "platform/input.h"
+
 #include "graphics/animation.h"
 #include "utils/memory.h"
+
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-int *any_key_pressed;
+atomic_int *any_key_pressed;
 static pid_t input_child_pid = -1;
 
 // Child process signal handler - exits quietly without logging
 static void child_signal_handler(int sig) {
-  (void)sig; // Suppress unused parameter warning
+  (void)sig;  // Suppress unused parameter warning
   exit(0);
 }
 
 static void capture_input_multiple(char **device_paths, int num_devices,
                                    int enable_debug) {
+  // CRITICAL: Set this process to die when parent dies
+  // This prevents ghost child processes if parent crashes
+  prctl(PR_SET_PDEATHSIG, SIGTERM);
+
+  // Check if parent already died before we set PR_SET_PDEATHSIG
+  if (getppid() == 1) {
+    exit(0);  // Parent already died, orphaned to init
+  }
+
   // Set up child-specific signal handlers to avoid duplicate logging
   struct sigaction sa;
   sa.sa_handler = child_signal_handler;
@@ -35,6 +48,8 @@ static void capture_input_multiple(char **device_paths, int num_devices,
   char **unique_paths = BONGOCAT_MALLOC(num_devices * sizeof(char *));
   if (!fds || !unique_paths) {
     bongocat_log_error("Failed to allocate memory for file descriptors");
+    BONGOCAT_SAFE_FREE(fds);
+    BONGOCAT_SAFE_FREE(unique_paths);
     exit(1);
   }
 
@@ -98,18 +113,20 @@ static void capture_input_multiple(char **device_paths, int num_devices,
   if (valid_devices == 0) {
     bongocat_log_error("No valid input devices found");
     BONGOCAT_SAFE_FREE(fds);
+    BONGOCAT_SAFE_FREE(unique_paths);
     exit(1);
   }
 
   bongocat_log_info("Successfully opened %d/%d input devices", valid_devices,
                     num_devices);
 
-  struct input_event ev[128]; // Increased buffer size for better I/O efficiency
+  struct input_event
+      ev[128];  // Increased buffer size for better I/O efficiency
   int rd;
   fd_set readfds;
   struct timeval timeout;
   int check_counter = 0;
-  int adaptive_check_interval = 5; // Start with 5 seconds, can increase to 30
+  int adaptive_check_interval = 5;  // Start with 5 seconds, can increase to 30
 
   while (1) {
     FD_ZERO(&readfds);
@@ -132,7 +149,7 @@ static void capture_input_multiple(char **device_paths, int num_devices,
     int select_result = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
     if (select_result < 0) {
       if (errno == EINTR)
-        continue; // Interrupted by signal
+        continue;  // Interrupted by signal
       bongocat_log_error("Select error: %s", strerror(errno));
       break;
     }
@@ -147,7 +164,7 @@ static void capture_input_multiple(char **device_paths, int num_devices,
 
         // Check for devices that have become available
         for (int i = 0; i < num_devices; i++) {
-          if (fds[i] < 0) { // Device was not available before
+          if (fds[i] < 0) {  // Device was not available before
             struct stat st;
             if (stat(unique_paths[i], &st) == 0 && S_ISCHR(st.st_mode)) {
               // Device is now available, try to open it
@@ -179,7 +196,7 @@ static void capture_input_multiple(char **device_paths, int num_devices,
           bongocat_log_debug("Reset device check interval to 5 seconds");
         }
       }
-      continue; // Continue to next iteration
+      continue;  // Continue to next iteration
     }
 
     // Check which devices have data
@@ -260,15 +277,16 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
                     num_devices);
 
   // Initialize shared memory for key press flag
-  any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
-                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  any_key_pressed =
+      (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (any_key_pressed == MAP_FAILED) {
     bongocat_log_error(
         "Failed to create shared memory for input monitoring: %s",
         strerror(errno));
     return BONGOCAT_ERROR_MEMORY;
   }
-  *any_key_pressed = 0;
+  atomic_store(any_key_pressed, 0);
 
   // Fork process for input monitoring
   input_child_pid = fork();
@@ -324,7 +342,7 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
         }
       }
 
-      usleep(100000); // Wait 100ms
+      usleep(100000);  // Wait 100ms
       wait_attempts++;
     }
 
@@ -343,8 +361,9 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
       (any_key_pressed == NULL || any_key_pressed == MAP_FAILED);
 
   if (need_new_shm) {
-    any_key_pressed = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
-                                  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    any_key_pressed =
+        (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (any_key_pressed == MAP_FAILED) {
       bongocat_log_error(
           "Failed to create shared memory for input monitoring: %s",
@@ -410,7 +429,7 @@ void input_cleanup(void) {
         }
       }
 
-      usleep(100000); // Wait 100ms
+      usleep(100000);  // Wait 100ms
       wait_attempts++;
     }
 

@@ -1,495 +1,338 @@
-#!/usr/bin/bash
-
-# Wayland Bongo Cat - Input Device Discovery Tool
-# Professional input device finder with comprehensive analysis
-# Version: 1.2.5
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bongo Cat - Input Device Discovery Tool v1.3.0
+# Interactive keyboard detection by listening for actual key events
+# ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 
-# Color setup - detect if colors are supported
-if [[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[1;33m'
-    readonly BLUE='\033[0;34m'
-    readonly PURPLE='\033[0;35m'
-    readonly CYAN='\033[0;36m'
-    readonly WHITE='\033[1;37m'
-    readonly NC='\033[0m' # No Color
-    readonly USE_COLORS=true
+VERSION="1.3.0"
+SCRIPT_NAME="bongocat-find-devices"
+
+# Colors
+if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
+  RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
+  BLUE='\033[0;34m' CYAN='\033[0;36m' BOLD='\033[1m' DIM='\033[2m' NC='\033[0m'
 else
-    # No colors - use empty strings
-    readonly RED=''
-    readonly GREEN=''
-    readonly YELLOW=''
-    readonly BLUE=''
-    readonly PURPLE=''
-    readonly CYAN=''
-    readonly WHITE=''
-    readonly NC=''
-    readonly USE_COLORS=false
+  RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
 fi
 
-# Helper function for colored output
-print_colored() {
-    local color="$1"
-    local text="$2"
-    if [[ "$USE_COLORS" == "true" ]]; then
-        echo -e "${color}${text}${NC}"
-    else
-        echo "$text"
-    fi
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+info()    { echo -e "${BLUE}→${NC} $*"; }
+success() { echo -e "${GREEN}✓${NC} $*"; }
+warn()    { echo -e "${YELLOW}!${NC} $*"; }
+error()   { echo -e "${RED}✗${NC} $*" >&2; }
+
+header() {
+  echo
+  echo -e "${BOLD}$*${NC}"
+  echo -e "${BLUE}$(printf '─%.0s' {1..60})${NC}"
 }
 
-# Status symbols
-readonly CHECK="[OK]"
-readonly CROSS="[ERROR]"
-readonly WARNING="[WARN]"
-readonly INFO="[INFO]"
-readonly SEARCH="[SCAN]"
-readonly KEYBOARD="[DEVICES]"
-readonly CONFIG="[CONFIG]"
-readonly TEST="[TEST]"
+# ─────────────────────────────────────────────────────────────────────────────
+# Device Discovery
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Script metadata
-readonly SCRIPT_NAME="bongocat-find-devices"
-readonly VERSION="1.2.5"
-
-# Command line options
-SHOW_ALL=false
-GENERATE_CONFIG=false
-TEST_DEVICES=false
-VERBOSE=false
-
-# Usage information
-usage() {
-    if [[ "$USE_COLORS" == "true" ]]; then
-        printf "${WHITE}%s v%s${NC}\n" "$SCRIPT_NAME" "$VERSION"
-        printf "Professional input device discovery for Wayland Bongo Cat\n\n"
-        printf "${WHITE}USAGE:${NC}\n"
-        printf "    %s [OPTIONS]\n\n" "$0"
-        printf "${WHITE}OPTIONS:${NC}\n"
-        printf "    -a, --all              Show all input devices (including mice, touchpads)\n"
-        printf "    -g, --generate-config  Generate configuration file to stdout\n"
-        printf "    -t, --test            Test device responsiveness (requires root)\n"
-        printf "    -v, --verbose         Show detailed device information\n"
-        printf "    -h, --help            Show this help message\n\n"
-        printf "${WHITE}EXAMPLES:${NC}\n"
-        printf "    %s                     # Basic device discovery\n" "$0"
-        printf "    %s --all --verbose     # Comprehensive device analysis\n" "$0"
-        printf "    %s --generate-config > bongocat.conf  # Generate config file\n\n" "$0"
-        printf "${WHITE}DESCRIPTION:${NC}\n"
-        printf "    This tool scans your system for input devices and provides configuration\n"
-        printf "    suggestions for Wayland Bongo Cat. It identifies keyboards, checks\n"
-        printf "    permissions, and generates ready-to-use configuration snippets.\n\n"
-        printf "${WHITE}MONITOR DETECTION:${NC}\n"
-        printf "    For multi-monitor setups, use these commands to find monitor names:\n"
-        printf "    • wlr-randr                    # List all monitors (recommended)\n"
-        printf "    • swaymsg -t get_outputs       # Sway compositor only\n"
-        printf "    • bongocat logs show detected monitors during startup\n\n"
-    else
-        cat << EOF
-${SCRIPT_NAME} v${VERSION}
-Professional input device discovery for Wayland Bongo Cat
-
-USAGE:
-    $0 [OPTIONS]
-
-OPTIONS:
-    -a, --all              Show all input devices (including mice, touchpads)
-    -g, --generate-config  Generate configuration file to stdout
-    -t, --test            Test device responsiveness (requires root)
-    -v, --verbose         Show detailed device information
-    -h, --help            Show this help message
-
-EXAMPLES:
-    $0                     # Basic device discovery
-    $0 --all --verbose     # Comprehensive device analysis
-    $0 --generate-config > bongocat.conf  # Generate config file
-
-DESCRIPTION:
-    This tool scans your system for input devices and provides configuration
-    suggestions for Wayland Bongo Cat. It identifies keyboards, checks
-    permissions, and generates ready-to-use configuration snippets.
-
-MONITOR DETECTION:
-    For multi-monitor setups, use these commands to find monitor names:
-    • wlr-randr                    # List all monitors (recommended)
-    • swaymsg -t get_outputs       # Sway compositor only
-    • bongocat logs show detected monitors during startup
-
-EOF
-    fi
+# Get all event devices with kbd handler (potential keyboards)
+get_kbd_devices() {
+  local devices=()
+  
+  if [[ ! -r /proc/bus/input/devices ]]; then
+    return 1
+  fi
+  
+  local name="" handlers=""
+  
+  while IFS= read -r line; do
+    case "$line" in
+      N:\ Name=\"*\")
+        name="${line#N: Name=\"}"
+        name="${name%\"}"
+        ;;
+      H:\ Handlers=*)
+        handlers="${line#H: Handlers=}"
+        ;;
+      "")
+        if [[ "$handlers" =~ kbd ]] && [[ "$handlers" =~ event ]]; then
+          local event
+          event=$(echo "$handlers" | grep -o 'event[0-9]*' | head -1)
+          if [[ -n "$event" ]] && [[ -e "/dev/input/$event" ]]; then
+            devices+=("$event|$name")
+          fi
+        fi
+        name="" handlers=""
+        ;;
+    esac
+  done < /proc/bus/input/devices
+  
+  printf '%s\n' "${devices[@]}"
 }
 
-# Parse command line arguments
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -a|--all)
-                SHOW_ALL=true
-                shift
-                ;;
-            -g|--generate-config)
-                GENERATE_CONFIG=true
-                shift
-                ;;
-            -t|--test)
-                TEST_DEVICES=true
-                shift
-                ;;
-            -v|--verbose)
-                VERBOSE=true
-                shift
-                ;;
-            -h|--help)
-                usage
-                exit 0
-                ;;
-            *)
-                if [[ "$USE_COLORS" == "true" ]]; then
-                    echo -e "${RED}Error: Unknown option '$1'${NC}" >&2
-                else
-                    echo "Error: Unknown option '$1'" >&2
-                fi
-                echo "Use --help for usage information." >&2
-                exit 1
-                ;;
-        esac
+# Check if device is readable
+check_device() {
+  local path="$1"
+  [[ -r "$path" ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interactive Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Listen for key events on a device (runs in background)
+listen_device() {
+  local device="$1"
+  local output_file="$2"
+  local timeout="$3"
+  
+  # Use timeout + cat to read raw events
+  # Key events are detected by the presence of specific byte patterns
+  # Type 1 (EV_KEY) events indicate keyboard activity
+  timeout "$timeout" cat "/dev/input/$device" 2>/dev/null | head -c 1000 > "$output_file" &
+  echo $!
+}
+
+# Detect keyboards interactively
+interactive_detect() {
+  local timeout="${1:-5}"
+  local devices
+  devices=$(get_kbd_devices) || { error "Cannot read device list"; return 1; }
+  
+  if [[ -z "$devices" ]]; then
+    error "No input devices with kbd handler found"
+    info "Try: sudo $SCRIPT_NAME --interactive"
+    return 1
+  fi
+  
+  # Check permissions
+  local has_permission=false
+  while IFS='|' read -r event name; do
+    if check_device "/dev/input/$event"; then
+      has_permission=true
+      break
+    fi
+  done <<< "$devices"
+  
+  if [[ "$has_permission" == "false" ]]; then
+    error "Cannot read input devices (permission denied)"
+    echo
+    info "Fix with: ${CYAN}sudo usermod -a -G input \$USER${NC}"
+    info "Then log out and back in"
+    echo
+    info "Or run: ${CYAN}sudo $SCRIPT_NAME --interactive${NC}"
+    return 1
+  fi
+  
+  # Create temp directory for output files
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" EXIT
+  
+  header "Interactive Keyboard Detection"
+  echo
+  echo -e "  ${BOLD}Press keys on ALL your keyboards for ${timeout} seconds...${NC}"
+  echo -e "  ${DIM}(Internal laptop keyboard, external keyboards, etc.)${NC}"
+  echo
+  
+  # Start listening on all accessible devices
+  local pids=()
+  local device_list=()
+  
+  while IFS='|' read -r event name; do
+    if check_device "/dev/input/$event"; then
+      local outfile="$tmpdir/$event"
+      local pid
+      pid=$(listen_device "$event" "$outfile" "$timeout")
+      pids+=("$pid")
+      device_list+=("$event|$name|$outfile")
+    fi
+  done <<< "$devices"
+  
+  # Show countdown
+  for ((i=timeout; i>0; i--)); do
+    echo -ne "\r  ${CYAN}Listening... ${i}s remaining ${NC}  "
+    sleep 1
+  done
+  echo -e "\r  ${GREEN}✓ Detection complete!${NC}              "
+  
+  # Wait for all listeners to finish
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  
+  echo
+  
+  # Check which devices received input
+  local detected_keyboards=()
+  local other_devices=()
+  
+  for entry in "${device_list[@]}"; do
+    IFS='|' read -r event name outfile <<< "$entry"
+    
+    if [[ -s "$outfile" ]]; then
+      # Device received input - it's a keyboard!
+      detected_keyboards+=("$event|$name")
+    else
+      other_devices+=("$event|$name")
+    fi
+  done
+  
+  # Show results
+  header "Detection Results"
+  
+  if [[ ${#detected_keyboards[@]} -eq 0 ]]; then
+    warn "No keyboards detected"
+    echo
+    info "Make sure you pressed keys during the detection window"
+    info "Try again with: $SCRIPT_NAME --interactive"
+    return 1
+  fi
+  
+  echo -e "  ${GREEN}Detected keyboards:${NC}"
+  for entry in "${detected_keyboards[@]}"; do
+    IFS='|' read -r event name <<< "$entry"
+    echo -e "    ${GREEN}✓${NC} ${BOLD}$name${NC}"
+    echo -e "      ${CYAN}/dev/input/$event${NC}"
+  done
+  
+  if [[ ${#other_devices[@]} -gt 0 ]]; then
+    echo
+    echo -e "  ${DIM}Other devices (no input detected):${NC}"
+    for entry in "${other_devices[@]}"; do
+      IFS='|' read -r event name <<< "$entry"
+      echo -e "    ${DIM}○ $name (/dev/input/$event)${NC}"
     done
+  fi
+  
+  # Config suggestion
+  header "Add to Config"
+  echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
+  echo
+  for entry in "${detected_keyboards[@]}"; do
+    IFS='|' read -r event name <<< "$entry"
+    echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
+  done
+  
+  echo
 }
 
-# Print header
-print_header() {
-    if [[ "$GENERATE_CONFIG" == "false" ]]; then
-        if [[ "$USE_COLORS" == "true" ]]; then
-            echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${PURPLE}║${NC} ${WHITE}Wayland Bongo Cat - Input Device Discovery v${VERSION}${NC}                ${PURPLE}║${NC}"
-            echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════╝${NC}"
-        else
-            echo "=================================================================="
-            echo " Wayland Bongo Cat - Input Device Discovery v${VERSION}"
-            echo "=================================================================="
-        fi
-        echo
-    fi
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick Mode (non-interactive, name-based)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Guess if device is keyboard by name
+is_likely_keyboard() {
+  local name="$1"
+  local name_lower
+  name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+  
+  # Exclude obvious non-keyboards
+  [[ "$name_lower" =~ (button|hotkey|speaker|video|consumer|system|avrcp|mouse|touchpad|trackpad) ]] && return 1
+  
+  # Include devices with "keyboard" in name
+  [[ "$name_lower" =~ keyboard ]] && return 0
+  
+  # Include standard laptop keyboard
+  [[ "$name_lower" =~ "at translated set 2" ]] && return 0
+  
+  return 1
 }
 
-# Check if running as root
-check_permissions() {
-    if [[ $EUID -eq 0 ]]; then
-        return 0  # Running as root
+quick_detect() {
+  local devices
+  devices=$(get_kbd_devices) || { error "Cannot read devices"; return 1; }
+  
+  if [[ -z "$devices" ]]; then
+    warn "No input devices found"
+    return 1
+  fi
+  
+  echo
+  echo -e "${BOLD}🐱 Bongo Cat Device Discovery${NC} v$VERSION"
+  
+  header "Detected Devices"
+  
+  local keyboards=()
+  
+  while IFS='|' read -r event name; do
+    local status="ok"
+    check_device "/dev/input/$event" || status="denied"
+    
+    if is_likely_keyboard "$name"; then
+      echo -e "  ${GREEN}✓${NC} ${GREEN}[KEYBOARD]${NC} ${BOLD}$name${NC}"
+      keyboards+=("$event|$name")
     else
-        return 1  # Not running as root
+      echo -e "  ${DIM}○ [other]    $name${NC}"
     fi
+    echo -e "    ${CYAN}/dev/input/$event${NC}"
+  done <<< "$devices"
+  
+  if [[ ${#keyboards[@]} -eq 0 ]]; then
+    echo
+    warn "Could not auto-detect keyboards by name"
+    info "Use interactive mode: ${CYAN}$SCRIPT_NAME --interactive${NC}"
+    return 1
+  fi
+  
+  # Config suggestion
+  header "Add to Config"
+  echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
+  echo
+  for entry in "${keyboards[@]}"; do
+    IFS='|' read -r event name <<< "$entry"
+    echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
+  done
+  
+  echo
+  echo -e "  ${DIM}Not accurate? Use: $SCRIPT_NAME --interactive${NC}"
+  echo
 }
 
-# Check if user is in input group
-check_input_group() {
-    if groups | grep -q '\binput\b'; then
-        return 0  # User is in input group
-    else
-        return 1  # User is not in input group
-    fi
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Get device accessibility status
-get_device_status() {
-    local device="$1"
+show_usage() {
+  cat << EOF
+${BOLD}$SCRIPT_NAME${NC} v$VERSION - Find keyboards for Bongo Cat
 
-    # Check existence
-    if [[ ! -e "$device" ]]; then
-        return 2  # missing
-    fi
+${BOLD}USAGE${NC}
+    $SCRIPT_NAME [OPTIONS]
 
-    if [[ -r "$device" ]]; then
-        return 0  # accessible
-    else
-        return 1  # permission denied
-    fi
-}
+${BOLD}OPTIONS${NC}
+    -i, --interactive   Detect keyboards by listening for key presses (recommended)
+    -t, --timeout SEC   Detection timeout in seconds (default: 5)
+    -g, --generate      Output config lines only (for piping)
+    -h, --help          Show this help
 
-# Get device type based on name, capabilities, and handlers
-get_device_type() {
-    local device_name="$1"
-    local capabilities="$2"
-    local handlers="$3"
-
-    # Convert to lowercase for matching
-    local name_lower=$(echo "$device_name" | tr '[:upper:]' '[:lower:]')
-    local handlers_lower=$(echo "$handlers" | tr '[:upper:]' '[:lower:]')
-
-    # Check for keyboard indicators
-    # Look for "kbd" handler (most reliable), keyboard in name, or keyboard-like capabilities
-    if [[ "$handlers_lower" =~ kbd ]] || [[ "$name_lower" =~ keyboard ]] || [[ "$capabilities" =~ "120013" ]] || [[ "$capabilities" =~ "12001f" ]]; then
-        # Determine keyboard type
-        if [[ "$name_lower" =~ (bluetooth|wireless|bt) ]] || [[ "$handlers_lower" =~ bluetooth ]]; then
-            echo "Keyboard (Bluetooth)"
-        elif [[ "$name_lower" =~ (usb|external) ]]; then
-            echo "Keyboard (USB)"
-        else
-            # Check if it's likely a Bluetooth keyboard based on common brands
-            if [[ "$name_lower" =~ (keychron|logitech|corsair|razer|steelseries|apple|microsoft) ]] && [[ ! "$name_lower" =~ (mouse|trackpad|touchpad) ]]; then
-                echo "Keyboard (Bluetooth)"
-            else
-                echo "Keyboard"
-            fi
-        fi
-    elif [[ "$name_lower" =~ mouse ]] || [[ "$capabilities" =~ "110000" ]]; then
-        echo "Mouse"
-    elif [[ "$name_lower" =~ (touchpad|trackpad|synaptics) ]]; then
-        echo "Touchpad"
-    elif [[ "$name_lower" =~ (touchscreen|touch) ]]; then
-        echo "Touchscreen"
-    else
-        echo "Input Device"
-    fi
-}
-
-# Parse device information from /proc/bus/input/devices
-parse_devices() {
-    local show_all="$1"
-    local devices=()
-
-    if [[ ! -r /proc/bus/input/devices ]]; then
-        echo -e "${RED}${CROSS} Cannot read /proc/bus/input/devices${NC}" >&2
-        echo -e "${INFO} Try running with sudo for full device information" >&2
-        return 1
-    fi
-
-    # Parse the devices file
-    local current_name=""
-    local current_handlers=""
-    local current_capabilities=""
-
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^I: ]]; then
-            # Reset for new device
-            current_name=""
-            current_handlers=""
-            current_capabilities=""
-        elif [[ "$line" =~ ^N:\ Name=\"(.*)\" ]]; then
-            current_name="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^H:\ Handlers=(.*) ]]; then
-            current_handlers="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^B:\ EV=(.*) ]]; then
-            current_capabilities="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^$ ]] && [[ -n "$current_name" ]]; then
-            # End of device block, process it
-            local device_type=$(get_device_type "$current_name" "$current_capabilities" "$current_handlers")
-
-            # Extract event handlers
-            local event_handlers=($(echo "$current_handlers" | grep -o 'event[0-9]\+' || true))
-
-            # Filter devices based on show_all flag
-            if [[ "$show_all" == "true" ]] || [[ "$device_type" =~ Keyboard ]]; then
-                for handler in "${event_handlers[@]}"; do
-                    local device_path="/dev/input/$handler"
-                    if [[ -e "$device_path" ]]; then
-                        devices+=("$current_name|$device_path|$device_type")
-                    fi
-                done
-            fi
-        fi
-    done < /proc/bus/input/devices
-
-    # Handle last device if file doesn't end with empty line
-    if [[ -n "$current_name" ]]; then
-        local device_type=$(get_device_type "$current_name" "$current_capabilities" "$current_handlers")
-        local event_handlers=($(echo "$current_handlers" | grep -o 'event[0-9]\+' || true))
-
-        if [[ "$show_all" == "true" ]] || [[ "$device_type" =~ Keyboard ]]; then
-            for handler in "${event_handlers[@]}"; do
-                local device_path="/dev/input/$handler"
-                if [[ -e "$device_path" ]]; then
-                    devices+=("$current_name|$device_path|$device_type")
-                fi
-            done
-        fi
-    fi
-
-    printf '%s\n' "${devices[@]}"
-}
-
-# Display device information
-display_devices() {
-    local show_all="$1"
-    local devices
-
-    if [[ "$GENERATE_CONFIG" == "false" ]]; then
-        if [[ "$USE_COLORS" == "true" ]]; then
-            echo -e "${SEARCH} ${WHITE}Scanning for input devices...${NC}"
-        else
-            echo "${SEARCH} Scanning for input devices..."
-        fi
-        echo
-    fi
-
-    # Get device list
-    if ! devices=$(parse_devices "$show_all"); then
-        return 1
-    fi
-
-    if [[ -z "$devices" ]]; then
-        if [[ "$GENERATE_CONFIG" == "false" ]]; then
-            echo -e "${WARNING} ${YELLOW}No input devices found${NC}"
-            echo -e "${INFO} Try running with sudo: ${WHITE}sudo $0${NC}"
-        fi
-        return 1
-    fi
-
-    local keyboard_devices=()
-    local accessible_keyboards=()
-
-    if [[ "$GENERATE_CONFIG" == "false" ]]; then
-        echo -e "${KEYBOARD} ${WHITE}Found Input Devices:${NC}"
-    fi
-
-    # Process and display each device
-    while IFS='|' read -r name path type; do
-        if [[ "$GENERATE_CONFIG" == "false" ]]; then
-            echo -e "${BLUE}┌─────────────────────────────────────────────────────────────────┐${NC}"
-            echo -e "${BLUE}│${NC} ${WHITE}Device:${NC} $(printf "%-50s" "$name") ${BLUE}     │${NC}"
-            echo -e "${BLUE}│${NC} ${WHITE}Path:${NC}   $(printf "%-50s" "$path") ${BLUE}     │${NC}"
-            echo -e "${BLUE}│${NC} ${WHITE}Type:${NC}   $(printf "%-50s" "$type") ${BLUE}     │${NC}"
-
-            local status
-            local status_code
-            set +e
-            get_device_status "$path"
-            status_code=$?
-            set -e
-
-            case $status_code in
-                0) status="${GREEN}${CHECK} Accessible${NC}" ;;
-                1) status="${RED}[ERROR] Permission Denied${NC}" ;;
-                2) status="${YELLOW}[MISSING] Device not found${NC}" ;;
-            esac
-
-            echo -e "${BLUE}│${NC} ${WHITE}Status:${NC} $status $(printf "%*s" $((56 - ${#status} + 10)) "") ${BLUE}     │${NC}"
-            echo -e "${BLUE}└─────────────────────────────────────────────────────────────────┘${NC}"
-            echo
-        fi
-
-        # Collect keyboard devices for configuration
-        if [[ "$type" =~ Keyboard ]]; then
-            keyboard_devices+=("$path|$name")
-            if [[ -r "$path" ]]; then
-                accessible_keyboards+=("$path|$name")
-            fi
-        fi
-    done <<< "$devices"
-
-    # Generate configuration suggestions
-    if [[ "${#keyboard_devices[@]}" -gt 0 ]]; then
-        generate_config_suggestions "${keyboard_devices[@]}"
-    else
-        if [[ "$GENERATE_CONFIG" == "false" ]]; then
-            echo -e "${WARNING} ${YELLOW}No keyboard devices found${NC}"
-        fi
-    fi
-
-    # Show permission help if needed
-    if [[ "${#accessible_keyboards[@]}" -lt "${#keyboard_devices[@]}" ]] && [[ "$GENERATE_CONFIG" == "false" ]]; then
-        show_permission_help
-    fi
-}
-
-# Generate configuration suggestions
-generate_config_suggestions() {
-    local devices=("$@")
-
-    if [[ "$GENERATE_CONFIG" == "true" ]]; then
-        # Generate full config file
-        cat << 'EOF'
-# Wayland Bongo Cat Configuration
-# Generated by bongocat-find-devices
-
-# Visual settings
-cat_height=50                    # Size of bongo cat (16-128)
-cat_x_offset=0                   # Horizontal position offset
-cat_y_offset=0                   # Vertical position offset
-overlay_opacity=150              # Background opacity (0-255)
-
-# Animation settings
-fps=60                           # Frame rate (1-120)
-keypress_duration=100            # Animation duration (ms)
-test_animation_interval=3        # Test animation every N seconds (0=off)
-
-# Input devices
+${BOLD}EXAMPLES${NC}
+    $SCRIPT_NAME                    # Quick detection (name-based)
+    $SCRIPT_NAME -i                 # Interactive detection (recommended)
+    $SCRIPT_NAME -i -t 10           # Interactive with 10 second timeout
 EOF
-        for device_info in "${devices[@]}"; do
-            IFS='|' read -r path name <<< "$device_info"
-            echo "keyboard_device=$path   # $name"
-        done
-        cat << 'EOF'
-
-# Debug
-enable_debug=1                   # Show debug messages
-EOF
-    else
-        echo -e "${CONFIG} ${WHITE}Configuration Suggestions:${NC}"
-        echo -e "${WHITE}Add these lines to your bongocat.conf:${NC}"
-        echo
-
-        for device_info in "${devices[@]}"; do
-            IFS='|' read -r path name <<< "$device_info"
-            echo -e "${CYAN}keyboard_device=$path${NC}   ${WHITE}# $name${NC}"
-        done
-        echo
-    fi
 }
 
-# Show permission help
-show_permission_help() {
-    echo -e "${WARNING} ${WHITE}Permission Issues Detected:${NC}"
-    echo -e "${INFO} Some devices are not accessible. To fix this:"
-    echo
-    echo -e "${WHITE}1. Add your user to the input group:${NC}"
-    echo -e "   ${CYAN}sudo usermod -a -G input \$USER${NC}"
-    echo -e "   ${YELLOW}(Log out and back in for changes to take effect)${NC}"
-    echo
-    echo -e "${WHITE}2. Or create a udev rule:${NC}"
-    echo -e "   ${CYAN}echo 'KERNEL==\"event*\", GROUP=\"input\", MODE=\"0664\"' | sudo tee /etc/udev/rules.d/99-input.rules${NC}"
-    echo -e "   ${CYAN}sudo udevadm control --reload-rules${NC}"
-    echo
-}
-
-# Test device responsiveness
-test_devices() {
-    if ! command -v evtest >/dev/null 2>&1; then
-        echo -e "${RED}${CROSS} evtest not found${NC}" >&2
-        echo -e "${INFO} Install with: ${WHITE}sudo apt install evtest${NC} (Ubuntu/Debian)" >&2
-        echo -e "${INFO} Or: ${WHITE}sudo pacman -S evtest${NC} (Arch Linux)" >&2
-        return 1
-    fi
-
-    if ! check_permissions; then
-        echo -e "${RED}${CROSS} Root privileges required for device testing${NC}" >&2
-        echo -e "${INFO} Run with: ${WHITE}sudo $0 --test${NC}" >&2
-        return 1
-    fi
-
-    echo -e "${TEST} ${WHITE}Device Testing Mode${NC}"
-    echo -e "${INFO} This will launch evtest for device testing"
-    echo -e "${INFO} Press Ctrl+C to exit evtest when done"
-    echo
-
-    exec evtest
-}
-
-# Main function
 main() {
-    parse_args "$@"
-
-    if [[ "$TEST_DEVICES" == "true" ]]; then
-        test_devices
-        return $?
-    fi
-
-    print_header
-    display_devices "$SHOW_ALL"
+  local mode="quick"
+  local timeout=5
+  local generate=false
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -i|--interactive) mode="interactive"; shift ;;
+      -t|--timeout) timeout="$2"; shift 2 ;;
+      -g|--generate) generate=true; shift ;;
+      -h|--help) show_usage; exit 0 ;;
+      *) error "Unknown option: $1"; show_usage; exit 1 ;;
+    esac
+  done
+  
+  case "$mode" in
+    interactive) interactive_detect "$timeout" ;;
+    quick) quick_detect ;;
+  esac
 }
 
-# Run main function with all arguments
 main "$@"

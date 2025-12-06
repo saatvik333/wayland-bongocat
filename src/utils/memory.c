@@ -1,5 +1,7 @@
 #include "utils/memory.h"
+
 #include "utils/error.h"
+
 #include <pthread.h>
 #include <string.h>
 

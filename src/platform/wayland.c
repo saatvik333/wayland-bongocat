@@ -1,9 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "platform/wayland.h"
+
 #include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
 #include "../protocols/xdg-output-unstable-v1-client-protocol.h"
 #include "graphics/animation.h"
+
 #include <poll.h>
+#include <stdatomic.h>
 #include <sys/time.h>
 
 // =============================================================================
@@ -11,8 +14,8 @@
 // =============================================================================
 
 // Wayland globals
-bool configured = false;
-bool fullscreen_detected = false;
+atomic_bool configured = false;
+atomic_bool fullscreen_detected = false;
 struct wl_display *display;
 struct wl_compositor *compositor;
 struct wl_shm *shm;
@@ -89,8 +92,6 @@ static const struct zxdg_output_v1_listener xdg_output_listener = {
 typedef struct {
   struct zwlr_foreign_toplevel_manager_v1 *manager;
   bool has_fullscreen_toplevel;
-  int fullscreen_toplevel_count; // Track number of fullscreen toplevels
-  struct timeval last_check;
 } fullscreen_detector_t;
 
 static fullscreen_detector_t fs_detector = {0};
@@ -102,110 +103,66 @@ static fullscreen_detector_t fs_detector = {0};
 static void fs_update_state(bool new_state) {
   if (new_state != fs_detector.has_fullscreen_toplevel) {
     fs_detector.has_fullscreen_toplevel = new_state;
-    fullscreen_detected = new_state;
+    atomic_store(&fullscreen_detected, new_state);
 
     bongocat_log_info("Fullscreen state changed: %s",
-                      fullscreen_detected ? "detected" : "cleared");
+                      new_state ? "detected" : "cleared");
 
-    if (configured) {
+    if (atomic_load(&configured)) {
       draw_bar();
     }
   }
 }
 
-static bool fs_check_compositor_fallback(void) {
-  bongocat_log_debug("Using compositor-specific fullscreen detection");
-
-  // Try Hyprland first
-  FILE *fp = popen("hyprctl activewindow 2>/dev/null", "r");
-  if (fp) {
-    char line[512];
-    bool is_fullscreen = false;
-
-    while (fgets(line, sizeof(line), fp)) {
-      size_t len = strlen(line);
-      if (len > 0 && line[len - 1] == '\n') {
-        line[len - 1] = '\0';
-      }
-
-      if (strstr(line, "fullscreen: 1") || strstr(line, "fullscreen: 2") ||
-          strstr(line, "fullscreen: true")) {
-        is_fullscreen = true;
-        bongocat_log_debug("Fullscreen detected in Hyprland");
-        break;
-      }
-    }
-    pclose(fp);
-    return is_fullscreen;
-  }
-
-  // Try Sway as fallback
-  fp = popen("swaymsg -t get_tree 2>/dev/null", "r");
-  if (fp) {
-    char sway_buffer[4096];
-    bool is_fullscreen = false;
-
-    while (fgets(sway_buffer, sizeof(sway_buffer), fp)) {
-      if (strstr(sway_buffer, "\"fullscreen_mode\":1")) {
-        is_fullscreen = true;
-        bongocat_log_debug("Fullscreen detected in Sway");
-        break;
-      }
-    }
-    pclose(fp);
-    return is_fullscreen;
-  }
-
-  bongocat_log_debug("No supported compositor found for fullscreen detection");
-  return false;
-}
-
-static bool fs_check_status(void) {
-  if (fs_detector.manager) {
-    return fs_detector.has_fullscreen_toplevel;
-  }
-  return fs_check_compositor_fallback();
-}
-
 // Foreign toplevel protocol event handlers
-// Each toplevel tracks its own fullscreen state via user data
+// Each toplevel tracks its fullscreen and activated state
 typedef struct {
   bool is_fullscreen;
+  bool is_activated;  // Track if this toplevel is the currently focused one
 } toplevel_data_t;
+
+// Track the currently active toplevel's fullscreen state
+static bool active_toplevel_fullscreen = false;
 
 static void
 fs_handle_toplevel_state(void *data,
                          struct zwlr_foreign_toplevel_handle_v1 *handle,
                          struct wl_array *state) {
+  (void)handle;
   toplevel_data_t *toplevel_data = (toplevel_data_t *)data;
   if (!toplevel_data)
     return;
 
-  bool was_fullscreen = toplevel_data->is_fullscreen;
   bool is_fullscreen = false;
+  bool is_activated = false;
   uint32_t *state_ptr;
 
   wl_array_for_each(state_ptr, state) {
     if (*state_ptr == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN) {
       is_fullscreen = true;
-      break;
+    }
+    if (*state_ptr == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED) {
+      is_activated = true;
     }
   }
 
-  // Update count if state changed
-  if (is_fullscreen && !was_fullscreen) {
-    fs_detector.fullscreen_toplevel_count++;
-  } else if (!is_fullscreen && was_fullscreen) {
-    fs_detector.fullscreen_toplevel_count--;
-    if (fs_detector.fullscreen_toplevel_count < 0) {
-      fs_detector.fullscreen_toplevel_count = 0;
-    }
-  }
+  bool was_activated = toplevel_data->is_activated;
+  bool was_fullscreen = toplevel_data->is_fullscreen;
+
   toplevel_data->is_fullscreen = is_fullscreen;
+  toplevel_data->is_activated = is_activated;
 
-  // Update global state based on count
-  bool new_state = (fs_detector.fullscreen_toplevel_count > 0);
-  fs_update_state(new_state);
+  // Case 1: Window becomes active - update state based on its fullscreen status
+  if (is_activated) {
+    active_toplevel_fullscreen = is_fullscreen;
+    fs_update_state(is_fullscreen);
+  }
+  // Case 2: Previously active fullscreen window loses activation
+  // (e.g., switching to empty workspace) - show bongocat
+  else if (was_activated && was_fullscreen && !is_activated) {
+    active_toplevel_fullscreen = false;
+    fs_update_state(false);
+  }
 }
 
 static void
@@ -213,14 +170,10 @@ fs_handle_toplevel_closed(void *data,
                           struct zwlr_foreign_toplevel_handle_v1 *handle) {
   toplevel_data_t *toplevel_data = (toplevel_data_t *)data;
   if (toplevel_data) {
-    // Decrement count if this toplevel was fullscreen
-    if (toplevel_data->is_fullscreen) {
-      fs_detector.fullscreen_toplevel_count--;
-      if (fs_detector.fullscreen_toplevel_count < 0) {
-        fs_detector.fullscreen_toplevel_count = 0;
-      }
-      bool new_state = (fs_detector.fullscreen_toplevel_count > 0);
-      fs_update_state(new_state);
+    // If the closed toplevel was the active fullscreen one, clear state
+    if (toplevel_data->is_activated && toplevel_data->is_fullscreen) {
+      active_toplevel_fullscreen = false;
+      fs_update_state(false);
     }
     free(toplevel_data);
   }
@@ -247,19 +200,19 @@ static void fs_handle_app_id(void *data,
 static void
 fs_handle_output_enter(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
-                       struct wl_output *output) {
+                       struct wl_output *toplevel_output) {
   (void)data;
   (void)handle;
-  (void)output;
+  (void)toplevel_output;
 }
 
 static void
 fs_handle_output_leave(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
-                       struct wl_output *output) {
+                       struct wl_output *toplevel_output) {
   (void)data;
   (void)handle;
-  (void)output;
+  (void)toplevel_output;
 }
 
 static void fs_handle_done(void *data,
@@ -296,11 +249,16 @@ fs_handle_manager_toplevel(void *data,
   (void)manager;
 
   // Allocate per-toplevel data to track its fullscreen state
-  toplevel_data_t *toplevel_data = calloc(1, sizeof(toplevel_data_t));
+  toplevel_data_t *toplevel_data = malloc(sizeof(toplevel_data_t));
   if (!toplevel_data) {
     bongocat_log_error("Failed to allocate toplevel data");
     return;
   }
+
+  // Initialize: toplevel starts as not fullscreen and not activated
+  // State events will update these values
+  toplevel_data->is_fullscreen = false;
+  toplevel_data->is_activated = false;
 
   zwlr_foreign_toplevel_handle_v1_add_listener(toplevel, &fs_toplevel_listener,
                                                toplevel_data);
@@ -380,26 +338,26 @@ int create_shm(int size) {
 }
 
 void draw_bar(void) {
-  if (!configured) {
+  if (!atomic_load(&configured)) {
     bongocat_log_debug("Surface not configured yet, skipping draw");
     return;
   }
 
-  int effective_opacity =
-      fullscreen_detected ? 0 : current_config->overlay_opacity;
+  bool is_fullscreen = atomic_load(&fullscreen_detected);
+  int effective_opacity = is_fullscreen ? 0 : current_config->overlay_opacity;
 
   // Clear buffer with transparency
   for (int i = 0;
        i < current_config->screen_width * current_config->bar_height * 4;
        i += 4) {
-    pixels[i] = 0;                     // B
-    pixels[i + 1] = 0;                 // G
-    pixels[i + 2] = 0;                 // R
-    pixels[i + 3] = effective_opacity; // A
+    pixels[i] = 0;                      // B
+    pixels[i + 1] = 0;                  // G
+    pixels[i + 2] = 0;                  // R
+    pixels[i + 3] = effective_opacity;  // A
   }
 
   // Draw cat if visible
-  if (!fullscreen_detected) {
+  if (!is_fullscreen) {
     pthread_mutex_lock(&anim_lock);
     int cat_height = current_config->cat_height;
     int cat_width = (cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
@@ -446,7 +404,7 @@ static void layer_surface_configure(void *data __attribute__((unused)),
                                     uint32_t serial, uint32_t w, uint32_t h) {
   bongocat_log_debug("Layer surface configured: %dx%d", w, h);
   zwlr_layer_surface_v1_ack_configure(ls, serial);
-  configured = true;
+  atomic_store(&configured, true);
   draw_bar();
 }
 
@@ -455,7 +413,7 @@ static void layer_surface_closed(void *data __attribute__((unused)),
                                  struct zwlr_layer_surface_v1 *ls
                                  __attribute__((unused))) {
   bongocat_log_info("Layer surface closed by compositor");
-  configured = false;
+  atomic_store(&configured, false);
 }
 
 static struct zwlr_layer_surface_v1_listener layer_listener = {
@@ -774,23 +732,8 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
   BONGOCAT_CHECK_NULL(running, BONGOCAT_ERROR_INVALID_PARAM);
 
   bongocat_log_info("Starting Wayland event loop");
-  const int check_interval_ms = 100;
 
   while (*running && display) {
-    // Periodic fullscreen check for fallback detection
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    long elapsed_ms = (now.tv_sec - fs_detector.last_check.tv_sec) * 1000 +
-                      (now.tv_usec - fs_detector.last_check.tv_usec) / 1000;
-
-    if (elapsed_ms >= check_interval_ms) {
-      bool new_state = fs_check_status();
-      if (new_state != fullscreen_detected) {
-        fs_update_state(new_state);
-      }
-      fs_detector.last_check = now;
-    }
-
     // Handle Wayland events
     struct pollfd pfd = {
         .fd = wl_display_get_fd(display),
@@ -833,7 +776,9 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
 // PUBLIC API IMPLEMENTATION
 // =============================================================================
 
-int wayland_get_screen_width(void) { return screen_info.screen_width; }
+int wayland_get_screen_width(void) {
+  return screen_info.screen_width;
+}
 
 void wayland_update_config(config_t *config) {
   if (!config) {
@@ -842,7 +787,7 @@ void wayland_update_config(config_t *config) {
   }
 
   current_config = config;
-  if (configured) {
+  if (atomic_load(&configured)) {
     draw_bar();
   }
 }
@@ -933,12 +878,14 @@ void wayland_cleanup(void) {
   }
 
   // Reset state
-  configured = false;
-  fullscreen_detected = false;
+  atomic_store(&configured, false);
+  atomic_store(&fullscreen_detected, false);
   memset(&fs_detector, 0, sizeof(fs_detector));
   memset(&screen_info, 0, sizeof(screen_info));
 
   bongocat_log_debug("Wayland cleanup complete");
 }
 
-const char *wayland_get_current_layer_name(void) { return "OVERLAY"; }
+const char *wayland_get_current_layer_name(void) {
+  return "OVERLAY";
+}

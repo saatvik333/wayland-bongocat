@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 199309L
 #define STB_IMAGE_IMPLEMENTATION
 #include "graphics/animation.h"
+
 #include "graphics/embedded_assets.h"
 #include "platform/input.h"
 #include "platform/wayland.h"
 #include "utils/memory.h"
+
 #include <time.h>
 
 // =============================================================================
@@ -32,18 +34,112 @@ static bool drawing_is_pixel_in_bounds(int x, int y, int width, int height) {
 
 static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src,
                                int dest_idx, int src_idx) {
-  dest[dest_idx + 0] = src[src_idx + 2]; // B
-  dest[dest_idx + 1] = src[src_idx + 1]; // G
-  dest[dest_idx + 2] = src[src_idx + 0]; // R
-  dest[dest_idx + 3] = src[src_idx + 3]; // A
+  dest[dest_idx + 0] = src[src_idx + 2];  // B
+  dest[dest_idx + 1] = src[src_idx + 1];  // G
+  dest[dest_idx + 2] = src[src_idx + 0];  // R
+  dest[dest_idx + 3] = src[src_idx + 3];  // A
 }
 
 static void drawing_copy_pixel_rgba(uint8_t *dest, int dest_idx, uint8_t r,
                                     uint8_t g, uint8_t b, uint8_t a) {
-  dest[dest_idx + 0] = b; // B
-  dest[dest_idx + 1] = g; // G
-  dest[dest_idx + 2] = r; // R
-  dest[dest_idx + 3] = a; // A
+  dest[dest_idx + 0] = b;  // B
+  dest[dest_idx + 1] = g;  // G
+  dest[dest_idx + 2] = r;  // R
+  dest[dest_idx + 3] = a;  // A
+}
+
+// Alpha blend source pixel onto destination - enables smooth anti-aliased edges
+static void drawing_blend_pixel(uint8_t *dest, int dest_idx, uint8_t src_r,
+                                uint8_t src_g, uint8_t src_b, uint8_t src_a) {
+  // Skip fully transparent pixels
+  if (src_a == 0) {
+    return;
+  }
+
+  // Fully opaque - direct copy (fast path)
+  if (src_a == 255) {
+    dest[dest_idx + 0] = src_b;
+    dest[dest_idx + 1] = src_g;
+    dest[dest_idx + 2] = src_r;
+    dest[dest_idx + 3] = 255;
+    return;
+  }
+
+  // Alpha blend: out = src * alpha + dest * (1 - alpha)
+  float alpha = src_a / 255.0f;
+  float inv_alpha = 1.0f - alpha;
+
+  uint8_t dest_b = dest[dest_idx + 0];
+  uint8_t dest_g = dest[dest_idx + 1];
+  uint8_t dest_r = dest[dest_idx + 2];
+
+  dest[dest_idx + 0] = (uint8_t)(src_b * alpha + dest_b * inv_alpha + 0.5f);
+  dest[dest_idx + 1] = (uint8_t)(src_g * alpha + dest_g * inv_alpha + 0.5f);
+  dest[dest_idx + 2] = (uint8_t)(src_r * alpha + dest_r * inv_alpha + 0.5f);
+  dest[dest_idx + 3] = 255;
+}
+
+// Box filter for high-quality downscaling - averages all source pixels that
+// map to a destination pixel. Produces much smoother results than bilinear
+// when shrinking images significantly.
+static void drawing_get_box_filtered_pixel(const unsigned char *src, int src_w,
+                                           int src_h, int dest_x, int dest_y,
+                                           int target_w, int target_h,
+                                           int mirror_x, int mirror_y,
+                                           uint8_t *r, uint8_t *g, uint8_t *b,
+                                           uint8_t *a) {
+  // Calculate the source region that maps to this destination pixel
+  float src_x_start = ((float)dest_x * src_w) / target_w;
+  float src_x_end = ((float)(dest_x + 1) * src_w) / target_w;
+  float src_y_start = ((float)dest_y * src_h) / target_h;
+  float src_y_end = ((float)(dest_y + 1) * src_h) / target_h;
+
+  // Clamp to image bounds
+  int x0 = (int)src_x_start;
+  int x1 = (int)src_x_end;
+  int y0 = (int)src_y_start;
+  int y1 = (int)src_y_end;
+
+  if (x0 < 0)
+    x0 = 0;
+  if (y0 < 0)
+    y0 = 0;
+  if (x1 >= src_w)
+    x1 = src_w - 1;
+  if (y1 >= src_h)
+    y1 = src_h - 1;
+  if (x1 < x0)
+    x1 = x0;
+  if (y1 < y0)
+    y1 = y0;
+
+  // Accumulate all pixels in the source region
+  float sum_r = 0, sum_g = 0, sum_b = 0, sum_a = 0;
+  int count = 0;
+
+  for (int sy = y0; sy <= y1; sy++) {
+    for (int sx = x0; sx <= x1; sx++) {
+      int mx = mirror_x ? (src_w - 1 - sx) : sx;
+      int my = mirror_y ? (src_h - 1 - sy) : sy;
+      int idx = (my * src_w + mx) * 4;
+
+      sum_r += src[idx + 0];
+      sum_g += src[idx + 1];
+      sum_b += src[idx + 2];
+      sum_a += src[idx + 3];
+      count++;
+    }
+  }
+
+  // Average the accumulated values
+  if (count > 0) {
+    *r = (uint8_t)(sum_r / count + 0.5f);
+    *g = (uint8_t)(sum_g / count + 0.5f);
+    *b = (uint8_t)(sum_b / count + 0.5f);
+    *a = (uint8_t)(sum_a / count + 0.5f);
+  } else {
+    *r = *g = *b = *a = 0;
+  }
 }
 
 // Bilinear interpolation for smooth scaling
@@ -76,10 +172,10 @@ static void drawing_get_interpolated_pixel(const unsigned char *src, int src_w,
   float dy = fy - y1;
 
   // Get the four surrounding pixels
-  int idx_tl = (y1 * src_w + x1) * 4; // top-left
-  int idx_tr = (y1 * src_w + x2) * 4; // top-right
-  int idx_bl = (y2 * src_w + x1) * 4; // bottom-left
-  int idx_br = (y2 * src_w + x2) * 4; // bottom-right
+  int idx_tl = (y1 * src_w + x1) * 4;  // top-left
+  int idx_tr = (y1 * src_w + x2) * 4;  // top-right
+  int idx_bl = (y2 * src_w + x1) * 4;  // bottom-left
+  int idx_br = (y2 * src_w + x2) * 4;  // bottom-right
 
   // Interpolate each channel
   for (int c = 0; c < 4; c++) {
@@ -90,16 +186,16 @@ static void drawing_get_interpolated_pixel(const unsigned char *src, int src_w,
     switch (c) {
     case 0:
       *r = (uint8_t)(result + 0.5f);
-      break; // R
+      break;  // R
     case 1:
       *g = (uint8_t)(result + 0.5f);
-      break; // G
+      break;  // G
     case 2:
       *b = (uint8_t)(result + 0.5f);
-      break; // B
+      break;  // B
     case 3:
       *a = (uint8_t)(result + 0.5f);
-      break; // A
+      break;  // A
     }
   }
 }
@@ -107,7 +203,6 @@ static void drawing_get_interpolated_pixel(const unsigned char *src, int src_w,
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
                        unsigned char *src, int src_w, int src_h, int offset_x,
                        int offset_y, int target_w, int target_h) {
-
   bool use_antialiasing = current_config && current_config->enable_antialiasing;
 
   for (int y = 0; y < target_h; y++) {
@@ -122,26 +217,37 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
       int dest_idx = (dy * dest_w + dx) * 4;
 
       if (use_antialiasing) {
-        // Use bilinear interpolation for smooth scaling
-        float fx = ((float)x * src_w) / target_w;
-        float fy = ((float)y * src_h) / target_h;
-
-        // Apply mirroring based on configuration
-        if (current_config->mirror_x) {
-          fx = (src_w - 1) - fx;
-        }
-        if (current_config->mirror_y) {
-          fy = (src_h - 1) - fy;
-        }
-
         uint8_t r, g, b, a;
-        drawing_get_interpolated_pixel(src, src_w, src_h, fx, fy, &r, &g, &b,
-                                       &a);
 
-        // Only draw non-transparent pixels
-        if (a > 128) {
-          drawing_copy_pixel_rgba(dest, dest_idx, r, g, b, a);
+        // Use box filter for downscaling (shrinking) - produces smoother
+        // results Use bilinear interpolation for upscaling or same size
+        bool is_downscaling = (target_w < src_w) || (target_h < src_h);
+
+        if (is_downscaling) {
+          // Box filter: average all source pixels that map to this dest pixel
+          drawing_get_box_filtered_pixel(src, src_w, src_h, x, y, target_w,
+                                         target_h, current_config->mirror_x,
+                                         current_config->mirror_y, &r, &g, &b,
+                                         &a);
+        } else {
+          // Bilinear interpolation for upscaling
+          float fx = ((float)x * src_w) / target_w;
+          float fy = ((float)y * src_h) / target_h;
+
+          // Apply mirroring based on configuration
+          if (current_config->mirror_x) {
+            fx = (src_w - 1) - fx;
+          }
+          if (current_config->mirror_y) {
+            fy = (src_h - 1) - fy;
+          }
+
+          drawing_get_interpolated_pixel(src, src_w, src_h, fx, fy, &r, &g, &b,
+                                         &a);
         }
+
+        // Alpha blend onto destination (enables smooth anti-aliased edges)
+        drawing_blend_pixel(dest, dest_idx, r, g, b, a);
       } else {
         // Use nearest-neighbor scaling (original behavior)
         int sx = (x * src_w) / target_w;
@@ -220,7 +326,7 @@ static bool anim_is_sleep_time(const config_t *config) {
 }
 
 static int anim_get_random_active_frame(void) {
-  return (rand() % 2) + 1; // Frame 1 or 2 (active frames)
+  return (rand() % 2) + 1;  // Frame 1 or 2 (active frames)
 }
 
 static void anim_trigger_frame_change(int new_frame, long duration_us,
@@ -254,7 +360,7 @@ static void anim_handle_test_animation(animation_state_t *state,
 
 static void anim_handle_key_press(animation_state_t *state,
                                   long current_time_us) {
-  if (!*any_key_pressed) {
+  if (!atomic_load(any_key_pressed)) {
     return;
   }
 
@@ -266,8 +372,8 @@ static void anim_handle_key_press(animation_state_t *state,
     bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
     anim_trigger_frame_change(new_frame, duration_us, current_time_us, state);
 
-    *any_key_pressed = 0;
-    state->test_counter = 0; // Reset test counter
+    atomic_store(any_key_pressed, 0);
+    state->test_counter = 0;  // Reset test counter
     state->last_key_pressed_timestamp = current_time_us;
   }
 }
@@ -466,4 +572,6 @@ void animation_cleanup(void) {
   bongocat_log_debug("Animation cleanup complete");
 }
 
-void animation_trigger(void) { *any_key_pressed = 1; }
+void animation_trigger(void) {
+  atomic_store(any_key_pressed, 1);
+}

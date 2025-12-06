@@ -7,6 +7,7 @@
 #include "platform/wayland.h"
 #include "utils/error.h"
 #include "utils/memory.h"
+
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -51,7 +52,7 @@ static int process_create_pid_file(void) {
     close(fd);
     if (errno == EWOULDBLOCK) {
       bongocat_log_info("Another instance is already running");
-      return -2; // Already running
+      return -2;  // Already running
     }
     bongocat_log_error("Failed to lock PID file: %s", strerror(errno));
     return -1;
@@ -65,15 +66,17 @@ static int process_create_pid_file(void) {
     return -1;
   }
 
-  return fd; // Keep file descriptor open to maintain lock
+  return fd;  // Keep file descriptor open to maintain lock
 }
 
-static void process_remove_pid_file(void) { unlink(PID_FILE); }
+static void process_remove_pid_file(void) {
+  unlink(PID_FILE);
+}
 
 static pid_t process_get_running_pid(void) {
   int fd = open(PID_FILE, O_RDONLY);
   if (fd < 0) {
-    return -1; // No PID file exists
+    return -1;  // No PID file exists
   }
 
   // Try to get a shared lock to read the file
@@ -107,7 +110,7 @@ static pid_t process_get_running_pid(void) {
 
   // Check if process is actually running
   if (kill(pid, 0) == 0) {
-    return pid; // Process is running
+    return pid;  // Process is running
   }
 
   // Process is not running, remove stale PID file
@@ -123,12 +126,12 @@ static int process_handle_toggle(void) {
     bongocat_log_info("Stopping bongocat (PID: %d)", running_pid);
     if (kill(running_pid, SIGTERM) == 0) {
       // Wait a bit for graceful shutdown
-      for (int i = 0; i < 50; i++) { // Wait up to 5 seconds
+      for (int i = 0; i < 50; i++) {  // Wait up to 5 seconds
         if (kill(running_pid, 0) != 0) {
           bongocat_log_info("Bongocat stopped successfully");
           return 0;
         }
-        usleep(100000); // 100ms
+        usleep(100000);  // 100ms
       }
 
       // Force kill if still running
@@ -141,7 +144,7 @@ static int process_handle_toggle(void) {
     }
   } else {
     bongocat_log_info("Bongocat is not running, starting it now");
-    return -1; // Signal to continue with normal startup
+    return -1;  // Signal to continue with normal startup
   }
 
   return 0;
@@ -169,6 +172,23 @@ static void signal_handler(int sig) {
   }
 }
 
+// Crash signal handler - ensures child cleanup on crash
+static void crash_signal_handler(int sig) {
+  // Clean up child process immediately
+  input_cleanup();
+  process_remove_pid_file();
+
+  // Reset to default handler and re-raise
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+// atexit handler - ensures cleanup on any exit
+static void atexit_cleanup(void) {
+  input_cleanup();
+  process_remove_pid_file();
+}
+
 static bongocat_error_t signal_setup_handlers(void) {
   struct sigaction sa;
 
@@ -194,6 +214,20 @@ static bongocat_error_t signal_setup_handlers(void) {
 
   // Ignore SIGPIPE
   signal(SIGPIPE, SIG_IGN);
+
+  // Setup crash signal handlers to ensure child cleanup
+  struct sigaction crash_sa;
+  crash_sa.sa_handler = crash_signal_handler;
+  sigemptyset(&crash_sa.sa_mask);
+  crash_sa.sa_flags = SA_RESETHAND;  // Reset to default after handling
+
+  sigaction(SIGSEGV, &crash_sa, NULL);
+  sigaction(SIGABRT, &crash_sa, NULL);
+  sigaction(SIGFPE, &crash_sa, NULL);
+  sigaction(SIGILL, &crash_sa, NULL);
+
+  // Register atexit handler for normal exits
+  atexit(atexit_cleanup);
 
   return BONGOCAT_SUCCESS;
 }
@@ -229,10 +263,23 @@ static bool config_devices_changed(const config_t *old_config,
 static void config_reload_callback(const char *config_path) {
   bongocat_log_info("Reloading configuration from: %s", config_path);
 
-  // IMPORTANT: Save old device count BEFORE calling load_config,
+  // IMPORTANT: Save old device info BEFORE calling load_config,
   // because load_config calls config_cleanup_devices() which frees
   // the keyboard_devices array that g_config still points to.
   int old_num_devices = g_config.num_keyboard_devices;
+
+  // Copy old device paths so we can compare after reload
+  char **old_device_paths = NULL;
+  if (old_num_devices > 0 && g_config.keyboard_devices != NULL) {
+    old_device_paths = malloc(sizeof(char *) * old_num_devices);
+    if (old_device_paths != NULL) {
+      for (int i = 0; i < old_num_devices; i++) {
+        old_device_paths[i] = g_config.keyboard_devices[i]
+                                  ? strdup(g_config.keyboard_devices[i])
+                                  : NULL;
+      }
+    }
+  }
 
   // Create a temporary config to test loading
   config_t temp_config;
@@ -242,12 +289,39 @@ static void config_reload_callback(const char *config_path) {
     bongocat_log_error("Failed to reload config: %s",
                        bongocat_error_string(result));
     bongocat_log_info("Keeping current configuration");
+    // Free saved paths
+    if (old_device_paths != NULL) {
+      for (int i = 0; i < old_num_devices; i++) {
+        free(old_device_paths[i]);
+      }
+      free(old_device_paths);
+    }
     return;
   }
 
-  // Check if device count changed (we can't access old device paths
-  // because they were freed by load_config, so just check count)
+  // Check if devices changed (count or any path differs)
   bool devices_changed = (old_num_devices != temp_config.num_keyboard_devices);
+  if (!devices_changed && old_device_paths != NULL) {
+    // Same count - check if any paths differ
+    for (int i = 0; i < old_num_devices; i++) {
+      const char *old_path = old_device_paths[i];
+      const char *new_path = temp_config.keyboard_devices[i];
+      if ((old_path == NULL) != (new_path == NULL) ||
+          (old_path != NULL && new_path != NULL &&
+           strcmp(old_path, new_path) != 0)) {
+        devices_changed = true;
+        break;
+      }
+    }
+  }
+
+  // Free saved paths
+  if (old_device_paths != NULL) {
+    for (int i = 0; i < old_num_devices; i++) {
+      free(old_device_paths[i]);
+    }
+    free(old_device_paths);
+  }
 
   // Clean up old output_name if it exists and is different
   // Note: g_config.keyboard_devices is now invalid (freed by load_config)
@@ -420,7 +494,7 @@ static int cli_parse_arguments(int argc, char *argv[], cli_args_t *args) {
     } else if (strcmp(argv[i], "--config") == 0 || strcmp(argv[i], "-c") == 0) {
       if (i + 1 < argc) {
         args->config_file = argv[i + 1];
-        i++; // Skip the next argument since it's the config file path
+        i++;  // Skip the next argument since it's the config file path
       } else {
         bongocat_log_error("--config option requires a file path");
         return 1;
@@ -446,7 +520,7 @@ int main(int argc, char *argv[]) {
   bongocat_error_t result;
 
   // Initialize error system early
-  bongocat_error_init(1); // Enable debug initially
+  bongocat_error_init(1);  // Enable debug initially
 
   bongocat_log_info("Starting Bongo Cat Overlay v" BONGOCAT_VERSION);
 
@@ -471,7 +545,7 @@ int main(int argc, char *argv[]) {
   if (args.toggle_mode) {
     int toggle_result = process_handle_toggle();
     if (toggle_result >= 0) {
-      return toggle_result; // Either successfully toggled off or error
+      return toggle_result;  // Either successfully toggled off or error
     }
     // toggle_result == -1 means continue with startup
   }
@@ -499,7 +573,7 @@ int main(int argc, char *argv[]) {
   if (result != BONGOCAT_SUCCESS) {
     bongocat_log_error("Failed to load configuration: %s",
                        bongocat_error_string(result));
-    process_remove_pid_file(); // Clean up PID file on error
+    process_remove_pid_file();  // Clean up PID file on error
     return 1;
   }
 
@@ -530,5 +604,5 @@ int main(int argc, char *argv[]) {
   bongocat_log_info("Main loop exited, shutting down");
   system_cleanup_and_exit(0);
 
-  return 0; // Never reached
+  return 0;  // Never reached
 }

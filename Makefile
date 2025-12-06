@@ -4,8 +4,8 @@ CC = gcc
 # Build type (debug or release)
 BUILD_TYPE ?= release
 
-# Base flags
-BASE_CFLAGS = -std=c11 -Iinclude -Ilib -Iprotocols
+# Base flags (using c2x for C23 compatibility on GCC 9+)
+BASE_CFLAGS = -std=c2x -Iinclude -Ilib -Iprotocols
 BASE_CFLAGS += -Wall -Wextra -Wpedantic -Wformat=2 -Wstrict-prototypes
 BASE_CFLAGS += -Wmissing-prototypes -Wold-style-definition -Wredundant-decls
 BASE_CFLAGS += -Wnested-externs -Wmissing-include-dirs -Wlogical-op
@@ -54,7 +54,7 @@ PROTOCOL_OBJECTS = $(C_PROTOCOL_SRC:$(PROTOCOLDIR)/%.c=$(OBJDIR)/%.o)
 # Target executable
 TARGET = $(BUILDDIR)/bongocat
 
-.PHONY: all clean protocols embed-assets
+.PHONY: all clean protocols embed-assets format format-check lint
 
 all: protocols $(TARGET)
 
@@ -130,4 +130,43 @@ profile: release
 	perf record -g ./$(TARGET)
 	perf report
 
-.PHONY: debug release install uninstall analyze memcheck profile
+.PHONY: debug release install uninstall analyze memcheck profile format format-check lint
+
+# =============================================================================
+# CODE QUALITY TARGETS
+# =============================================================================
+
+# Find all project source files (exclude lib/ and protocols/)
+PROJECT_SOURCES = $(shell find $(SRCDIR) -name '*.c' ! -path '*/embedded_assets.c')
+PROJECT_HEADERS = $(shell find $(INCDIR) -name '*.h')
+ALL_PROJECT_FILES = $(PROJECT_SOURCES) $(PROJECT_HEADERS)
+
+# Format all project source files
+format:
+	@echo "Formatting source files..."
+	@clang-format -i $(ALL_PROJECT_FILES)
+	@echo "Done! Formatted $(words $(ALL_PROJECT_FILES)) files."
+
+# Check if formatting is correct (for CI)
+format-check:
+	@echo "Checking code formatting..."
+	@clang-format --dry-run --Werror $(ALL_PROJECT_FILES)
+	@echo "All files are properly formatted."
+
+# Static analysis with clang-tidy (uses .clang-tidy config)
+lint: protocols
+	@echo "Running static analysis..."
+	@clang-tidy $(PROJECT_SOURCES) -- $(CFLAGS) 2>/dev/null || true
+	@echo "Static analysis complete."
+
+# Alias for lint
+analyze: lint
+
+# Generate compile_commands.json for IDE support (requires bear)
+# Run: make compiledb
+compiledb: clean
+	@echo "Generating compile_commands.json..."
+	@bear -- $(MAKE) all 2>/dev/null || (echo "Note: 'bear' not installed. Install with: sudo pacman -S bear" && false)
+	@echo "compile_commands.json generated!"
+
+.PHONY: compiledb

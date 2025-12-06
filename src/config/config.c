@@ -1,22 +1,24 @@
 #define _POSIX_C_SOURCE 200809L
 #include "config/config.h"
+
 #include "utils/error.h"
 #include "utils/memory.h"
+
 #include <limits.h>
 
 // =============================================================================
 // CONFIGURATION CONSTANTS AND VALIDATION RANGES
 // =============================================================================
 
-#define MIN_CAT_HEIGHT 10
-#define MAX_CAT_HEIGHT 200
+#define MIN_CAT_HEIGHT     10
+#define MAX_CAT_HEIGHT     200
 #define MIN_OVERLAY_HEIGHT 20
 #define MAX_OVERLAY_HEIGHT 300
-#define MIN_FPS 1
-#define MAX_FPS 120
-#define MIN_DURATION 10
-#define MAX_DURATION 5000
-#define MAX_INTERVAL 3600
+#define MIN_FPS            1
+#define MAX_FPS            120
+#define MIN_DURATION       10
+#define MAX_DURATION       5000
+#define MAX_INTERVAL       3600
 
 // =============================================================================
 // GLOBAL STATE FOR DEVICE MANAGEMENT
@@ -235,7 +237,7 @@ config_parse_integer_key(config_t *config, const char *key, const char *value) {
   } else if (strcmp(key, "idle_sleep_timeout") == 0) {
     config->idle_sleep_timeout_sec = int_value;
   } else {
-    return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
+    return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
 
   return BONGOCAT_SUCCESS;
@@ -273,7 +275,7 @@ static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
       config->cat_align = ALIGN_CENTER;
     }
   } else {
-    return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
+    return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
 
   return BONGOCAT_SUCCESS;
@@ -283,7 +285,7 @@ static bongocat_error_t config_parse_time_key(config_t *config, const char *key,
                                               const char *value) {
   // Only try to parse time for time-related keys
   if (strcmp(key, "sleep_begin") != 0 && strcmp(key, "sleep_end") != 0) {
-    return BONGOCAT_ERROR_INVALID_PARAM; // Not a time key
+    return BONGOCAT_ERROR_INVALID_PARAM;  // Not a time key
   }
 
   int hour, min;
@@ -322,7 +324,7 @@ config_parse_string_key(config_t *config, const char *key, const char *value) {
     config->output_name = new_name;
     strcpy(config->output_name, value);
   } else {
-    return BONGOCAT_ERROR_INVALID_PARAM; // Unknown key
+    return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
 
   return BONGOCAT_SUCCESS;
@@ -432,11 +434,10 @@ static void config_set_defaults(config_t *config) {
   *config = (config_t){
       .screen_width =
           DEFAULT_SCREEN_WIDTH, // Will be updated by Wayland detection
-      .output_name = NULL,      // Will default to automatic one if kept null
+      .output_name = NULL, // Will default to automatic one if kept null
       .bar_height = DEFAULT_BAR_HEIGHT,
       .asset_paths = {"assets/bongo-cat-both-up.png",
-                      "assets/bongo-cat-left-down.png",
-                      "assets/bongo-cat-right-down.png",
+                      "assets/bongo-cat-left-down.png", "assets/bongo-cat-right-down.png",
                       "assets/bongo-cat-both-down.png"},
       .keyboard_devices = NULL,
       .num_keyboard_devices = 0,
@@ -548,7 +549,9 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
   return BONGOCAT_SUCCESS;
 }
 
-void config_cleanup(void) { config_cleanup_devices(); }
+void config_cleanup(void) {
+  config_cleanup_devices();
+}
 
 void config_cleanup_full(config_t *config) {
   if (!config)
