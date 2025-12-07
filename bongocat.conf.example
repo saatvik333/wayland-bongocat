@@ -32,7 +32,7 @@ overlay_height=80
 # Background: 0=transparent, 255=opaque
 overlay_opacity=0
 
-# Position: top, bottom
+# Position: top, bottom (Attention!: Requires restart of bongocat)
 overlay_position=bottom
 
 # Layer: top (above windows), overlay (always visible)
@@ -52,7 +52,7 @@ keyboard_device=/dev/input/event4
 
 # Leave commented to auto-detect
 # Find monitor names with: wlr-randr or hyprctl monitors
-# monitor=eDP-1
+# monitor=HDMI-A-1
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ ANIMATION                                                                   │

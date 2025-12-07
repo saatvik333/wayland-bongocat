@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - 2025-12-07
+
+### Fixed
+
+- **Monitor Reconnection** - Overlay now survives monitor disconnect/reconnect (fixes #15)
+- **Dynamic Overlay Resize** - Changing `overlay_height` via config reload no longer crashes
+- **Ghost Process Prevention** - Added SIGQUIT/SIGHUP handlers and parent liveness check in child
+
+### Improved
+
+- **Performance Optimizations**
+  - Fast buffer clearing using memset (~4x faster)
+  - Skip unchanged frames when idle (~95% fewer redraws)
+  - Hoisted loop invariants in image scaling
+- **Thread Safety** - Mutex protection during buffer recreation
+- **Memory Usage** - Reduced from ~20MB to ~8MB RAM
+
+---
+
 ## [1.3.1] - 2025-12-06
 
 ### Added

@@ -155,6 +155,13 @@ static void capture_input_multiple(char **device_paths, int num_devices,
       break;
     }
 
+    // GHOST PROCESS PREVENTION: Check if parent is still alive
+    // If parent died and we're now orphaned to init (PID 1), exit gracefully
+    if (getppid() == 1) {
+      bongocat_log_info("Parent process died, child exiting to prevent ghost");
+      break;
+    }
+
     if (select_result == 0) {
       // Adaptive device checking - start at 5 seconds, increase to 30 if no new
       // devices found

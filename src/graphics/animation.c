@@ -203,44 +203,53 @@ static void drawing_get_interpolated_pixel(const unsigned char *src, int src_w,
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
                        unsigned char *src, int src_w, int src_h, int offset_x,
                        int offset_y, int target_w, int target_h) {
-  bool use_antialiasing = current_config && current_config->enable_antialiasing;
+  // OPTIMIZATION: Hoist invariants outside loops
+  const bool use_aa = current_config && current_config->enable_antialiasing;
+  const bool mirror_x = current_config && current_config->mirror_x;
+  const bool mirror_y = current_config && current_config->mirror_y;
+  const bool is_downscaling = (target_w < src_w) || (target_h < src_h);
+
+  // Pre-calculate scale factors (avoid division in loop)
+  const float scale_x = (float)src_w / target_w;
+  const float scale_y = (float)src_h / target_h;
 
   for (int y = 0; y < target_h; y++) {
+    const int dy = y + offset_y;
+
+    // Skip entire row if out of bounds
+    if (dy < 0 || dy >= dest_h)
+      continue;
+
+    // Pre-calculate row offset
+    const int row_offset = dy * dest_w * 4;
+
     for (int x = 0; x < target_w; x++) {
-      int dx = x + offset_x;
-      int dy = y + offset_y;
+      const int dx = x + offset_x;
 
-      if (!drawing_is_pixel_in_bounds(dx, dy, dest_w, dest_h)) {
+      // Skip if out of horizontal bounds
+      if (dx < 0 || dx >= dest_w)
         continue;
-      }
 
-      int dest_idx = (dy * dest_w + dx) * 4;
+      const int dest_idx = row_offset + dx * 4;
 
-      if (use_antialiasing) {
+      if (use_aa) {
         uint8_t r, g, b, a;
-
-        // Use box filter for downscaling (shrinking) - produces smoother
-        // results Use bilinear interpolation for upscaling or same size
-        bool is_downscaling = (target_w < src_w) || (target_h < src_h);
 
         if (is_downscaling) {
           // Box filter: average all source pixels that map to this dest pixel
           drawing_get_box_filtered_pixel(src, src_w, src_h, x, y, target_w,
-                                         target_h, current_config->mirror_x,
-                                         current_config->mirror_y, &r, &g, &b,
-                                         &a);
+                                         target_h, mirror_x, mirror_y, &r, &g,
+                                         &b, &a);
         } else {
           // Bilinear interpolation for upscaling
-          float fx = ((float)x * src_w) / target_w;
-          float fy = ((float)y * src_h) / target_h;
+          float fx = x * scale_x;
+          float fy = y * scale_y;
 
-          // Apply mirroring based on configuration
-          if (current_config->mirror_x) {
+          // Apply mirroring
+          if (mirror_x)
             fx = (src_w - 1) - fx;
-          }
-          if (current_config->mirror_y) {
+          if (mirror_y)
             fy = (src_h - 1) - fy;
-          }
 
           drawing_get_interpolated_pixel(src, src_w, src_h, fx, fy, &r, &g, &b,
                                          &a);
@@ -253,15 +262,13 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
         int sx = (x * src_w) / target_w;
         int sy = (y * src_h) / target_h;
 
-        // Apply mirroring based on configuration
-        if (current_config->mirror_x) {
+        // Apply mirroring
+        if (mirror_x)
           sx = (src_w - 1) - sx;
-        }
-        if (current_config->mirror_y) {
+        if (mirror_y)
           sy = (src_h - 1) - sy;
-        }
 
-        int src_idx = (sy * src_w + sx) * 4;
+        const int src_idx = (sy * src_w + sx) * 4;
 
         // Only draw non-transparent pixels
         if (src[src_idx + 3] > 128) {
@@ -492,10 +499,38 @@ static void *anim_thread_main(void *arg __attribute__((unused))) {
   animation_running = true;
   bongocat_log_debug("Animation thread main loop started");
 
+  // Track last drawn state to skip redundant redraws
+  int last_drawn_frame = -1;
+  bool force_redraw = true;  // Force first draw
+
   while (animation_running) {
+    int prev_frame = anim_index;
     anim_update_state(&state);
-    draw_bar();
-    nanosleep(&frame_delay, NULL);
+
+    // Check if frame actually changed
+    bool frame_changed = (anim_index != last_drawn_frame);
+    bool state_changed = (anim_index != prev_frame);
+
+    // Only redraw if something changed
+    if (frame_changed || force_redraw) {
+      draw_bar();
+      last_drawn_frame = anim_index;
+      force_redraw = false;
+    }
+
+    // Reduce sleep when actively animating, increase when idle
+    if (state_changed) {
+      // Active animation - use configured frame rate
+      nanosleep(&frame_delay, NULL);
+    } else {
+      // Idle - can sleep a bit longer (reduce polling frequency)
+      // Clamp to prevent nanoseconds overflow (max 999999999)
+      long idle_ns = state.frame_time_ns * 2;
+      if (idle_ns > 999999999L)
+        idle_ns = 999999999L;
+      struct timespec idle_delay = {0, idle_ns};
+      nanosleep(&idle_delay, NULL);
+    }
   }
 
   bongocat_log_debug("Animation thread main loop exited");

@@ -158,11 +158,13 @@ static void signal_handler(int sig) {
   switch (sig) {
   case SIGINT:
   case SIGTERM:
+  case SIGQUIT:  // Handle Ctrl+\ for graceful shutdown
+  case SIGHUP:   // Handle terminal hangup
     bongocat_log_info("Received signal %d, shutting down gracefully", sig);
     running = 0;
     break;
   case SIGCHLD:
-    // Handle child process termination
+    // Handle child process termination - reap zombies
     while (waitpid(-1, NULL, WNOHANG) > 0)
       ;
     break;
@@ -209,6 +211,17 @@ static bongocat_error_t signal_setup_handlers(void) {
 
   if (sigaction(SIGCHLD, &sa, NULL) == -1) {
     bongocat_log_error("Failed to setup SIGCHLD handler: %s", strerror(errno));
+    return BONGOCAT_ERROR_THREAD;
+  }
+
+  // Handle SIGQUIT (Ctrl+\) and SIGHUP (terminal hangup)
+  if (sigaction(SIGQUIT, &sa, NULL) == -1) {
+    bongocat_log_error("Failed to setup SIGQUIT handler: %s", strerror(errno));
+    return BONGOCAT_ERROR_THREAD;
+  }
+
+  if (sigaction(SIGHUP, &sa, NULL) == -1) {
+    bongocat_log_error("Failed to setup SIGHUP handler: %s", strerror(errno));
     return BONGOCAT_ERROR_THREAD;
   }
 

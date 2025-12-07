@@ -48,18 +48,81 @@ static output_ref_t outputs[MAX_OUTPUTS];
 static size_t output_count = 0;
 static struct zxdg_output_manager_v1 *xdg_output_manager = NULL;
 
+// Output reconnection handling
+static struct wl_registry *global_registry = NULL;
+static uint32_t bound_output_name = 0;   // Registry name of our bound output
+static atomic_bool output_lost = false;  // Set when our output disconnects
+static bool using_named_output =
+    false;  // True if user specified an output name
+
 // =============================================================================
 // ZXDG LISTENER IMPLEMENTATION
 // =============================================================================
+
+// Forward declarations for reconnection handling
+static bongocat_error_t wayland_setup_surface(void);
 
 static void handle_xdg_output_name(void *data,
                                    struct zxdg_output_v1 *xdg_output
                                    __attribute__((unused)),
                                    const char *name) {
+  // Defensive null check
+  if (!data || !name) {
+    return;
+  }
+
   output_ref_t *oref = data;
   snprintf(oref->name_str, sizeof(oref->name_str), "%s", name);
   oref->name_received = true;
   bongocat_log_debug("xdg-output name received: %s", name);
+
+  // Check if this is the output we're waiting for (reconnection case)
+  if (!atomic_load(&output_lost) || !current_config) {
+    return;
+  }
+
+  bool should_reconnect = false;
+
+  // Case 1: User specified an output name - match exactly
+  if (using_named_output && current_config->output_name) {
+    should_reconnect = (strcmp(name, current_config->output_name) == 0);
+  }
+  // Case 2: Using fallback (first output) - reconnect to any output
+  else if (!using_named_output) {
+    should_reconnect = true;
+    bongocat_log_debug("Using fallback output, accepting '%s'", name);
+  }
+
+  if (should_reconnect) {
+    bongocat_log_info("Target output '%s' reconnected!", name);
+
+    // Clean up old surface if it exists
+    if (layer_surface) {
+      zwlr_layer_surface_v1_destroy(layer_surface);
+      layer_surface = NULL;
+    }
+    if (surface) {
+      wl_surface_destroy(surface);
+      surface = NULL;
+    }
+
+    // Set new output
+    output = oref->wl_output;
+    bound_output_name = oref->name;
+    atomic_store(&output_lost, false);
+
+    // Recreate surface on new output
+    // Note: wayland_setup_surface already commits, triggering a configure
+    // event. The layer_surface_configure callback will ack and call draw_bar()
+    // to render.
+    if (wayland_setup_surface() == BONGOCAT_SUCCESS) {
+      // Wait for configure event to be processed
+      wl_display_roundtrip(display);
+      bongocat_log_info("Surface recreated, configure event processed");
+    } else {
+      bongocat_log_error("Failed to recreate surface on reconnected output");
+    }
+  }
 }
 
 static void handle_xdg_output_logical_position(
@@ -343,20 +406,28 @@ void draw_bar(void) {
     return;
   }
 
+  // Critical null checks - prevent crash during buffer recreation
+  if (!current_config || !pixels) {
+    bongocat_log_debug("Config or pixels not ready, skipping draw");
+    return;
+  }
+
   // Skip fullscreen hiding when layer is LAYER_OVERLAY (always visible)
-  bool is_overlay_layer =
-      current_config && current_config->layer == LAYER_OVERLAY;
+  bool is_overlay_layer = current_config->layer == LAYER_OVERLAY;
   bool is_fullscreen = !is_overlay_layer && atomic_load(&fullscreen_detected);
   int effective_opacity = is_fullscreen ? 0 : current_config->overlay_opacity;
 
-  // Clear buffer with transparency
-  for (int i = 0;
-       i < current_config->screen_width * current_config->bar_height * 4;
-       i += 4) {
-    pixels[i] = 0;                      // B
-    pixels[i + 1] = 0;                  // G
-    pixels[i + 2] = 0;                  // R
-    pixels[i + 3] = effective_opacity;  // A
+  // Clear buffer with transparency - OPTIMIZED
+  // Use memset for RGB (zeros) then set only alpha bytes
+  int buffer_size =
+      current_config->screen_width * current_config->bar_height * 4;
+  memset(pixels, 0, buffer_size);
+
+  // Set alpha channel only (every 4th byte starting at offset 3)
+  if (effective_opacity > 0) {
+    for (int i = 3; i < buffer_size; i += 4) {
+      pixels[i] = effective_opacity;
+    }
   }
 
   // Draw cat if visible
@@ -513,6 +584,21 @@ static void registry_global(void *data __attribute__((unused)),
           wl_registry_bind(reg, name, &wl_output_interface, 2);
       wl_output_add_listener(outputs[output_count].wl_output, &output_listener,
                              NULL);
+
+      // If we lost our output, get xdg_output to check if this is the one
+      // reconnecting
+      if (atomic_load(&output_lost) && xdg_output_manager) {
+        outputs[output_count].xdg_output =
+            zxdg_output_manager_v1_get_xdg_output(
+                xdg_output_manager, outputs[output_count].wl_output);
+        outputs[output_count].name_received = false;
+        zxdg_output_v1_add_listener(outputs[output_count].xdg_output,
+                                    &xdg_output_listener,
+                                    &outputs[output_count]);
+        bongocat_log_debug(
+            "New output appeared while output_lost, checking name...");
+      }
+
       output_count++;
     }
   } else if (strcmp(iface, zwlr_foreign_toplevel_manager_v1_interface.name) ==
@@ -532,7 +618,39 @@ static void registry_global(void *data __attribute__((unused)),
 static void registry_remove(void *data __attribute__((unused)),
                             struct wl_registry *registry
                             __attribute__((unused)),
-                            uint32_t name __attribute__((unused))) {}
+                            uint32_t name) {
+  // Check if the removed global is our bound output
+  if (name == bound_output_name && bound_output_name != 0) {
+    bongocat_log_warning("Bound output disconnected (registry name %u)", name);
+    atomic_store(&output_lost, true);
+    atomic_store(&configured, false);
+
+    // Clean up the old output reference
+    output = NULL;
+
+    // Remove from outputs array
+    for (size_t i = 0; i < output_count; ++i) {
+      if (outputs[i].name == name) {
+        if (outputs[i].xdg_output) {
+          zxdg_output_v1_destroy(outputs[i].xdg_output);
+          outputs[i].xdg_output = NULL;
+        }
+        if (outputs[i].wl_output) {
+          wl_output_destroy(outputs[i].wl_output);
+          outputs[i].wl_output = NULL;
+        }
+        // Shift remaining outputs
+        for (size_t j = i; j < output_count - 1; ++j) {
+          outputs[j] = outputs[j + 1];
+        }
+        // Zero out the now-unused slot
+        memset(&outputs[output_count - 1], 0, sizeof(output_ref_t));
+        output_count--;
+        break;
+      }
+    }
+  }
+}
 
 static struct wl_registry_listener reg_listener = {
     .global = registry_global, .global_remove = registry_remove};
@@ -542,13 +660,13 @@ static struct wl_registry_listener reg_listener = {
 // =============================================================================
 
 static bongocat_error_t wayland_setup_protocols(void) {
-  struct wl_registry *registry = wl_display_get_registry(display);
-  if (!registry) {
+  global_registry = wl_display_get_registry(display);
+  if (!global_registry) {
     bongocat_log_error("Failed to get Wayland registry");
     return BONGOCAT_ERROR_WAYLAND;
   }
 
-  wl_registry_add_listener(registry, &reg_listener, NULL);
+  wl_registry_add_listener(global_registry, &reg_listener, NULL);
   wl_display_roundtrip(display);
 
   if (xdg_output_manager) {
@@ -564,12 +682,19 @@ static bongocat_error_t wayland_setup_protocols(void) {
   }
 
   output = NULL;
+  bound_output_name = 0;
+  using_named_output = false;
+
   if (current_config->output_name) {
     for (size_t i = 0; i < output_count; ++i) {
       if (outputs[i].name_received &&
           strcmp(outputs[i].name_str, current_config->output_name) == 0) {
         output = outputs[i].wl_output;
-        bongocat_log_info("Matched output: %s", outputs[i].name_str);
+        bound_output_name =
+            outputs[i].name;        // Store registry name for tracking
+        using_named_output = true;  // User specified this output
+        bongocat_log_info("Matched output: %s (registry name %u)",
+                          outputs[i].name_str, bound_output_name);
         break;
       }
     }
@@ -584,12 +709,16 @@ static bongocat_error_t wayland_setup_protocols(void) {
   // Fallback
   if (!output && output_count > 0) {
     output = outputs[0].wl_output;
-    bongocat_log_warning("Falling back to first output");
+    bound_output_name = outputs[0].name;
+    using_named_output = false;  // Using fallback, not a named output
+    bongocat_log_warning("Falling back to first output (registry name %u)",
+                         bound_output_name);
   }
 
   if (!compositor || !shm || !layer_shell) {
     bongocat_log_error("Missing required Wayland protocols");
-    wl_registry_destroy(registry);
+    wl_registry_destroy(global_registry);
+    global_registry = NULL;
     return BONGOCAT_ERROR_WAYLAND;
   }
 
@@ -610,8 +739,39 @@ static bongocat_error_t wayland_setup_protocols(void) {
     current_config->screen_width = DEFAULT_SCREEN_WIDTH;
   }
 
-  wl_registry_destroy(registry);
+  // Keep registry alive for output reconnection handling
   return BONGOCAT_SUCCESS;
+}
+
+// Helper to handle output reconnection
+static void wayland_handle_output_reconnect(struct wl_output *new_output,
+                                            uint32_t registry_name,
+                                            const char *output_name) {
+  bongocat_log_info("Output '%s' reconnected (registry name %u)", output_name,
+                    registry_name);
+
+  // Clean up old surface if it exists
+  if (layer_surface) {
+    zwlr_layer_surface_v1_destroy(layer_surface);
+    layer_surface = NULL;
+  }
+  if (surface) {
+    wl_surface_destroy(surface);
+    surface = NULL;
+  }
+
+  // Set new output
+  output = new_output;
+  bound_output_name = registry_name;
+  atomic_store(&output_lost, false);
+
+  // Recreate surface on new output
+  if (wayland_setup_surface() == BONGOCAT_SUCCESS) {
+    bongocat_log_info("Surface recreated on reconnected output");
+    wl_display_roundtrip(display);
+  } else {
+    bongocat_log_error("Failed to recreate surface on reconnected output");
+  }
 }
 
 static bongocat_error_t wayland_setup_surface(void) {
@@ -789,7 +949,69 @@ void wayland_update_config(config_t *config) {
     return;
   }
 
+  // Lock animation mutex to prevent draw_bar() during config update
+  // This is critical - animation thread must not access buffer while we
+  // recreate it
+  pthread_mutex_lock(&anim_lock);
+
+  // Check if dimensions changed - requires buffer/surface recreation
+  int old_height = current_config ? current_config->bar_height : 0;
+  int old_width = current_config ? current_config->screen_width : 0;
+
   current_config = config;
+
+  bool dimensions_changed =
+      (old_height != config->bar_height) || (old_width != config->screen_width);
+
+  if (dimensions_changed && old_height > 0 && old_width > 0) {
+    bongocat_log_info(
+        "Dimensions changed (%dx%d -> %dx%d), recreating buffer...", old_width,
+        old_height, config->screen_width, config->bar_height);
+
+    // Mark as not configured first
+    atomic_store(&configured, false);
+
+    // Cleanup old buffer
+    if (buffer) {
+      wl_buffer_destroy(buffer);
+      buffer = NULL;
+    }
+    if (pixels) {
+      munmap(pixels, old_width * old_height * 4);
+      pixels = NULL;
+    }
+
+    // Cleanup old surface
+    if (layer_surface) {
+      zwlr_layer_surface_v1_destroy(layer_surface);
+      layer_surface = NULL;
+    }
+    if (surface) {
+      wl_surface_destroy(surface);
+      surface = NULL;
+    }
+
+    // Recreate surface and buffer with new dimensions
+    if (wayland_setup_surface() != BONGOCAT_SUCCESS) {
+      bongocat_log_error("Failed to recreate surface after config change");
+      pthread_mutex_unlock(&anim_lock);
+      return;
+    }
+    if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
+      bongocat_log_error("Failed to recreate buffer after config change");
+      pthread_mutex_unlock(&anim_lock);
+      return;
+    }
+
+    // Wait for new configure event
+    wl_display_roundtrip(display);
+
+    bongocat_log_info("Buffer recreated successfully (%dx%d)",
+                      config->screen_width, config->bar_height);
+  }
+
+  pthread_mutex_unlock(&anim_lock);
+
   if (atomic_load(&configured)) {
     draw_bar();
   }
@@ -883,6 +1105,10 @@ void wayland_cleanup(void) {
   // Reset state
   atomic_store(&configured, false);
   atomic_store(&fullscreen_detected, false);
+  atomic_store(&output_lost, false);
+  bound_output_name = 0;
+  using_named_output = false;
+  global_registry = NULL;  // Destroyed when display disconnects
   memset(&fs_detector, 0, sizeof(fs_detector));
   memset(&screen_info, 0, sizeof(screen_info));
 
