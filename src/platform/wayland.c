@@ -41,12 +41,14 @@ typedef struct {
   int raw_height;
   bool mode_received;
   bool geometry_received;
+  struct wl_output *wl_output;
 } screen_info_t;
 
-static screen_info_t screen_info = {0};
+static screen_info_t screen_infos[MAX_OUTPUTS] = {0};
 static output_ref_t outputs[MAX_OUTPUTS];
 static size_t output_count = 0;
 static struct zxdg_output_manager_v1 *xdg_output_manager = NULL;
+static screen_info_t *current_screen_info = NULL;
 
 // Output reconnection handling
 static struct wl_registry *global_registry = NULL;
@@ -54,6 +56,61 @@ static uint32_t bound_output_name = 0;   // Registry name of our bound output
 static atomic_bool output_lost = false;  // Set when our output disconnects
 static bool using_named_output =
     false;  // True if user specified an output name
+static char *bound_screen_name = NULL;
+
+BONGOCAT_NODISCARD static struct wl_output *wayland_find_new_output(void) {
+  struct wl_output *matching_wl_output = NULL;
+  if (current_config->output_name) {
+    for (size_t i = 0; i < output_count; ++i) {
+      if (outputs[i].name_received &&
+          strcmp(outputs[i].name_str, current_config->output_name) == 0) {
+        return outputs[i].wl_output;
+      }
+    }
+  }
+  return NULL;
+}
+
+BONGOCAT_NODISCARD static int wayland_get_new_screen_width(void) {
+  struct wl_output *matching_wl_output = wayland_find_new_output();
+  for (size_t i = 0; i < output_count; ++i) {
+    if (screen_infos[i].wl_output == matching_wl_output) {
+      return screen_infos[i].screen_width;
+    }
+  }
+
+  return 0;
+}
+
+static void wayland_update_current_screen_info(void) {
+  bool output_found = false;
+  if (output) {
+    wl_display_roundtrip(display);
+
+    for (size_t i = 0; i < MAX_OUTPUTS; i++) {
+      if (outputs[i].wl_output == output) {
+        bongocat_log_info("Detected screen name: %s", outputs[i].name_str);
+        bound_screen_name = outputs[i].name_str;
+      }
+      if (screen_infos[i].wl_output == output) {
+        if (screen_infos[i].screen_width > 0) {
+          bongocat_log_info("Detected screen width: %d",
+                            screen_infos[i].screen_width);
+          current_screen_info = &screen_infos[i];
+          current_config->screen_width = screen_infos[i].screen_width;
+          output_found = true;
+        }
+      }
+    }
+  }
+
+  if (!output_found) {
+    bongocat_log_warning("No output found, using default screen width: %d",
+                         DEFAULT_SCREEN_WIDTH);
+    current_config->screen_width = DEFAULT_SCREEN_WIDTH;
+    current_screen_info = NULL;
+  }
+}
 
 // =============================================================================
 // ZXDG LISTENER IMPLEMENTATION
@@ -110,6 +167,7 @@ static void handle_xdg_output_name(void *data,
     output = oref->wl_output;
     bound_output_name = oref->name;
     atomic_store(&output_lost, false);
+    bound_screen_name = oref->name_str;
 
     // Recreate surface on new output
     // Note: wayland_setup_surface already commits, triggering a configure
@@ -118,6 +176,7 @@ static void handle_xdg_output_name(void *data,
     if (wayland_setup_surface() == BONGOCAT_SUCCESS) {
       // Wait for configure event to be processed
       wl_display_roundtrip(display);
+      wayland_update_current_screen_info();
       bongocat_log_info("Surface recreated, configure event processed");
     } else {
       bongocat_log_error("Failed to recreate surface on reconnected output");
@@ -347,29 +406,33 @@ static const struct zwlr_foreign_toplevel_manager_v1_listener
 // SCREEN DIMENSION MANAGEMENT
 // =============================================================================
 
-static void screen_calculate_dimensions(void) {
-  if (!screen_info.mode_received || !screen_info.geometry_received ||
-      screen_info.screen_width > 0) {
+static void screen_calculate_dimensions(screen_info_t *screen_info) {
+  if (!screen_info) {
     return;
   }
 
-  bool is_rotated = (screen_info.transform == WL_OUTPUT_TRANSFORM_90 ||
-                     screen_info.transform == WL_OUTPUT_TRANSFORM_270 ||
-                     screen_info.transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
-                     screen_info.transform == WL_OUTPUT_TRANSFORM_FLIPPED_270);
+  if (!screen_info->mode_received || !screen_info->geometry_received ||
+      screen_info->screen_width > 0) {
+    return;
+  }
+
+  bool is_rotated = (screen_info->transform == WL_OUTPUT_TRANSFORM_90 ||
+                     screen_info->transform == WL_OUTPUT_TRANSFORM_270 ||
+                     screen_info->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
+                     screen_info->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270);
 
   if (is_rotated) {
-    screen_info.screen_width = screen_info.raw_height;
-    screen_info.screen_height = screen_info.raw_width;
+    screen_info->screen_width = screen_info->raw_height;
+    screen_info->screen_height = screen_info->raw_width;
     bongocat_log_info("Detected rotated screen: %dx%d (transform: %d)",
-                      screen_info.raw_height, screen_info.raw_width,
-                      screen_info.transform);
+                      screen_info->raw_height, screen_info->raw_width,
+                      screen_info->transform);
   } else {
-    screen_info.screen_width = screen_info.raw_width;
-    screen_info.screen_height = screen_info.raw_height;
+    screen_info->screen_width = screen_info->raw_width;
+    screen_info->screen_height = screen_info->raw_height;
     bongocat_log_info("Detected screen: %dx%d (transform: %d)",
-                      screen_info.raw_width, screen_info.raw_height,
-                      screen_info.transform);
+                      screen_info->raw_width, screen_info->raw_height,
+                      screen_info->transform);
   }
 }
 
@@ -505,7 +568,7 @@ static struct xdg_wm_base_listener xdg_wm_base_listener = {
 };
 
 static void output_geometry(void *data __attribute__((unused)),
-                            struct wl_output *wl_output __attribute__((unused)),
+                            struct wl_output *wl_output,
                             int32_t x __attribute__((unused)),
                             int32_t y __attribute__((unused)),
                             int32_t physical_width __attribute__((unused)),
@@ -514,29 +577,43 @@ static void output_geometry(void *data __attribute__((unused)),
                             const char *make __attribute__((unused)),
                             const char *model __attribute__((unused)),
                             int32_t transform) {
-  screen_info.transform = transform;
-  screen_info.geometry_received = true;
-  bongocat_log_debug("Output transform: %d", transform);
-  screen_calculate_dimensions();
+  for (size_t i = 0; i < MAX_OUTPUTS; i++) {
+    if (screen_infos[i].wl_output == wl_output) {
+      screen_infos[i].transform = transform;
+      screen_infos[i].geometry_received = true;
+      bongocat_log_debug("Output transform: %d", transform);
+      screen_calculate_dimensions(&screen_infos[i]);
+      break;
+    }
+  }
 }
 
 static void output_mode(void *data __attribute__((unused)),
-                        struct wl_output *wl_output __attribute__((unused)),
-                        uint32_t flags, int32_t width, int32_t height,
+                        struct wl_output *wl_output, uint32_t flags,
+                        int32_t width, int32_t height,
                         int32_t refresh __attribute__((unused))) {
   if (flags & WL_OUTPUT_MODE_CURRENT) {
-    screen_info.raw_width = width;
-    screen_info.raw_height = height;
-    screen_info.mode_received = true;
-    bongocat_log_debug("Received raw screen mode: %dx%d", width, height);
-    screen_calculate_dimensions();
+    for (size_t i = 0; i < MAX_OUTPUTS; i++) {
+      if (screen_infos[i].wl_output == wl_output) {
+        screen_infos[i].raw_width = width;
+        screen_infos[i].raw_height = height;
+        screen_infos[i].mode_received = true;
+        bongocat_log_debug("Received raw screen mode: %dx%d", width, height);
+        screen_calculate_dimensions(&screen_infos[i]);
+        break;
+      }
+    }
   }
 }
 
 static void output_done(void *data __attribute__((unused)),
-                        struct wl_output *wl_output __attribute__((unused))) {
-  screen_calculate_dimensions();
-  bongocat_log_debug("Output configuration complete");
+                        struct wl_output *wl_output) {
+  for (size_t i = 0; i < MAX_OUTPUTS; i++) {
+    if (screen_infos[i].wl_output == wl_output) {
+      screen_calculate_dimensions(&screen_infos[i]);
+      bongocat_log_debug("Output configuration complete");
+    }
+  }
 }
 
 static void output_scale(void *data __attribute__((unused)),
@@ -582,6 +659,7 @@ static void registry_global(void *data __attribute__((unused)),
       outputs[output_count].name = name;
       outputs[output_count].wl_output =
           wl_registry_bind(reg, name, &wl_output_interface, 2);
+      screen_infos[output_count].wl_output = outputs[output_count].wl_output;
       wl_output_add_listener(outputs[output_count].wl_output, &output_listener,
                              NULL);
 
@@ -638,13 +716,18 @@ static void registry_remove(void *data __attribute__((unused)),
         if (outputs[i].wl_output) {
           wl_output_destroy(outputs[i].wl_output);
           outputs[i].wl_output = NULL;
+          screen_infos[i].wl_output = NULL;
         }
         // Shift remaining outputs
         for (size_t j = i; j < output_count - 1; ++j) {
           outputs[j] = outputs[j + 1];
         }
+        for (size_t j = i; j < output_count - 1; ++j) {
+          screen_infos[j] = screen_infos[j + 1];
+        }
         // Zero out the now-unused slot
         memset(&outputs[output_count - 1], 0, sizeof(output_ref_t));
+        memset(&screen_infos[output_count - 1], 0, sizeof(screen_info_t));
         output_count--;
         break;
       }
@@ -658,6 +741,53 @@ static struct wl_registry_listener reg_listener = {
 // =============================================================================
 // MAIN WAYLAND INTERFACE IMPLEMENTATION
 // =============================================================================
+
+static void wayland_update_output(void) {
+  output = NULL;
+  bound_output_name = 0;
+  using_named_output = false;
+  current_screen_info = NULL;
+  bound_screen_name = NULL;
+
+  if (current_config->output_name) {
+    for (size_t i = 0; i < output_count; ++i) {
+      if (outputs[i].name_received &&
+          strcmp(outputs[i].name_str, current_config->output_name) == 0) {
+        output = outputs[i].wl_output;
+        bound_output_name =
+            outputs[i].name;  // Store registry name for tracking
+        bound_screen_name = outputs[i].name_str;
+        using_named_output = true;  // User specified this output
+        current_screen_info = &screen_infos[i];
+        bongocat_log_info("Matched output: %s (registry name %u, %s)",
+                          outputs[i].name_str, bound_output_name,
+                          bound_screen_name);
+        break;
+      }
+    }
+
+    if (!output) {
+      bongocat_log_error(
+          "Could not find output named '%s', defaulting to first output",
+          current_config->output_name);
+    }
+  }
+
+  // Fallback
+  if (!output && output_count > 0) {
+    output = outputs[0].wl_output;
+    bound_output_name = outputs[0].name;
+    bound_screen_name = outputs[0].name_str;
+    for (size_t i = 0; i < MAX_OUTPUTS; i++) {
+      if (screen_infos[i].wl_output == output) {
+        current_screen_info = &screen_infos[i];
+      }
+    }
+    using_named_output = false;  // Using fallback, not a named output
+    bongocat_log_warning("Falling back to first output (registry name %u, %s)",
+                         bound_output_name, bound_screen_name);
+  }
+}
 
 static bongocat_error_t wayland_setup_protocols(void) {
   global_registry = wl_display_get_registry(display);
@@ -681,39 +811,7 @@ static bongocat_error_t wayland_setup_protocols(void) {
     wl_display_roundtrip(display);
   }
 
-  output = NULL;
-  bound_output_name = 0;
-  using_named_output = false;
-
-  if (current_config->output_name) {
-    for (size_t i = 0; i < output_count; ++i) {
-      if (outputs[i].name_received &&
-          strcmp(outputs[i].name_str, current_config->output_name) == 0) {
-        output = outputs[i].wl_output;
-        bound_output_name =
-            outputs[i].name;        // Store registry name for tracking
-        using_named_output = true;  // User specified this output
-        bongocat_log_info("Matched output: %s (registry name %u)",
-                          outputs[i].name_str, bound_output_name);
-        break;
-      }
-    }
-
-    if (!output) {
-      bongocat_log_error(
-          "Could not find output named '%s', defaulting to first output",
-          current_config->output_name);
-    }
-  }
-
-  // Fallback
-  if (!output && output_count > 0) {
-    output = outputs[0].wl_output;
-    bound_output_name = outputs[0].name;
-    using_named_output = false;  // Using fallback, not a named output
-    bongocat_log_warning("Falling back to first output (registry name %u)",
-                         bound_output_name);
-  }
+  wayland_update_output();
 
   if (!compositor || !shm || !layer_shell) {
     bongocat_log_error("Missing required Wayland protocols");
@@ -723,21 +821,7 @@ static bongocat_error_t wayland_setup_protocols(void) {
   }
 
   // Configure screen dimensions
-  if (output) {
-    wl_display_roundtrip(display);
-    if (screen_info.screen_width > 0) {
-      bongocat_log_info("Detected screen width: %d", screen_info.screen_width);
-      current_config->screen_width = screen_info.screen_width;
-    } else {
-      bongocat_log_warning("Using default screen width: %d",
-                           DEFAULT_SCREEN_WIDTH);
-      current_config->screen_width = DEFAULT_SCREEN_WIDTH;
-    }
-  } else {
-    bongocat_log_warning("No output found, using default screen width: %d",
-                         DEFAULT_SCREEN_WIDTH);
-    current_config->screen_width = DEFAULT_SCREEN_WIDTH;
-  }
+  wayland_update_current_screen_info();
 
   // Keep registry alive for output reconnection handling
   return BONGOCAT_SUCCESS;
@@ -764,11 +848,13 @@ static void wayland_handle_output_reconnect(struct wl_output *new_output,
   output = new_output;
   bound_output_name = registry_name;
   atomic_store(&output_lost, false);
+  bound_screen_name = NULL;
 
   // Recreate surface on new output
   if (wayland_setup_surface() == BONGOCAT_SUCCESS) {
     bongocat_log_info("Surface recreated on reconnected output");
     wl_display_roundtrip(display);
+    wayland_update_current_screen_info();
   } else {
     bongocat_log_error("Failed to recreate surface on reconnected output");
   }
@@ -940,7 +1026,11 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
 // =============================================================================
 
 int wayland_get_screen_width(void) {
-  return screen_info.screen_width;
+  return current_screen_info ? current_screen_info->screen_width : 0;
+}
+
+const char *wayland_get_output_name(void) {
+  return bound_screen_name;
 }
 
 void wayland_update_config(config_t *config) {
@@ -957,16 +1047,28 @@ void wayland_update_config(config_t *config) {
   // Check if dimensions changed - requires buffer/surface recreation
   int old_height = current_config ? current_config->bar_height : 0;
   int old_width = current_config ? current_config->screen_width : 0;
+  const char *old_screen_name = current_config ? bound_screen_name : NULL;
+  char *old_output_name = current_config && current_config->output_name
+                              ? strdup(current_config->output_name)
+                              : NULL;
 
   current_config = config;
+  int new_width = wayland_get_new_screen_width();
 
-  bool dimensions_changed =
-      (old_height != config->bar_height) || (old_width != config->screen_width);
+  bool dimensions_changed = (old_height != config->bar_height) ||
+                            (old_width != config->screen_width) ||
+                            (new_width != config->screen_width);
+  bool screen_changed =
+      (current_config && current_config->output_name && old_screen_name &&
+           (strcmp(old_screen_name, current_config->output_name) != 0) ||
+       (current_config && current_config->output_name && old_output_name &&
+        strcmp(old_output_name, current_config->output_name) != 0));
 
-  if (dimensions_changed && old_height > 0 && old_width > 0) {
+  if ((dimensions_changed && old_height > 0 && old_width > 0) ||
+      screen_changed) {
     bongocat_log_info(
         "Dimensions changed (%dx%d -> %dx%d), recreating buffer...", old_width,
-        old_height, config->screen_width, config->bar_height);
+        old_height, new_width, config->bar_height);
 
     // Mark as not configured first
     atomic_store(&configured, false);
@@ -991,23 +1093,43 @@ void wayland_update_config(config_t *config) {
       surface = NULL;
     }
 
+    wayland_update_output();
+    wayland_update_current_screen_info();
+
     // Recreate surface and buffer with new dimensions
     if (wayland_setup_surface() != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to recreate surface after config change");
+      if (old_output_name != NULL) {
+        free(old_output_name);
+        old_output_name = NULL;
+      }
       pthread_mutex_unlock(&anim_lock);
       return;
     }
+
+    wayland_update_output();
+    wayland_update_current_screen_info();
+
     if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to recreate buffer after config change");
+      if (old_output_name != NULL) {
+        free(old_output_name);
+        old_output_name = NULL;
+      }
       pthread_mutex_unlock(&anim_lock);
       return;
     }
 
     // Wait for new configure event
     wl_display_roundtrip(display);
+    wayland_update_current_screen_info();
 
     bongocat_log_info("Buffer recreated successfully (%dx%d)",
                       config->screen_width, config->bar_height);
+  }
+  if (old_output_name != NULL) {
+    free(old_output_name);
+    old_output_name = NULL;
   }
 
   pthread_mutex_unlock(&anim_lock);
@@ -1109,8 +1231,10 @@ void wayland_cleanup(void) {
   bound_output_name = 0;
   using_named_output = false;
   global_registry = NULL;  // Destroyed when display disconnects
+  bound_screen_name = NULL;
+  current_screen_info = NULL;
   memset(&fs_detector, 0, sizeof(fs_detector));
-  memset(&screen_info, 0, sizeof(screen_info));
+  memset(&screen_infos, 0, sizeof(screen_info_t) * MAX_OUTPUTS);
 
   bongocat_log_debug("Wayland cleanup complete");
 }

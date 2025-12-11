@@ -63,6 +63,9 @@ BONGOCAT_NODISCARD int create_shm(int size);
 // Get detected screen width
 BONGOCAT_NODISCARD int wayland_get_screen_width(void);
 
+// Get detected output name
+BONGOCAT_NODISCARD const char *wayland_get_output_name(void);
+
 // Get current layer name for logging
 BONGOCAT_NODISCARD const char *wayland_get_current_layer_name(void);
 
