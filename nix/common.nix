@@ -234,8 +234,15 @@ in {
     };
   };
 
-  # Configuration
-  config._bongocat = {
+  # Internal configuration (not exposed to users)
+  options._bongocat = lib.mkOption {
+    type = lib.types.attrs;
+    internal = true;
+    visible = false;
+    default = {};
+  };
+
+  config._bongocat = lib.mkIf cfg.enable {
     inherit cfg configFile;
   };
 }
