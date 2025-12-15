@@ -13,4 +13,7 @@ extern const size_t bongo_cat_left_down_png_size;
 extern const unsigned char bongo_cat_right_down_png[];
 extern const size_t bongo_cat_right_down_png_size;
 
-#endif // EMBEDDED_ASSETS_H
+extern const unsigned char bongo_cat_both_down_png[];
+extern const size_t bongo_cat_both_down_png_size;
+
+#endif  // EMBEDDED_ASSETS_H

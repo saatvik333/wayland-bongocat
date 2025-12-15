@@ -1,0 +1,77 @@
+# Clang-Tidy Configuration for wayland-bongocat
+# Static analysis for C code with best practices
+
+# Enable checks
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  concurrency-*,
+  misc-*,
+  -misc-no-recursion,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-else-after-return,
+
+# Only analyze project headers, not system/lib headers
+HeaderFilterRegex: '.*/(include|src)/.*\.h$'
+
+# Treat warnings as warnings (not errors by default)
+WarningsAsErrors: ''
+
+# Check options
+CheckOptions:
+  # Naming conventions (C style)
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.StructCase
+    value: lower_case
+  - key: readability-identifier-naming.TypedefCase
+    value: lower_case
+  - key: readability-identifier-naming.TypedefSuffix
+    value: '_t'
+  - key: readability-identifier-naming.EnumCase
+    value: lower_case
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  
+  # Braces around statements
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '1'
+  
+  # Function size limits (advisory)
+  - key: readability-function-size.LineThreshold
+    value: '200'
+  - key: readability-function-size.StatementThreshold
+    value: '100'
+  - key: readability-function-size.ParameterThreshold
+    value: '8'
+  
+  # Performance checks
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: ''
+  
+  # Misc settings
+  - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+    value: 'true'
+
+# System header directories to ignore
+SystemHeaders: false
+
+# Use colors in diagnostics
+UseColor: true

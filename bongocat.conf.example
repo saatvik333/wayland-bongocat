@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# BONGO CAT CONFIG - Default Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Save this file to: ~/.config/bongocat/bongocat.conf
+# Run with: bongocat --watch-config
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ APPEARANCE                                                                  │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Cat size and position
+cat_height=80
+cat_align=center
+cat_x_offset=0
+cat_y_offset=0
+
+# Smooth scaling (recommended)
+enable_antialiasing=1
+
+# Flip the cat
+mirror_x=0
+mirror_y=0
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ OVERLAY BAR                                                                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Bar dimensions (Attention!: Requires restart of bongocat)
+overlay_height=80
+
+# Background: 0=transparent, 255=opaque
+overlay_opacity=0
+
+# Position: top, bottom (Attention!: Requires restart of bongocat)
+overlay_position=bottom
+
+# Layer: top (above windows), overlay (always visible)
+layer=top
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ INPUT DEVICES                                                               │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Find your device with: bongocat-find-devices
+# Add multiple lines for multiple keyboards
+keyboard_device=/dev/input/event4
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ MULTI-MONITOR (optional)                                                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Leave commented to auto-detect
+# Find monitor names with: wlr-randr or hyprctl monitors
+# monitor=HDMI-A-1
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ ANIMATION                                                                   │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+fps=30
+idle_frame=0
+keypress_duration=100
+
+# Hand mapping: 0=random hands, 1=left keys→left hand, right keys→right hand
+enable_hand_mapping=1
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ SLEEP MODE (optional)                                                       │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Hide after N seconds of no keyboard activity (0=disabled)
+idle_sleep_timeout=0
+
+# Scheduled sleep (requires enable_scheduled_sleep=1)
+enable_scheduled_sleep=0
+sleep_begin=22:00
+sleep_end=06:00
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ DEBUG                                                                       │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+enable_debug=0
