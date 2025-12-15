@@ -59,7 +59,6 @@ static bool using_named_output =
 static char *bound_screen_name = NULL;
 
 BONGOCAT_NODISCARD static struct wl_output *wayland_find_new_output(void) {
-  struct wl_output *matching_wl_output = NULL;
   if (current_config->output_name) {
     for (size_t i = 0; i < output_count; ++i) {
       if (outputs[i].name_received &&
@@ -184,8 +183,10 @@ static void handle_xdg_output_name(void *data,
   }
 }
 
-static void handle_xdg_output_logical_position(
-    void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {
+static void handle_xdg_output_logical_position(void *data,
+                                               struct zxdg_output_v1 *xdg_output
+                                               __attribute__((unused)),
+                                               int32_t x, int32_t y) {
   // Defensive null check
   if (!data) {
     return;
@@ -199,7 +200,7 @@ static void handle_xdg_output_logical_position(
   bongocat_log_debug("xdg-output logical position received: %d,%d", x, y);
 }
 static void handle_xdg_output_logical_size(void *data,
-                                           struct zxdg_output_v1 *xdg_output,
+                                           struct zxdg_output_v1 *xdg_output __attribute__((unused)),
                                            int32_t width, int32_t height) {
   // Defensive null check
   if (!data) {
@@ -213,15 +214,12 @@ static void handle_xdg_output_logical_size(void *data,
 
   bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
 }
-static void handle_xdg_output_done(void *data,
-                                   struct zxdg_output_v1 *xdg_output) {}
+static void handle_xdg_output_done(void *data __attribute__((unused)),
+                                   struct zxdg_output_v1 *xdg_output __attribute__((unused))) {}
 
-static void handle_xdg_output_description(void *data,
-                                          struct zxdg_output_v1 *xdg_output,
-                                          const char *description) {
-  (void)data;
-  (void)xdg_output;
-  (void)description;
+static void handle_xdg_output_description(void *data __attribute__((unused)),
+                                          struct zxdg_output_v1 *xdg_output __attribute__((unused)),
+                                          const char *description __attribute__((unused))) {
 }
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
@@ -349,36 +347,6 @@ static bool hypr_get_active_window(window_info_t *win) {
   return has_window;
 }
 
-static bool fs_check_compositor_fallback(void) {
-  bongocat_log_debug("Using compositor-specific fullscreen detection");
-
-  // Try Hyprland first
-  window_info_t win;
-  if (hypr_get_active_window(&win)) {
-    return win.fullscreen;
-  }
-
-  // Try Sway as fallback
-  FILE *fp = popen("swaymsg -t get_tree 2>/dev/null", "r");
-  if (fp) {
-    char sway_buffer[4096];
-    bool is_fullscreen = false;
-
-    while (fgets(sway_buffer, sizeof(sway_buffer), fp)) {
-      if (strstr(sway_buffer, "\"fullscreen_mode\":1")) {
-        is_fullscreen = true;
-        bongocat_log_debug("Fullscreen detected in Sway");
-        break;
-      }
-    }
-    pclose(fp);
-    return is_fullscreen;
-  }
-
-  bongocat_log_debug("No supported compositor found for fullscreen detection");
-  return false;
-}
-
 // Foreign toplevel protocol event handlers
 // Each toplevel tracks its fullscreen and activated state
 typedef struct {
@@ -388,13 +356,6 @@ typedef struct {
 
 // Track the currently active toplevel's fullscreen state
 static bool active_toplevel_fullscreen = false;
-
-static bool fs_check_status(void) {
-  if (fs_detector.manager) {
-    return fs_detector.has_fullscreen_toplevel;
-  }
-  return fs_check_compositor_fallback();
-}
 
 static bool update_fullscreen_state_toplevel(tracked_toplevel_t *tracked,
                                              bool is_fullscreen,
