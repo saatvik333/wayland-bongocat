@@ -37,6 +37,7 @@
 #define DEFAULT_SCREEN_WIDTH 1920
 #define DEFAULT_BAR_HEIGHT   40
 #define MAX_OUTPUTS          8  // Maximum monitor outputs to store
+#define MAX_TOPLEVELS        512
 
 // Frame constants
 #define NUM_FRAMES       4
@@ -74,6 +75,9 @@ typedef struct {
   uint32_t name;       // Registry name
   char name_str[128];  // From xdg-output
   bool name_received;
+  int x, y;
+  int width, height;
+  int hypr_id;  // monitor ID in Hyprland
 } output_ref_t;
 
 // =============================================================================

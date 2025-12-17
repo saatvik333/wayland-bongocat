@@ -59,7 +59,6 @@ static bool using_named_output =
 static char *bound_screen_name = NULL;
 
 BONGOCAT_NODISCARD static struct wl_output *wayland_find_new_output(void) {
-  struct wl_output *matching_wl_output = NULL;
   if (current_config->output_name) {
     for (size_t i = 0; i < output_count; ++i) {
       if (outputs[i].name_received &&
@@ -184,20 +183,43 @@ static void handle_xdg_output_name(void *data,
   }
 }
 
-static void handle_xdg_output_logical_position(
-    void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {}
-static void handle_xdg_output_logical_size(void *data,
-                                           struct zxdg_output_v1 *xdg_output,
-                                           int32_t width, int32_t height) {}
-static void handle_xdg_output_done(void *data,
-                                   struct zxdg_output_v1 *xdg_output) {}
+static void handle_xdg_output_logical_position(void *data,
+                                               struct zxdg_output_v1 *xdg_output
+                                               __attribute__((unused)),
+                                               int32_t x, int32_t y) {
+  // Defensive null check
+  if (!data) {
+    return;
+  }
 
-static void handle_xdg_output_description(void *data,
-                                          struct zxdg_output_v1 *xdg_output,
-                                          const char *description) {
-  (void)data;
-  (void)xdg_output;
-  (void)description;
+  output_ref_t *oref = data;
+
+  oref->x = x;
+  oref->y = y;
+
+  bongocat_log_debug("xdg-output logical position received: %d,%d", x, y);
+}
+static void handle_xdg_output_logical_size(void *data,
+                                           struct zxdg_output_v1 *xdg_output __attribute__((unused)),
+                                           int32_t width, int32_t height) {
+  // Defensive null check
+  if (!data) {
+    return;
+  }
+
+  output_ref_t *oref = data;
+
+  oref->width = width;
+  oref->height = height;
+
+  bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
+}
+static void handle_xdg_output_done(void *data __attribute__((unused)),
+                                   struct zxdg_output_v1 *xdg_output __attribute__((unused))) {}
+
+static void handle_xdg_output_description(void *data __attribute__((unused)),
+                                          struct zxdg_output_v1 *xdg_output __attribute__((unused)),
+                                          const char *description __attribute__((unused))) {
 }
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
@@ -216,7 +238,24 @@ typedef struct {
   bool has_fullscreen_toplevel;
 } fullscreen_detector_t;
 
+typedef struct {
+  struct zwlr_foreign_toplevel_handle_v1 *handle;
+  struct wl_output *output;
+  bool is_fullscreen;
+  bool is_activated;
+} tracked_toplevel_t;
+
 static fullscreen_detector_t fs_detector = {0};
+
+static tracked_toplevel_t track_toplevels[MAX_TOPLEVELS] = {0};
+static size_t track_toplevels_count = 0;
+
+typedef struct {
+  int monitor_id;  // monitor number in Hyprland
+  int x, y;
+  int width, height;
+  bool fullscreen;
+} window_info_t;
 
 // =============================================================================
 // FULLSCREEN DETECTION IMPLEMENTATION
@@ -236,6 +275,78 @@ static void fs_update_state(bool new_state) {
   }
 }
 
+static void hypr_update_outputs_with_monitor_ids(void) {
+  FILE *fp = popen("hyprctl monitors 2>/dev/null", "r");
+  if (!fp)
+    return;
+
+  char line[512];
+  while (fgets(line, sizeof(line), fp)) {
+    int id = -1;
+    char name[256];
+    int result = sscanf(line, "Monitor %d \"%255[^\"]\"", &id, name);
+    if (result < 2) {
+      result = sscanf(line, "Monitor %255s (ID %d)", name, &id);
+    }
+    if (result == 2) {
+      for (size_t i = 0; i < output_count; i++) {
+        // match by xdg-output name
+        if (outputs[i].name_received &&
+            strcmp(outputs[i].name_str, name) == 0) {
+          outputs[i].hypr_id = id;
+          bongocat_log_debug("Mapped xdg-output '%s' to Hyprland ID %d\n", name,
+                             id);
+          break;
+        }
+      }
+    }
+  }
+
+  pclose(fp);
+}
+
+static bool hypr_get_active_window(window_info_t *win) {
+  FILE *fp = popen("hyprctl activewindow 2>/dev/null", "r");
+  if (!fp)
+    return false;
+
+  char line[512];
+  bool has_window = false;
+  win->monitor_id = -1;
+  win->fullscreen = false;
+
+  while (fgets(line, sizeof(line), fp)) {
+    // monitor: 0
+    if (strstr(line, "monitor:")) {
+      sscanf(line, "%*[\t ]monitor: %d", &win->monitor_id);
+      has_window = true;
+    }
+    // fullscreen: 0/1/2
+    if (strstr(line, "fullscreen:")) {
+      int val;
+      if (sscanf(line, "%*[\t ]fullscreen: %d", &val) == 1) {
+        win->fullscreen = (val != 0);
+      }
+    }
+    // at: X,Y
+    if (strstr(line, "at:")) {
+      if (sscanf(line, "%*[\t ]at: [%d, %d]", &win->x, &win->y) < 2) {
+        sscanf(line, "%*[\t ]at: %d,%d", &win->x, &win->y);
+      }
+    }
+    // size: W,H
+    if (strstr(line, "size:")) {
+      if (sscanf(line, "%*[\t ]size: [%d, %d]", &win->width, &win->height) <
+          2) {
+        sscanf(line, "%*[\t ]size: %d,%d", &win->width, &win->height);
+      }
+    }
+  }
+
+  pclose(fp);
+  return has_window;
+}
+
 // Foreign toplevel protocol event handlers
 // Each toplevel tracks its fullscreen and activated state
 typedef struct {
@@ -246,11 +357,60 @@ typedef struct {
 // Track the currently active toplevel's fullscreen state
 static bool active_toplevel_fullscreen = false;
 
+static bool update_fullscreen_state_toplevel(tracked_toplevel_t *tracked,
+                                             bool is_fullscreen,
+                                             bool is_activated) {
+  bool state_changed = tracked->is_fullscreen != is_fullscreen ||
+                       tracked->is_activated != is_activated;
+  tracked->is_fullscreen = is_fullscreen;
+  tracked->is_activated = is_activated;
+
+  /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave
+  /// event were triggert
+  // Only trigger overlay update if this fullscreen window is on our output
+  if (tracked->output == output && state_changed) {
+    fs_update_state(is_fullscreen);
+    return true;
+  }
+
+  return false;
+}
+static bool hypr_fs_update_state(toplevel_data_t *toplevel_data) {
+  window_info_t win;
+  if (hypr_get_active_window(&win)) {
+    bool found_output = false;
+    for (size_t i = 0; i < output_count; i++) {
+      if (outputs[i].hypr_id == win.monitor_id) {
+        if (output == outputs[i].wl_output) {
+          found_output = true;
+          break;
+        }
+      }
+    }
+
+    if (found_output) {
+      toplevel_data->is_activated = true;
+      toplevel_data->is_fullscreen = win.fullscreen;
+
+      active_toplevel_fullscreen = win.fullscreen;
+      fs_update_state(win.fullscreen);
+    } else {
+      // active window is not on the same screen as bongocat
+      toplevel_data->is_activated = false;
+      toplevel_data->is_fullscreen = false;
+      active_toplevel_fullscreen = false;
+      fs_update_state(false);
+    }
+    return true;
+  }
+
+  return false;
+}
+
 static void
 fs_handle_toplevel_state(void *data,
                          struct zwlr_foreign_toplevel_handle_v1 *handle,
                          struct wl_array *state) {
-  (void)handle;
   toplevel_data_t *toplevel_data = (toplevel_data_t *)data;
   if (!toplevel_data)
     return;
@@ -268,22 +428,41 @@ fs_handle_toplevel_state(void *data,
     }
   }
 
-  bool was_activated = toplevel_data->is_activated;
-  bool was_fullscreen = toplevel_data->is_fullscreen;
-
-  toplevel_data->is_fullscreen = is_fullscreen;
-  toplevel_data->is_activated = is_activated;
-
-  // Case 1: Window becomes active - update state based on its fullscreen status
-  if (is_activated) {
-    active_toplevel_fullscreen = is_fullscreen;
-    fs_update_state(is_fullscreen);
+  /// @NOTE: tracked.output can be NULL when no output.enter/output.leave
+  /// event were triggerd
+  bool output_found = false;
+  for (size_t i = 0; i < track_toplevels_count; i++) {
+    if (track_toplevels[i].handle == handle) {
+      output_found |= update_fullscreen_state_toplevel(
+          &track_toplevels[i], is_fullscreen, is_activated);
+    }
   }
-  // Case 2: Previously active fullscreen window loses activation
-  // (e.g., switching to empty workspace) - show bongocat
-  else if (was_activated && was_fullscreen && !is_activated) {
-    active_toplevel_fullscreen = false;
-    fs_update_state(false);
+
+  // fallback: hyprland; when toplevel detection is not working
+  if (!output_found) {
+    output_found |= hypr_fs_update_state(toplevel_data);
+  }
+
+  // fallback: global fullscreen
+  if (!output_found) {
+    bool was_activated = toplevel_data->is_activated;
+    bool was_fullscreen = toplevel_data->is_fullscreen;
+
+    toplevel_data->is_fullscreen = is_fullscreen;
+    toplevel_data->is_activated = is_activated;
+
+    // Case 1: Window becomes active - update state based on its fullscreen
+    // status
+    if (is_activated) {
+      active_toplevel_fullscreen = is_fullscreen;
+      fs_update_state(is_fullscreen);
+    }
+    // Case 2: Previously active fullscreen window loses activation
+    // (e.g., switching to empty workspace) - show bongocat
+    else if (was_activated && was_fullscreen && !is_activated) {
+      active_toplevel_fullscreen = false;
+      fs_update_state(false);
+    }
   }
 }
 
@@ -291,6 +470,9 @@ static void
 fs_handle_toplevel_closed(void *data,
                           struct zwlr_foreign_toplevel_handle_v1 *handle) {
   toplevel_data_t *toplevel_data = (toplevel_data_t *)data;
+  if (!toplevel_data)
+    return;
+
   if (toplevel_data) {
     // If the closed toplevel was the active fullscreen one, clear state
     if (toplevel_data->is_activated && toplevel_data->is_fullscreen) {
@@ -300,6 +482,21 @@ fs_handle_toplevel_closed(void *data,
     free(toplevel_data);
   }
   zwlr_foreign_toplevel_handle_v1_destroy(handle);
+
+  // remove from track_toplevels if present
+  for (size_t i = 0; i < track_toplevels_count; ++i) {
+    if (track_toplevels[i].handle == handle) {
+      track_toplevels[i].handle = NULL;
+      track_toplevels[i].output = NULL;
+      track_toplevels[i].is_fullscreen = false;
+      // compact array to keep contiguous
+      for (size_t j = i; j + 1 < track_toplevels_count; ++j) {
+        track_toplevels[j] = track_toplevels[j + 1];
+      }
+      track_toplevels_count--;
+      break;
+    }
+  }
 }
 
 // Minimal event handlers for unused events
@@ -326,6 +523,18 @@ fs_handle_output_enter(void *data,
   (void)data;
   (void)handle;
   (void)toplevel_output;
+
+  for (size_t i = 0; i < track_toplevels_count; i++) {
+    if (track_toplevels[i].handle == handle) {
+      track_toplevels[i].output = output;
+      if (track_toplevels[i].is_fullscreen) {
+        if (track_toplevels[i].output == output) {
+          fs_update_state(true);
+        }
+      }
+      break;
+    }
+  }
 }
 
 static void
@@ -333,8 +542,19 @@ fs_handle_output_leave(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
                        struct wl_output *toplevel_output) {
   (void)data;
-  (void)handle;
   (void)toplevel_output;
+
+  for (size_t i = 0; i < track_toplevels_count; i++) {
+    if (track_toplevels[i].handle == handle &&
+        track_toplevels[i].output == output) {
+      if (track_toplevels[i].is_fullscreen &&
+          track_toplevels[i].output == output) {
+        fs_update_state(false);
+      }
+      track_toplevels[i].output = NULL;
+      break;
+    }
+  }
 }
 
 static void fs_handle_done(void *data,
@@ -384,6 +604,26 @@ fs_handle_manager_toplevel(void *data,
 
   zwlr_foreign_toplevel_handle_v1_add_listener(toplevel, &fs_toplevel_listener,
                                                toplevel_data);
+
+  if (track_toplevels_count < MAX_TOPLEVELS) {
+    bool already_tracked = false;
+    for (size_t i = 0; i < track_toplevels_count; i++) {
+      if (track_toplevels[i].handle == toplevel) {
+        already_tracked = true;
+        break;
+      }
+    }
+    if (!already_tracked) {
+      track_toplevels[track_toplevels_count].handle = toplevel;
+      track_toplevels[track_toplevels_count].output = NULL;
+      track_toplevels[track_toplevels_count].is_fullscreen = false;
+      track_toplevels_count++;
+    }
+  } else {
+    bongocat_log_error("toplevel tracker is full, %zu max: %d",
+                       track_toplevels_count, MAX_TOPLEVELS);
+  }
+
   bongocat_log_debug("New toplevel registered for fullscreen monitoring");
 }
 
@@ -803,12 +1043,19 @@ static bongocat_error_t wayland_setup_protocols(void) {
     for (size_t i = 0; i < output_count; ++i) {
       outputs[i].xdg_output = zxdg_output_manager_v1_get_xdg_output(
           xdg_output_manager, outputs[i].wl_output);
+      outputs[i].x = 0;
+      outputs[i].y = 0;
+      outputs[i].width = 0;
+      outputs[i].height = 0;
+      outputs[i].hypr_id = -1;
       zxdg_output_v1_add_listener(outputs[i].xdg_output, &xdg_output_listener,
                                   &outputs[i]);
     }
 
     // Wait for all xdg_output events
     wl_display_roundtrip(display);
+
+    hypr_update_outputs_with_monitor_ids();
   }
 
   wayland_update_output();
