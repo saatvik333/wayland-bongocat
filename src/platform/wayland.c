@@ -200,7 +200,8 @@ static void handle_xdg_output_logical_position(void *data,
   bongocat_log_debug("xdg-output logical position received: %d,%d", x, y);
 }
 static void handle_xdg_output_logical_size(void *data,
-                                           struct zxdg_output_v1 *xdg_output __attribute__((unused)),
+                                           struct zxdg_output_v1 *xdg_output
+                                           __attribute__((unused)),
                                            int32_t width, int32_t height) {
   // Defensive null check
   if (!data) {
@@ -215,12 +216,14 @@ static void handle_xdg_output_logical_size(void *data,
   bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
 }
 static void handle_xdg_output_done(void *data __attribute__((unused)),
-                                   struct zxdg_output_v1 *xdg_output __attribute__((unused))) {}
+                                   struct zxdg_output_v1 *xdg_output
+                                   __attribute__((unused))) {}
 
 static void handle_xdg_output_description(void *data __attribute__((unused)),
-                                          struct zxdg_output_v1 *xdg_output __attribute__((unused)),
-                                          const char *description __attribute__((unused))) {
-}
+                                          struct zxdg_output_v1 *xdg_output
+                                          __attribute__((unused)),
+                                          const char *description
+                                          __attribute__((unused))) {}
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
     .logical_position = handle_xdg_output_logical_position,
@@ -379,9 +382,11 @@ static bool hypr_fs_update_state(toplevel_data_t *toplevel_data) {
   window_info_t win;
   if (hypr_get_active_window(&win)) {
     bool found_output = false;
+    struct wl_output *found_wl_output = NULL;
     for (size_t i = 0; i < output_count; i++) {
       if (outputs[i].hypr_id == win.monitor_id) {
         if (output == outputs[i].wl_output) {
+          found_wl_output = output;
           found_output = true;
           break;
         }
@@ -393,14 +398,12 @@ static bool hypr_fs_update_state(toplevel_data_t *toplevel_data) {
       toplevel_data->is_fullscreen = win.fullscreen;
 
       active_toplevel_fullscreen = win.fullscreen;
-      fs_update_state(win.fullscreen);
-    } else {
-      // active window is not on the same screen as bongocat
-      toplevel_data->is_activated = false;
-      toplevel_data->is_fullscreen = false;
-      active_toplevel_fullscreen = false;
-      fs_update_state(false);
+      if (current_screen_info &&
+          current_screen_info->wl_output == found_wl_output) {
+        fs_update_state(win.fullscreen);
+      }
     }
+
     return true;
   }
 
