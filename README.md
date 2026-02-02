@@ -105,7 +105,7 @@ keyboard_device=/dev/input/event4
 | `layer`               | top/overlay       | top     | Layer type           |
 | `keyboard_device`     | path              | —       | Device to monitor    |
 | `keyboard_name`       | name              | —       | Device to monitor    |
-| `hotplug_scan_interval`| 0-360            | —       | Time to rescan devices|
+| `hotplug_scan_interval`| 0-3600           | —       | Time to rescan devices|
 | `monitor`             | name              | auto    | Target monitor       |
 | `fps`                 | 1-120             | 60      | Frame rate           |
 | `idle_sleep_timeout`  | seconds           | 0       | Sleep after idle     |
