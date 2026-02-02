@@ -21,13 +21,14 @@ extern atomic_int *last_key_code;
 // =============================================================================
 
 // Start input monitoring - must be checked
-BONGOCAT_NODISCARD bongocat_error_t input_start_monitoring(char **device_paths,
-                                                           int num_devices,
-                                                           int enable_debug);
+BONGOCAT_NODISCARD bongocat_error_t
+input_start_monitoring(char **device_paths, int num_devices, char **names,
+                       int num_names, int scan_interval, int enable_debug);
 
 // Restart input monitoring with new devices - must be checked
-BONGOCAT_NODISCARD bongocat_error_t input_restart_monitoring(
-    char **device_paths, int num_devices, int enable_debug);
+BONGOCAT_NODISCARD bongocat_error_t
+input_restart_monitoring(char **device_paths, int num_devices, char **names,
+                         int num_names, int scan_interval, int enable_debug);
 
 // Cleanup input monitoring resources
 void input_cleanup(void);

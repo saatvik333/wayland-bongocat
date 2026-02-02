@@ -45,7 +45,7 @@ bongocat-find-devices  # or ./scripts/find_input_devices.sh
 ### Run
 
 ```bash
-bongocat --watch-config
+bongocat -c <config file> --watch-config
 ```
 
 ## Configuration
@@ -72,6 +72,7 @@ overlay_position=bottom
 # mirror_y=0
 
 # Input device (run bongocat-find-devices to find yours)
+keyboard_name=<keyboard-name>
 keyboard_device=/dev/input/event4
 
 # Multi-monitor (optional - auto-detects by default)
@@ -101,6 +102,7 @@ keyboard_device=/dev/input/event4
 | `overlay_position`    | top/bottom        | bottom  | Screen position      |
 | `layer`               | top/overlay       | top     | Layer type           |
 | `keyboard_device`     | path              | —       | Device to monitor    |
+| `keyboard_name`       | name              | —       | Device to monitor    |
 | `monitor`             | name              | auto    | Target monitor       |
 | `fps`                 | 1-120             | 60      | Frame rate           |
 | `idle_sleep_timeout`  | seconds           | 0       | Sleep after idle     |

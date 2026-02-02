@@ -39,13 +39,13 @@ header() {
 # Get all event devices with kbd handler (potential keyboards)
 get_kbd_devices() {
   local devices=()
-  
+
   if [[ ! -r /proc/bus/input/devices ]]; then
     return 1
   fi
-  
+
   local name="" handlers=""
-  
+
   while IFS= read -r line; do
     case "$line" in
       N:\ Name=\"*\")
@@ -67,7 +67,7 @@ get_kbd_devices() {
         ;;
     esac
   done < /proc/bus/input/devices
-  
+
   printf '%s\n' "${devices[@]}"
 }
 
@@ -86,7 +86,7 @@ listen_device() {
   local device="$1"
   local output_file="$2"
   local timeout="$3"
-  
+
   # Use timeout + cat to read raw events
   # Key events are detected by the presence of specific byte patterns
   # Type 1 (EV_KEY) events indicate keyboard activity
@@ -99,13 +99,13 @@ interactive_detect() {
   local timeout="${1:-5}"
   local devices
   devices=$(get_kbd_devices) || { error "Cannot read device list"; return 1; }
-  
+
   if [[ -z "$devices" ]]; then
     error "No input devices with kbd handler found"
     info "Try: sudo $SCRIPT_NAME --interactive"
     return 1
   fi
-  
+
   # Check permissions
   local has_permission=false
   while IFS='|' read -r event name; do
@@ -114,7 +114,7 @@ interactive_detect() {
       break
     fi
   done <<< "$devices"
-  
+
   if [[ "$has_permission" == "false" ]]; then
     error "Cannot read input devices (permission denied)"
     echo
@@ -124,22 +124,22 @@ interactive_detect() {
     info "Or run: ${CYAN}sudo $SCRIPT_NAME --interactive${NC}"
     return 1
   fi
-  
+
   # Create temp directory for output files
   local tmpdir
   tmpdir=$(mktemp -d)
   trap "rm -rf '$tmpdir'" EXIT
-  
+
   header "Interactive Keyboard Detection"
   echo
   echo -e "  ${BOLD}Press keys on ALL your keyboards for ${timeout} seconds...${NC}"
   echo -e "  ${DIM}(Internal laptop keyboard, external keyboards, etc.)${NC}"
   echo
-  
+
   # Start listening on all accessible devices
   local pids=()
   local device_list=()
-  
+
   while IFS='|' read -r event name; do
     if check_device "/dev/input/$event"; then
       local outfile="$tmpdir/$event"
@@ -149,28 +149,28 @@ interactive_detect() {
       device_list+=("$event|$name|$outfile")
     fi
   done <<< "$devices"
-  
+
   # Show countdown
   for ((i=timeout; i>0; i--)); do
     echo -ne "\r  ${CYAN}Listening... ${i}s remaining ${NC}  "
     sleep 1
   done
   echo -e "\r  ${GREEN}✓ Detection complete!${NC}              "
-  
+
   # Wait for all listeners to finish
   for pid in "${pids[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
-  
+
   echo
-  
+
   # Check which devices received input
   local detected_keyboards=()
   local other_devices=()
-  
+
   for entry in "${device_list[@]}"; do
     IFS='|' read -r event name outfile <<< "$entry"
-    
+
     if [[ -s "$outfile" ]]; then
       # Device received input - it's a keyboard!
       detected_keyboards+=("$event|$name")
@@ -178,10 +178,10 @@ interactive_detect() {
       other_devices+=("$event|$name")
     fi
   done
-  
+
   # Show results
   header "Detection Results"
-  
+
   if [[ ${#detected_keyboards[@]} -eq 0 ]]; then
     warn "No keyboards detected"
     echo
@@ -189,14 +189,14 @@ interactive_detect() {
     info "Try again with: $SCRIPT_NAME --interactive"
     return 1
   fi
-  
+
   echo -e "  ${GREEN}Detected keyboards:${NC}"
   for entry in "${detected_keyboards[@]}"; do
     IFS='|' read -r event name <<< "$entry"
     echo -e "    ${GREEN}✓${NC} ${BOLD}$name${NC}"
     echo -e "      ${CYAN}/dev/input/$event${NC}"
   done
-  
+
   if [[ ${#other_devices[@]} -gt 0 ]]; then
     echo
     echo -e "  ${DIM}Other devices (no input detected):${NC}"
@@ -205,7 +205,7 @@ interactive_detect() {
       echo -e "    ${DIM}○ $name (/dev/input/$event)${NC}"
     done
   fi
-  
+
   # Config suggestion
   header "Add to Config"
   echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
@@ -214,7 +214,7 @@ interactive_detect() {
     IFS='|' read -r event name <<< "$entry"
     echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
   done
-  
+
   echo
 }
 
@@ -227,39 +227,39 @@ is_likely_keyboard() {
   local name="$1"
   local name_lower
   name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-  
+
   # Exclude obvious non-keyboards
   [[ "$name_lower" =~ (button|hotkey|speaker|video|consumer|system|avrcp|mouse|touchpad|trackpad) ]] && return 1
-  
+
   # Include devices with "keyboard" in name
   [[ "$name_lower" =~ keyboard ]] && return 0
-  
+
   # Include standard laptop keyboard
   [[ "$name_lower" =~ "at translated set 2" ]] && return 0
-  
+
   return 1
 }
 
 quick_detect() {
   local devices
   devices=$(get_kbd_devices) || { error "Cannot read devices"; return 1; }
-  
+
   if [[ -z "$devices" ]]; then
     warn "No input devices found"
     return 1
   fi
-  
+
   echo
   echo -e "${BOLD}🐱 Bongo Cat Device Discovery${NC} v$VERSION"
-  
+
   header "Detected Devices"
-  
+
   local keyboards=()
-  
+
   while IFS='|' read -r event name; do
     local status="ok"
     check_device "/dev/input/$event" || status="denied"
-    
+
     if is_likely_keyboard "$name"; then
       echo -e "  ${GREEN}✓${NC} ${GREEN}[KEYBOARD]${NC} ${BOLD}$name${NC}"
       keyboards+=("$event|$name")
@@ -268,14 +268,14 @@ quick_detect() {
     fi
     echo -e "    ${CYAN}/dev/input/$event${NC}"
   done <<< "$devices"
-  
+
   if [[ ${#keyboards[@]} -eq 0 ]]; then
     echo
     warn "Could not auto-detect keyboards by name"
     info "Use interactive mode: ${CYAN}$SCRIPT_NAME --interactive${NC}"
     return 1
   fi
-  
+
   # Config suggestion
   header "Add to Config"
   echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
@@ -283,8 +283,11 @@ quick_detect() {
   for entry in "${keyboards[@]}"; do
     IFS='|' read -r event name <<< "$entry"
     echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
+    echo -e "  ${CYAN}keyboard_name=$name${NC}"
   done
-  
+
+  echo
+  echo -e "  keyboard_name support matching by substring."
   echo
   echo -e "  ${DIM}Not accurate? Use: $SCRIPT_NAME --interactive${NC}"
   echo
@@ -318,7 +321,7 @@ main() {
   local mode="quick"
   local timeout=5
   local generate=false
-  
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -i|--interactive) mode="interactive"; shift ;;
@@ -328,7 +331,7 @@ main() {
       *) error "Unknown option: $1"; show_usage; exit 1 ;;
     esac
   done
-  
+
   case "$mode" in
     interactive) interactive_detect "$timeout" ;;
     quick) quick_detect ;;

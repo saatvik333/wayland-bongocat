@@ -66,6 +66,11 @@ typedef struct {
   // Input devices
   char **keyboard_devices;
   int num_keyboard_devices;
+  int hotplug_scan_interval;
+
+  // Device matching criteria (for auto-detection/hotplug)
+  char **keyboard_names;
+  int num_names;
 
   // Sleep schedule
   int enable_scheduled_sleep;

@@ -45,6 +45,12 @@ layer=top
 # Find your device with: bongocat-find-devices
 # Add multiple lines for multiple keyboards
 keyboard_device=/dev/input/event4
+keyboard_name=Asus Keyboard
+
+# re-scan /dev/input/ to find your device.
+# set to 0 to disable. (only scan once on start)
+# scanning takes time, so setting this value too small(<10) might cause laggy experience.
+hotplug_scan_interval=300 # in seconds
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ MULTI-MONITOR (optional)                                                    │

@@ -357,7 +357,8 @@ static void config_reload_callback(const char *config_path) {
     bongocat_log_info("Input devices changed, restarting input monitoring");
     bongocat_error_t input_result = input_restart_monitoring(
         g_config.keyboard_devices, g_config.num_keyboard_devices,
-        g_config.enable_debug);
+        g_config.keyboard_names, g_config.num_names,
+        g_config.hotplug_scan_interval, g_config.enable_debug);
     if (input_result != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to restart input monitoring: %s",
                          bongocat_error_string(input_result));
@@ -392,6 +393,17 @@ static bongocat_error_t config_setup_watcher(const char *config_file) {
 
 static bongocat_error_t system_initialize_components(void) {
   bongocat_error_t result;
+
+  // Start input monitoring early to minimize child process memory footprint
+  result = input_start_monitoring(
+      g_config.keyboard_devices, g_config.num_keyboard_devices,
+      g_config.keyboard_names, g_config.num_names,
+      g_config.hotplug_scan_interval, g_config.enable_debug);
+  if (result != BONGOCAT_SUCCESS) {
+    bongocat_log_error("Failed to start input monitoring: %s",
+                       bongocat_error_string(result));
+    return result;
+  }
 
   // Initialize Wayland
   result = wayland_init(&g_config);
