@@ -46,6 +46,7 @@ bongocat-find-devices  # or ./scripts/find_input_devices.sh
 
 ```bash
 bongocat -c <config file> --watch-config
+# uses ./bongocat.conf if not specify the config file
 ```
 
 ## Configuration
@@ -74,6 +75,7 @@ overlay_position=bottom
 # Input device (run bongocat-find-devices to find yours)
 keyboard_name=<keyboard-name>
 keyboard_device=/dev/input/event4
+# hotplug_scan_interval=600
 
 # Multi-monitor (optional - auto-detects by default)
 # monitor=eDP-1
@@ -103,6 +105,7 @@ keyboard_device=/dev/input/event4
 | `layer`               | top/overlay       | top     | Layer type           |
 | `keyboard_device`     | path              | —       | Device to monitor    |
 | `keyboard_name`       | name              | —       | Device to monitor    |
+| `hotplug_scan_interval`| 0-360            | —       | Time to rescan devices|
 | `monitor`             | name              | auto    | Target monitor       |
 | `fps`                 | 1-120             | 60      | Frame rate           |
 | `idle_sleep_timeout`  | seconds           | 0       | Sleep after idle     |
@@ -139,8 +142,8 @@ sudo usermod -a -G input $USER
 <summary>Cat not responding to keyboard</summary>
 
 1. Run `bongocat-find-devices` to find correct device
-2. Update `keyboard_device` in config
-3. Restart bongocat
+2. Update `keyboard_device` or `keyboard_name` in config
+3. Restart bongocat (specify your config path)
 
 </details>
 
