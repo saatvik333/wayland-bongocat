@@ -422,9 +422,10 @@ static bongocat_error_t system_initialize_components(void) {
   }
 
   // Start input monitoring
-  result = input_start_monitoring(g_config.keyboard_devices,
-                                  g_config.num_keyboard_devices,
-                                  g_config.enable_debug);
+  result = input_start_monitoring(
+      g_config.keyboard_devices, g_config.num_keyboard_devices,
+      g_config.keyboard_names, g_config.num_names,
+      g_config.hotplug_scan_interval, g_config.enable_debug);
   if (result != BONGOCAT_SUCCESS) {
     bongocat_log_error("Failed to start input monitoring: %s",
                        bongocat_error_string(result));
