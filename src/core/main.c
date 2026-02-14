@@ -134,10 +134,11 @@ static int process_handle_toggle(void) {
   if (running_pid > 0) {
     // Process is running, kill it
     bongocat_log_info("Stopping bongocat (PID: %d)", running_pid);
-    if (kill(running_pid, SIGTERM) == 0) {
+    // Negate running pid to allow targetting process group (multiple monitors)
+    if (kill(-running_pid, SIGTERM) == 0) {
       // Wait a bit for graceful shutdown
       for (int i = 0; i < 50; i++) {  // Wait up to 5 seconds
-        if (kill(running_pid, 0) != 0) {
+        if (kill(-running_pid, 0) != 0) {
           bongocat_log_info("Bongocat stopped successfully");
           return 0;
         }
