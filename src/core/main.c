@@ -147,7 +147,11 @@ static int process_handle_toggle(void) {
 
       // Force kill if still running
       bongocat_log_warning("Force killing bongocat");
-      kill(running_pid, SIGKILL);
+      if (kill(running_pid, SIGKILL) != 0) {
+        bongocat_log_error("Failed to force kill bongocat: %s",
+                           strerror(errno));
+        return 1;
+      }
       bongocat_log_info("Bongocat force stopped");
     } else {
       bongocat_log_error("Failed to stop bongocat: %s", strerror(errno));
