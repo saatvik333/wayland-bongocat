@@ -8,7 +8,7 @@
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "wayland-bongocat";
-  version = "1.3.2";
+  version = "1.4.0";
   src = ../.;
 
   # Build toolchain and dependencies
@@ -32,6 +32,10 @@ stdenv.mkDerivation (finalAttrs: {
     # Install binaries
     install -Dm755 build/bongocat $out/bin/${finalAttrs.meta.mainProgram}
     install -Dm755 scripts/find_input_devices.sh $out/bin/bongocat-find-devices
+    
+    # Install man page
+    install -Dm644 man/bongocat.1 $out/share/man/man1/bongocat.1
+    install -Dm644 bongocat.conf.example $out/share/bongocat/bongocat.conf.example
 
     runHook postInstall
   '';

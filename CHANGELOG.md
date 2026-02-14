@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-02-14
+
+### Added
+
+- **Multi-monitor CSV** - `monitor` now accepts comma-separated output names; parent process launches dedicated children via `--multi-monitor-child` and CLI docs reflect new flow.
+- **Safe hot reload hook** - Config watcher now only signals reloads, the actual reload runs from a Wayland tick callback so Wayland structures stay main-thread bound.
+
+### Changed
+
+- **Config model** - `config_t` now stores per-config device/output arrays, inline comments are stripped, and `monitor` parsing loads multiple names with fallback to automatic output; keyboards hotplug state is rebuilt cleanly on reload.
+- **Wayland rendering** - Draw path takes `anim_lock`, surface recreation checks the applied layer/output/size snapshots, and buffer recreation is serialized to avoid tearing/races when configs change.
+- **Documentation & packaging** - README/`bongocat.conf.example` demonstrate comma-separated monitors, Makefile installs now ship the example config, and CLI help/version text was refreshed for v1.4.0.
+
+### Fixed
+
+- **Dangling pointers on reload** - `g_config` swap, input device lists, and watcher cleanup now occur only after new config is validated so the old config isn’t left referencing freed memory.
+- **Config watcher and animation races** - Atomic flags and mutex coverage were tightened, `config_reload_callback` no longer touches Wayland structures directly, and animation draw/update now handle surface recreation safely.
+- **Input hotplug robustness** - Path truncation is guarded, static device comparisons check nulls, and signal handlers close cleanly when the child early-exits.
+
+---
+
 ## [1.3.2] - 2025-12-07
 
 ### Fixed

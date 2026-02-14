@@ -66,6 +66,9 @@ BONGOCAT_NODISCARD int wayland_get_screen_width(void);
 // Get detected output name
 BONGOCAT_NODISCARD const char *wayland_get_output_name(void);
 
+// Register a per-loop callback executed on Wayland main thread.
+void wayland_set_tick_callback(void (*callback)(void));
+
 // Get current layer name for logging
 BONGOCAT_NODISCARD const char *wayland_get_current_layer_name(void);
 

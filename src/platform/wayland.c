@@ -1,8 +1,16 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "platform/wayland.h"
 
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wshadow"
+#endif
 #include "../protocols/wlr-foreign-toplevel-management-v1-client-protocol.h"
 #include "../protocols/xdg-output-unstable-v1-client-protocol.h"
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 #include "graphics/animation.h"
 
 #include <poll.h>
@@ -28,6 +36,11 @@ struct zwlr_layer_surface_v1 *layer_surface;
 uint8_t *pixels;
 
 static config_t *current_config;
+static void (*tick_callback_fn)(void) = NULL;
+static int applied_width = 0;
+static int applied_height = 0;
+static layer_type_t applied_layer = LAYER_TOP;
+static char *applied_output_name = NULL;
 
 // =============================================================================
 // SCREEN DIMENSION MANAGEMENT
@@ -404,7 +417,7 @@ static bool hypr_fs_update_state(toplevel_data_t *toplevel_data) {
       }
     }
 
-    return true;
+    return found_output;
   }
 
   return false;
@@ -434,11 +447,24 @@ fs_handle_toplevel_state(void *data,
   /// @NOTE: tracked.output can be NULL when no output.enter/output.leave
   /// event were triggerd
   bool output_found = false;
+  bool handle_tracked = false;
+  bool handle_has_output = false;
   for (size_t i = 0; i < track_toplevels_count; i++) {
     if (track_toplevels[i].handle == handle) {
+      handle_tracked = true;
+      if (track_toplevels[i].output != NULL) {
+        handle_has_output = true;
+      }
       output_found |= update_fullscreen_state_toplevel(
           &track_toplevels[i], is_fullscreen, is_activated);
     }
+  }
+
+  // This toplevel is known to belong to a different output. Do not use
+  // compositor-global fallbacks, otherwise fullscreen on monitor A can hide
+  // overlay on monitor B.
+  if (handle_tracked && handle_has_output && !output_found) {
+    return;
   }
 
   // fallback: hyprland; when toplevel detection is not working
@@ -446,8 +472,8 @@ fs_handle_toplevel_state(void *data,
     output_found |= hypr_fs_update_state(toplevel_data);
   }
 
-  // fallback: global fullscreen
-  if (!output_found) {
+  // fallback: global fullscreen (safe only for single-output setups)
+  if (!output_found && output_count <= 1) {
     bool was_activated = toplevel_data->is_activated;
     bool was_fullscreen = toplevel_data->is_fullscreen;
 
@@ -476,9 +502,21 @@ fs_handle_toplevel_closed(void *data,
   if (!toplevel_data)
     return;
 
+  bool closed_on_current_output = false;
+  bool closed_was_fullscreen = false;
+  for (size_t i = 0; i < track_toplevels_count; ++i) {
+    if (track_toplevels[i].handle == handle) {
+      closed_on_current_output = (track_toplevels[i].output == output);
+      closed_was_fullscreen = track_toplevels[i].is_fullscreen;
+      break;
+    }
+  }
+
   if (toplevel_data) {
-    // If the closed toplevel was the active fullscreen one, clear state
-    if (toplevel_data->is_activated && toplevel_data->is_fullscreen) {
+    // Only clear fullscreen state when a fullscreen toplevel on this output
+    // is closed.
+    if (closed_on_current_output && closed_was_fullscreen &&
+        toplevel_data->is_activated && toplevel_data->is_fullscreen) {
       active_toplevel_fullscreen = false;
       fs_update_state(false);
     }
@@ -524,14 +562,12 @@ fs_handle_output_enter(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
                        struct wl_output *toplevel_output) {
   (void)data;
-  (void)handle;
-  (void)toplevel_output;
 
   for (size_t i = 0; i < track_toplevels_count; i++) {
     if (track_toplevels[i].handle == handle) {
-      track_toplevels[i].output = output;
+      track_toplevels[i].output = toplevel_output;
       if (track_toplevels[i].is_fullscreen) {
-        if (track_toplevels[i].output == output) {
+        if (toplevel_output == output) {
           fs_update_state(true);
         }
       }
@@ -545,13 +581,11 @@ fs_handle_output_leave(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
                        struct wl_output *toplevel_output) {
   (void)data;
-  (void)toplevel_output;
 
   for (size_t i = 0; i < track_toplevels_count; i++) {
     if (track_toplevels[i].handle == handle &&
-        track_toplevels[i].output == output) {
-      if (track_toplevels[i].is_fullscreen &&
-          track_toplevels[i].output == output) {
+        track_toplevels[i].output == toplevel_output) {
+      if (track_toplevels[i].is_fullscreen && toplevel_output == output) {
         fs_update_state(false);
       }
       track_toplevels[i].output = NULL;
@@ -600,31 +634,33 @@ fs_handle_manager_toplevel(void *data,
     return;
   }
 
+  // Check tracker capacity before registering listener
+  if (track_toplevels_count >= MAX_TOPLEVELS) {
+    bongocat_log_error("toplevel tracker is full, %zu max: %d",
+                       track_toplevels_count, MAX_TOPLEVELS);
+    free(toplevel_data);
+    return;
+  }
+
   // Initialize: toplevel starts as not fullscreen and not activated
-  // State events will update these values
   toplevel_data->is_fullscreen = false;
   toplevel_data->is_activated = false;
 
   zwlr_foreign_toplevel_handle_v1_add_listener(toplevel, &fs_toplevel_listener,
                                                toplevel_data);
 
-  if (track_toplevels_count < MAX_TOPLEVELS) {
-    bool already_tracked = false;
-    for (size_t i = 0; i < track_toplevels_count; i++) {
-      if (track_toplevels[i].handle == toplevel) {
-        already_tracked = true;
-        break;
-      }
+  bool already_tracked = false;
+  for (size_t i = 0; i < track_toplevels_count; i++) {
+    if (track_toplevels[i].handle == toplevel) {
+      already_tracked = true;
+      break;
     }
-    if (!already_tracked) {
-      track_toplevels[track_toplevels_count].handle = toplevel;
-      track_toplevels[track_toplevels_count].output = NULL;
-      track_toplevels[track_toplevels_count].is_fullscreen = false;
-      track_toplevels_count++;
-    }
-  } else {
-    bongocat_log_error("toplevel tracker is full, %zu max: %d",
-                       track_toplevels_count, MAX_TOPLEVELS);
+  }
+  if (!already_tracked) {
+    track_toplevels[track_toplevels_count].handle = toplevel;
+    track_toplevels[track_toplevels_count].output = NULL;
+    track_toplevels[track_toplevels_count].is_fullscreen = false;
+    track_toplevels_count++;
   }
 
   bongocat_log_debug("New toplevel registered for fullscreen monitoring");
@@ -684,23 +720,16 @@ static void screen_calculate_dimensions(screen_info_t *screen_info) {
 // =============================================================================
 
 int create_shm(int size) {
-  char name[] = "/bar-shm-XXXXXX";
-  int fd;
-
-  for (int i = 0; i < 100; i++) {
-    for (int j = 0; j < 6; j++) {
-      name[9 + j] = 'A' + (rand() % 26);
-    }
-    fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-    if (fd >= 0) {
-      shm_unlink(name);
-      break;
-    }
+  int fd = memfd_create("bongocat-shm", MFD_CLOEXEC);
+  if (fd < 0) {
+    bongocat_log_error("memfd_create failed: %s", strerror(errno));
+    return -1;
   }
 
-  if (fd < 0 || ftruncate(fd, size) < 0) {
-    perror("shm");
-    exit(1);
+  if (ftruncate(fd, size) < 0) {
+    bongocat_log_error("ftruncate failed: %s", strerror(errno));
+    close(fd);
+    return -1;
   }
 
   return fd;
@@ -712,15 +741,20 @@ void draw_bar(void) {
     return;
   }
 
+  pthread_mutex_lock(&anim_lock);
+
   // Critical null checks - prevent crash during buffer recreation
-  if (!current_config || !pixels) {
+  if (!current_config || !pixels || !surface || !buffer) {
     bongocat_log_debug("Config or pixels not ready, skipping draw");
+    pthread_mutex_unlock(&anim_lock);
     return;
   }
 
   // Skip fullscreen hiding when layer is LAYER_OVERLAY (always visible)
   bool is_overlay_layer = current_config->layer == LAYER_OVERLAY;
-  bool is_fullscreen = !is_overlay_layer && atomic_load(&fullscreen_detected);
+  bool is_fullscreen = !is_overlay_layer &&
+                       !current_config->disable_fullscreen_hide &&
+                       atomic_load(&fullscreen_detected);
   int effective_opacity = is_fullscreen ? 0 : current_config->overlay_opacity;
 
   // Clear buffer with transparency - OPTIMIZED
@@ -738,7 +772,6 @@ void draw_bar(void) {
 
   // Draw cat if visible
   if (!is_fullscreen) {
-    pthread_mutex_lock(&anim_lock);
     int cat_height = current_config->cat_height;
     int cat_width = (cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
     int cat_y = (current_config->bar_height - cat_height) / 2 +
@@ -763,7 +796,6 @@ void draw_bar(void) {
                       current_config->bar_height, anim_imgs[anim_index],
                       anim_width[anim_index], anim_height[anim_index], cat_x,
                       cat_y, cat_width, cat_height);
-    pthread_mutex_unlock(&anim_lock);
   } else {
     bongocat_log_debug("Cat hidden due to fullscreen detection");
   }
@@ -773,6 +805,7 @@ void draw_bar(void) {
                            current_config->bar_height);
   wl_surface_commit(surface);
   wl_display_flush(display);
+  pthread_mutex_unlock(&anim_lock);
 }
 
 // =============================================================================
@@ -940,39 +973,59 @@ static void registry_remove(void *data __attribute__((unused)),
                             struct wl_registry *registry
                             __attribute__((unused)),
                             uint32_t name) {
-  // Check if the removed global is our bound output
-  if (name == bound_output_name && bound_output_name != 0) {
+  size_t removed_index = output_count;
+  for (size_t i = 0; i < output_count; ++i) {
+    if (outputs[i].name == name) {
+      removed_index = i;
+      break;
+    }
+  }
+
+  if (removed_index == output_count) {
+    return;
+  }
+
+  bool removed_bound = (name == bound_output_name && bound_output_name != 0);
+  if (removed_bound) {
     bongocat_log_warning("Bound output disconnected (registry name %u)", name);
     atomic_store(&output_lost, true);
     atomic_store(&configured, false);
-
-    // Clean up the old output reference
     output = NULL;
+    bound_output_name = 0;
+    bound_screen_name = NULL;
+    current_screen_info = NULL;
+  }
 
-    // Remove from outputs array
+  if (outputs[removed_index].xdg_output) {
+    zxdg_output_v1_destroy(outputs[removed_index].xdg_output);
+    outputs[removed_index].xdg_output = NULL;
+  }
+  if (outputs[removed_index].wl_output) {
+    wl_output_destroy(outputs[removed_index].wl_output);
+    outputs[removed_index].wl_output = NULL;
+  }
+
+  for (size_t j = removed_index; j + 1 < output_count; ++j) {
+    outputs[j] = outputs[j + 1];
+    screen_infos[j] = screen_infos[j + 1];
+  }
+
+  if (output_count > 0) {
+    memset(&outputs[output_count - 1], 0, sizeof(output_ref_t));
+    memset(&screen_infos[output_count - 1], 0, sizeof(screen_info_t));
+    output_count--;
+  }
+
+  if (!removed_bound && output != NULL) {
+    current_screen_info = NULL;
+    bound_screen_name = NULL;
+
     for (size_t i = 0; i < output_count; ++i) {
-      if (outputs[i].name == name) {
-        if (outputs[i].xdg_output) {
-          zxdg_output_v1_destroy(outputs[i].xdg_output);
-          outputs[i].xdg_output = NULL;
-        }
-        if (outputs[i].wl_output) {
-          wl_output_destroy(outputs[i].wl_output);
-          outputs[i].wl_output = NULL;
-          screen_infos[i].wl_output = NULL;
-        }
-        // Shift remaining outputs
-        for (size_t j = i; j < output_count - 1; ++j) {
-          outputs[j] = outputs[j + 1];
-        }
-        for (size_t j = i; j < output_count - 1; ++j) {
-          screen_infos[j] = screen_infos[j + 1];
-        }
-        // Zero out the now-unused slot
-        memset(&outputs[output_count - 1], 0, sizeof(output_ref_t));
-        memset(&screen_infos[output_count - 1], 0, sizeof(screen_info_t));
-        output_count--;
-        break;
+      if (outputs[i].wl_output == output) {
+        bound_screen_name = outputs[i].name_str;
+      }
+      if (screen_infos[i].wl_output == output) {
+        current_screen_info = &screen_infos[i];
       }
     }
   }
@@ -1077,40 +1130,17 @@ static bongocat_error_t wayland_setup_protocols(void) {
   return BONGOCAT_SUCCESS;
 }
 
-// Helper to handle output reconnection
-static void wayland_handle_output_reconnect(struct wl_output *new_output,
-                                            uint32_t registry_name,
-                                            const char *output_name) {
-  bongocat_log_info("Output '%s' reconnected (registry name %u)", output_name,
-                    registry_name);
-
-  // Clean up old surface if it exists
-  if (layer_surface) {
-    zwlr_layer_surface_v1_destroy(layer_surface);
-    layer_surface = NULL;
-  }
-  if (surface) {
-    wl_surface_destroy(surface);
-    surface = NULL;
-  }
-
-  // Set new output
-  output = new_output;
-  bound_output_name = registry_name;
-  atomic_store(&output_lost, false);
-  bound_screen_name = NULL;
-
-  // Recreate surface on new output
-  if (wayland_setup_surface() == BONGOCAT_SUCCESS) {
-    bongocat_log_info("Surface recreated on reconnected output");
-    wl_display_roundtrip(display);
-    wayland_update_current_screen_info();
-  } else {
-    bongocat_log_error("Failed to recreate surface on reconnected output");
-  }
-}
-
 static bongocat_error_t wayland_setup_surface(void) {
+  if (!current_config) {
+    bongocat_log_error("Cannot setup surface: config is NULL");
+    return BONGOCAT_ERROR_INVALID_PARAM;
+  }
+
+  uint32_t wl_layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+  if (current_config && current_config->layer == LAYER_OVERLAY) {
+    wl_layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
+  }
+
   surface = wl_compositor_create_surface(compositor);
   if (!surface) {
     bongocat_log_error("Failed to create surface");
@@ -1118,8 +1148,7 @@ static bongocat_error_t wayland_setup_surface(void) {
   }
 
   layer_surface = zwlr_layer_shell_v1_get_layer_surface(
-      layer_shell, surface, output, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
-      "bongocat-overlay");
+      layer_shell, surface, output, wl_layer, "bongocat-overlay");
 
   if (!layer_surface) {
     bongocat_log_error("Failed to create layer surface");
@@ -1205,9 +1234,6 @@ bongocat_error_t wayland_init(config_t *config) {
   current_config = config;
   bongocat_log_info("Initializing Wayland connection");
 
-  // Initialize random seed for shared memory name generation
-  srand((unsigned int)time(NULL));
-
   display = wl_display_connect(NULL);
   if (!display) {
     bongocat_log_error("Failed to connect to Wayland display");
@@ -1222,6 +1248,17 @@ bongocat_error_t wayland_init(config_t *config) {
     return result;
   }
 
+  applied_width = current_config->screen_width;
+  applied_height = current_config->bar_height;
+  applied_layer = current_config->layer;
+  if (applied_output_name) {
+    free(applied_output_name);
+    applied_output_name = NULL;
+  }
+  if (current_config->output_name) {
+    applied_output_name = strdup(current_config->output_name);
+  }
+
   bongocat_log_info("Wayland initialization complete (%dx%d buffer)",
                     current_config->screen_width, current_config->bar_height);
   return BONGOCAT_SUCCESS;
@@ -1233,6 +1270,10 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
   bongocat_log_info("Starting Wayland event loop");
 
   while (*running && display) {
+    if (tick_callback_fn) {
+      tick_callback_fn();
+    }
+
     // Handle Wayland events
     struct pollfd pfd = {
         .fd = wl_display_get_fd(display),
@@ -1283,57 +1324,73 @@ const char *wayland_get_output_name(void) {
   return bound_screen_name;
 }
 
+void wayland_set_tick_callback(void (*callback)(void)) {
+  tick_callback_fn = callback;
+}
+
 void wayland_update_config(config_t *config) {
   if (!config) {
     bongocat_log_error("Cannot update wayland config: config is NULL");
     return;
   }
 
-  // Lock animation mutex to prevent draw_bar() during config update
-  // This is critical - animation thread must not access buffer while we
-  // recreate it
-  pthread_mutex_lock(&anim_lock);
-
-  // Check if dimensions changed - requires buffer/surface recreation
-  int old_height = current_config ? current_config->bar_height : 0;
-  int old_width = current_config ? current_config->screen_width : 0;
-  const char *old_screen_name = current_config ? bound_screen_name : NULL;
-  char *old_output_name = current_config && current_config->output_name
-                              ? strdup(current_config->output_name)
-                              : NULL;
-
   current_config = config;
+
+  int old_height = applied_height;
+  int old_width = applied_width;
+  layer_type_t old_layer = applied_layer;
+  char *old_output_name =
+      applied_output_name ? strdup(applied_output_name) : NULL;
   int new_width = wayland_get_new_screen_width();
 
-  bool dimensions_changed = (old_height != config->bar_height) ||
-                            (old_width != config->screen_width) ||
-                            (new_width != config->screen_width);
-  bool screen_changed =
-      (current_config && current_config->output_name && old_screen_name &&
-           (strcmp(old_screen_name, current_config->output_name) != 0) ||
-       (current_config && current_config->output_name && old_output_name &&
-        strcmp(old_output_name, current_config->output_name) != 0));
+  bool dimensions_changed =
+      (old_height != config->bar_height) || (old_width != config->screen_width);
+  if (new_width > 0 && new_width != config->screen_width) {
+    dimensions_changed = true;
+  }
 
-  if ((dimensions_changed && old_height > 0 && old_width > 0) ||
-      screen_changed) {
+  bool layer_changed = (old_layer != config->layer);
+  bool output_name_changed =
+      ((old_output_name == NULL) != (config->output_name == NULL)) ||
+      (old_output_name && config->output_name &&
+       strcmp(old_output_name, config->output_name) != 0);
+  bool bound_output_changed =
+      (bound_screen_name && config->output_name &&
+       strcmp(bound_screen_name, config->output_name) != 0);
+  bool screen_changed = output_name_changed || bound_output_changed;
+
+  bool needs_recreate =
+      ((dimensions_changed && old_height > 0 && old_width > 0) ||
+       screen_changed || layer_changed);
+  if (needs_recreate) {
+    int target_width = (new_width > 0) ? new_width : config->screen_width;
     bongocat_log_info(
-        "Dimensions changed (%dx%d -> %dx%d), recreating buffer...", old_width,
-        old_height, new_width, config->bar_height);
+        "Wayland surface update required (size %dx%d -> %dx%d, layer %s -> %s)",
+        old_width, old_height, target_width, config->bar_height,
+        old_layer == LAYER_TOP ? "top" : "overlay",
+        config->layer == LAYER_TOP ? "top" : "overlay");
 
-    // Mark as not configured first
+    pthread_mutex_lock(&anim_lock);
     atomic_store(&configured, false);
 
-    // Cleanup old buffer
     if (buffer) {
       wl_buffer_destroy(buffer);
       buffer = NULL;
     }
     if (pixels) {
-      munmap(pixels, old_width * old_height * 4);
+      size_t old_size = 0;
+      if (old_width > 0 && old_height > 0) {
+        old_size = (size_t)old_width * (size_t)old_height * 4U;
+      } else if (config->screen_width > 0 && config->bar_height > 0) {
+        old_size =
+            (size_t)config->screen_width * (size_t)config->bar_height * 4U;
+      }
+      if (old_size > 0) {
+        munmap(pixels, old_size);
+      }
       pixels = NULL;
     }
 
-    // Cleanup old surface
     if (layer_surface) {
       zwlr_layer_surface_v1_destroy(layer_surface);
       layer_surface = NULL;
@@ -1346,14 +1403,10 @@ void wayland_update_config(config_t *config) {
     wayland_update_output();
     wayland_update_current_screen_info();
 
-    // Recreate surface and buffer with new dimensions
     if (wayland_setup_surface() != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to recreate surface after config change");
-      if (old_output_name != NULL) {
-        free(old_output_name);
-        old_output_name = NULL;
-      }
       pthread_mutex_unlock(&anim_lock);
+      free(old_output_name);
       return;
     }
 
@@ -1362,27 +1415,28 @@ void wayland_update_config(config_t *config) {
 
     if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to recreate buffer after config change");
-      if (old_output_name != NULL) {
-        free(old_output_name);
-        old_output_name = NULL;
-      }
       pthread_mutex_unlock(&anim_lock);
+      free(old_output_name);
       return;
     }
+    pthread_mutex_unlock(&anim_lock);
 
-    // Wait for new configure event
     wl_display_roundtrip(display);
     wayland_update_current_screen_info();
 
     bongocat_log_info("Buffer recreated successfully (%dx%d)",
                       config->screen_width, config->bar_height);
   }
-  if (old_output_name != NULL) {
-    free(old_output_name);
-    old_output_name = NULL;
-  }
 
-  pthread_mutex_unlock(&anim_lock);
+  free(old_output_name);
+  old_output_name = NULL;
+
+  applied_width = config->screen_width;
+  applied_height = config->bar_height;
+  applied_layer = config->layer;
+  free(applied_output_name);
+  applied_output_name =
+      config->output_name ? strdup(config->output_name) : NULL;
 
   if (atomic_load(&configured)) {
     draw_bar();
@@ -1483,6 +1537,12 @@ void wayland_cleanup(void) {
   global_registry = NULL;  // Destroyed when display disconnects
   bound_screen_name = NULL;
   current_screen_info = NULL;
+  free(applied_output_name);
+  applied_output_name = NULL;
+  applied_width = 0;
+  applied_height = 0;
+  applied_layer = LAYER_TOP;
+  tick_callback_fn = NULL;
   memset(&fs_detector, 0, sizeof(fs_detector));
   memset(&screen_infos, 0, sizeof(screen_info_t) * MAX_OUTPUTS);
 
@@ -1490,5 +1550,8 @@ void wayland_cleanup(void) {
 }
 
 const char *wayland_get_current_layer_name(void) {
-  return "OVERLAY";
+  if (!current_config) {
+    return "TOP";
+  }
+  return current_config->layer == LAYER_OVERLAY ? "OVERLAY" : "TOP";
 }

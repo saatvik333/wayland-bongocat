@@ -4,10 +4,20 @@
 
 #include "graphics/embedded_assets.h"
 #include "platform/input.h"
-#include "platform/wayland.h"
 #include "utils/memory.h"
 
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wshadow"
+#  pragma GCC diagnostic ignored "-Wdouble-promotion"
+#endif
+#include <stb_image.h>
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 #include <time.h>
+
+void draw_bar(void);
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -22,7 +32,9 @@ pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
 // Animation system state
 static config_t *current_config;
 static pthread_t anim_thread;
-static volatile bool animation_running = false;
+static _Atomic bool animation_running = false;
+static bool animation_thread_started = false;
+static bool animation_initialized = false;
 
 // =============================================================================
 // DRAWING OPERATIONS MODULE
@@ -38,14 +50,6 @@ static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src,
   dest[dest_idx + 1] = src[src_idx + 1];  // G
   dest[dest_idx + 2] = src[src_idx + 0];  // R
   dest[dest_idx + 3] = src[src_idx + 3];  // A
-}
-
-static void drawing_copy_pixel_rgba(uint8_t *dest, int dest_idx, uint8_t r,
-                                    uint8_t g, uint8_t b, uint8_t a) {
-  dest[dest_idx + 0] = b;  // B
-  dest[dest_idx + 1] = g;  // G
-  dest[dest_idx + 2] = r;  // R
-  dest[dest_idx + 3] = a;  // A
 }
 
 // Alpha blend source pixel onto destination - enables smooth anti-aliased edges
@@ -496,7 +500,6 @@ static void *anim_thread_main(void *arg __attribute__((unused))) {
 
   struct timespec frame_delay = {0, state.frame_time_ns};
 
-  animation_running = true;
   bongocat_log_debug("Animation thread main loop started");
 
   // Track last drawn state to skip redundant redraws
@@ -612,44 +615,57 @@ bongocat_error_t animation_init(config_t *config) {
     return result;
   }
 
+  animation_initialized = true;
+
   bongocat_log_info(
       "Animation system initialized successfully with embedded assets");
   return BONGOCAT_SUCCESS;
 }
 
 bongocat_error_t animation_start(void) {
+  if (animation_thread_started) {
+    bongocat_log_warning("Animation thread already running");
+    return BONGOCAT_SUCCESS;
+  }
+
   bongocat_log_info("Starting animation thread");
 
+  animation_running = true;
   int result = pthread_create(&anim_thread, NULL, anim_thread_main, NULL);
   if (result != 0) {
     bongocat_log_error("Failed to create animation thread: %s",
                        strerror(result));
+    animation_running = false;
     return BONGOCAT_ERROR_THREAD;
   }
 
+  animation_thread_started = true;
   bongocat_log_debug("Animation thread started successfully");
   return BONGOCAT_SUCCESS;
 }
 
 void animation_cleanup(void) {
-  if (animation_running) {
+  if (animation_thread_started) {
     bongocat_log_debug("Stopping animation thread");
     animation_running = false;
 
     // Wait for thread to finish gracefully
     pthread_join(anim_thread, NULL);
+    animation_thread_started = false;
     bongocat_log_debug("Animation thread stopped");
   }
 
   // Cleanup loaded images
-  anim_cleanup_loaded_images(NUM_FRAMES);
-
-  // Cleanup mutex
-  pthread_mutex_destroy(&anim_lock);
+  if (animation_initialized) {
+    anim_cleanup_loaded_images(NUM_FRAMES);
+    animation_initialized = false;
+  }
 
   bongocat_log_debug("Animation cleanup complete");
 }
 
 void animation_trigger(void) {
-  atomic_store(any_key_pressed, 1);
+  if (any_key_pressed) {
+    atomic_store(any_key_pressed, 1);
+  }
 }

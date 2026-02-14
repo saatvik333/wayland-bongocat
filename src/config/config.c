@@ -4,7 +4,16 @@
 #include "utils/error.h"
 #include "utils/memory.h"
 
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <linux/input.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 // =============================================================================
 // CONFIGURATION CONSTANTS AND VALIDATION RANGES
@@ -19,13 +28,6 @@
 #define MIN_DURATION       10
 #define MAX_DURATION       5000
 #define MAX_INTERVAL       3600
-
-// =============================================================================
-// GLOBAL STATE FOR DEVICE MANAGEMENT
-// =============================================================================
-
-static char **config_keyboard_devices = NULL;
-static int config_num_devices = 0;
 
 // =============================================================================
 // CONFIGURATION VALIDATION MODULE
@@ -61,6 +63,15 @@ static void config_validate_timing(config_t *config) {
         config->test_animation_interval, MAX_INTERVAL);
     config->test_animation_interval =
         (config->test_animation_interval < 0) ? 0 : MAX_INTERVAL;
+  }
+
+  if (config->hotplug_scan_interval < 0 ||
+      config->hotplug_scan_interval > MAX_INTERVAL) {
+    bongocat_log_warning(
+        "hotplug_scan_interval %d out of range [0-%d], clamping",
+        config->hotplug_scan_interval, MAX_INTERVAL);
+    config->hotplug_scan_interval =
+        (config->hotplug_scan_interval < 0) ? 0 : MAX_INTERVAL;
   }
 }
 
@@ -142,62 +153,134 @@ static bongocat_error_t config_validate(config_t *config) {
 // DEVICE MANAGEMENT MODULE
 // =============================================================================
 
-static bongocat_error_t config_add_keyboard_device(config_t *config,
-                                                   const char *device_path) {
-  // Reallocate device array using temp variable to prevent memory leak on
-  // failure
-  char **new_devices = realloc(config_keyboard_devices,
-                               (config_num_devices + 1) * sizeof(char *));
-  if (!new_devices) {
-    bongocat_log_error("Failed to allocate memory for keyboard_devices");
+static bongocat_error_t config_expand_array(char ***array_ptr, int *count,
+                                            const char *str) {
+  char **new_array =
+      bongocat_realloc(*array_ptr, (*count + 1) * sizeof(char *));
+  if (!new_array) {
     return BONGOCAT_ERROR_MEMORY;
   }
-  config_keyboard_devices = new_devices;
+  *array_ptr = new_array;
 
-  size_t path_len = strlen(device_path);
-  config_keyboard_devices[config_num_devices] = BONGOCAT_MALLOC(path_len + 1);
-  if (!config_keyboard_devices[config_num_devices]) {
-    bongocat_log_error("Failed to allocate memory for keyboard_device entry");
+  size_t len = strlen(str);
+  (*array_ptr)[*count] = BONGOCAT_MALLOC(len + 1);
+  if (!(*array_ptr)[*count]) {
     return BONGOCAT_ERROR_MEMORY;
   }
 
-  strncpy(config_keyboard_devices[config_num_devices], device_path, path_len);
-  config_keyboard_devices[config_num_devices][path_len] = '\0';
-  config_num_devices++;
-
-  config->keyboard_devices = config_keyboard_devices;
-  config->num_keyboard_devices = config_num_devices;
+  strncpy((*array_ptr)[*count], str, len);
+  (*array_ptr)[*count][len] = '\0';
+  (*count)++;
 
   return BONGOCAT_SUCCESS;
 }
 
-static void config_cleanup_devices(void) {
-  if (config_keyboard_devices) {
-    for (int i = 0; i < config_num_devices; i++) {
-      BONGOCAT_SAFE_FREE(config_keyboard_devices[i]);
-    }
-    BONGOCAT_SAFE_FREE(config_keyboard_devices);
-    config_keyboard_devices = NULL;
-    config_num_devices = 0;
+static bongocat_error_t config_add_keyboard_device(config_t *config,
+                                                   const char *device_path) {
+  bongocat_error_t err = config_expand_array(
+      &config->keyboard_devices, &config->num_keyboard_devices, device_path);
+  if (err != BONGOCAT_SUCCESS) {
+    bongocat_log_error("Failed to add keyboard device: %s",
+                       bongocat_error_string(err));
+    return err;
   }
+
+  return BONGOCAT_SUCCESS;
+}
+
+static bongocat_error_t config_resolve_devices(config_t *config) {
+  if (config->num_names == 0) {
+    return BONGOCAT_SUCCESS;
+  }
+
+  DIR *dir = opendir("/dev/input");
+  if (!dir) {
+    bongocat_log_warning("Failed to open /dev/input for scanning: %s",
+                         strerror(errno));
+    return BONGOCAT_ERROR_FILE_IO;
+  }
+
+  struct dirent *entry;
+  char path[PATH_MAX];
+  char name[256] = {0};
+
+  while ((entry = readdir(dir)) != NULL) {
+    if (strncmp(entry->d_name, "event", 5) != 0) {
+      continue;
+    }
+
+    snprintf(path, sizeof(path), "/dev/input/%s", entry->d_name);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+      continue;
+    }
+
+    bool matched = false;
+    memset(name, 0, sizeof(name));
+    if (ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) >= 0) {
+      name[sizeof(name) - 1] = '\0';
+      for (int i = 0; i < config->num_names; i++) {
+        if (strstr(name, config->keyboard_names[i]) != NULL) {
+          bongocat_log_info(
+              "Found device matching name '%s' (Device: '%s'): %s",
+              config->keyboard_names[i], name, path);
+          matched = true;
+          break;
+        }
+      }
+    }
+
+    if (matched) {
+      config_add_keyboard_device(config, path);
+    }
+
+    close(fd);
+  }
+
+  closedir(dir);
+  return BONGOCAT_SUCCESS;
+}
+
+static void config_free_string_array(char ***array_ptr, int *count) {
+  if (*array_ptr) {
+    for (int i = 0; i < *count; i++) {
+      BONGOCAT_SAFE_FREE((*array_ptr)[i]);
+    }
+    BONGOCAT_SAFE_FREE(*array_ptr);
+    *count = 0;
+  }
+}
+
+static void config_cleanup_devices(config_t *config) {
+  if (!config) {
+    return;
+  }
+
+  config_free_string_array(&config->keyboard_devices,
+                           &config->num_keyboard_devices);
+  config_free_string_array(&config->keyboard_names, &config->num_names);
 }
 
 // =============================================================================
 // CONFIGURATION PARSING MODULE
 // =============================================================================
 
-static char *config_trim_key(char *key) {
-  char *key_start = key;
-  while (*key_start == ' ' || *key_start == '\t')
-    key_start++;
-
-  char *key_end = key_start + strlen(key_start) - 1;
-  while (key_end > key_start && (*key_end == ' ' || *key_end == '\t')) {
-    *key_end = '\0';
-    key_end--;
+static char *config_trim_whitespace(char *text) {
+  while (*text == ' ' || *text == '\t') {
+    text++;
   }
 
-  return key_start;
+  if (*text == '\0') {
+    return text;
+  }
+
+  char *end = text + strlen(text) - 1;
+  while (end > text && (*end == ' ' || *end == '\t')) {
+    *end = '\0';
+    end--;
+  }
+
+  return text;
 }
 
 static bongocat_error_t
@@ -238,6 +321,10 @@ config_parse_integer_key(config_t *config, const char *key, const char *value) {
     config->enable_scheduled_sleep = int_value;
   } else if (strcmp(key, "idle_sleep_timeout") == 0) {
     config->idle_sleep_timeout_sec = int_value;
+  } else if (strcmp(key, "hotplug_scan_interval") == 0) {
+    config->hotplug_scan_interval = int_value;
+  } else if (strcmp(key, "disable_fullscreen_hide") == 0) {
+    config->disable_fullscreen_hide = int_value;
   } else {
     return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
@@ -314,17 +401,54 @@ static bongocat_error_t config_parse_time_key(config_t *config, const char *key,
   return BONGOCAT_SUCCESS;
 }
 
+static bongocat_error_t config_parse_monitor_list(config_t *config,
+                                                  const char *value) {
+  config_free_string_array(&config->output_names, &config->num_output_names);
+  BONGOCAT_SAFE_FREE(config->output_name);
+
+  char *monitor_list = strdup(value);
+  if (!monitor_list) {
+    return BONGOCAT_ERROR_MEMORY;
+  }
+
+  char *saveptr = NULL;
+  char *token = strtok_r(monitor_list, ",", &saveptr);
+  while (token) {
+    char *monitor_name = config_trim_whitespace(token);
+    if (monitor_name[0] != '\0') {
+      bongocat_error_t err = config_expand_array(
+          &config->output_names, &config->num_output_names, monitor_name);
+      if (err != BONGOCAT_SUCCESS) {
+        free(monitor_list);
+        return err;
+      }
+    }
+
+    token = strtok_r(NULL, ",", &saveptr);
+  }
+
+  free(monitor_list);
+
+  if (config->num_output_names > 0) {
+    config->output_name = strdup(config->output_names[0]);
+    if (!config->output_name) {
+      return BONGOCAT_ERROR_MEMORY;
+    }
+  } else {
+    bongocat_log_warning(
+        "monitor is empty, falling back to automatic output selection");
+  }
+
+  return BONGOCAT_SUCCESS;
+}
+
 static bongocat_error_t
 config_parse_string_key(config_t *config, const char *key, const char *value) {
   if (strcmp(key, "monitor") == 0) {
-    // Reallocate using temp variable to prevent memory leak on failure
-    char *new_name = realloc(config->output_name, strlen(value) + 1);
-    if (!new_name) {
-      bongocat_log_error("Failed to allocate memory for interface output");
-      return BONGOCAT_ERROR_MEMORY;
-    }
-    config->output_name = new_name;
-    strcpy(config->output_name, value);
+    return config_parse_monitor_list(config, value);
+  } else if (strcmp(key, "keyboard_name") == 0) {
+    return config_expand_array(&config->keyboard_names, &config->num_names,
+                               value);
   } else {
     return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
@@ -365,8 +489,47 @@ config_parse_key_value(config_t *config, const char *key, const char *value) {
 }
 
 static bool config_is_comment_or_empty(const char *line) {
-  return (line[0] == '#' || line[0] == '\0' ||
-          strspn(line, " \t") == strlen(line));
+  const unsigned char *p = (const unsigned char *)line;
+  while (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  return (*p == '#' || *p == '\0');
+}
+
+static bool config_parse_line(char *line, char **out_key, char **out_value) {
+  char *equals = strchr(line, '=');
+  if (!equals) {
+    return false;
+  }
+
+  *equals = '\0';
+  *out_key = config_trim_whitespace(line);
+  *out_value = config_trim_whitespace(equals + 1);
+
+  // Support inline comments: key=value # comment
+  if ((*out_value)[0] == '#') {
+    (*out_value)[0] = '\0';
+  } else {
+    char *space_comment = strstr(*out_value, " #");
+    char *tab_comment = strstr(*out_value, "\t#");
+    char *comment_start = NULL;
+
+    if (space_comment && tab_comment) {
+      comment_start =
+          (space_comment < tab_comment) ? space_comment : tab_comment;
+    } else if (space_comment) {
+      comment_start = space_comment;
+    } else if (tab_comment) {
+      comment_start = tab_comment;
+    }
+
+    if (comment_start) {
+      comment_start[1] = '\0';
+      *out_value = config_trim_whitespace(*out_value);
+    }
+  }
+
+  return (*out_key)[0] != '\0';
 }
 
 static bongocat_error_t config_parse_file(config_t *config,
@@ -375,6 +538,32 @@ static bongocat_error_t config_parse_file(config_t *config,
 
   const char *file_path = config_file_path ? config_file_path : "bongocat.conf";
 
+  // If no explicit path, try XDG paths
+  char resolved[PATH_MAX];
+  bool using_resolved = false;
+
+  if (!config_file_path) {
+    const char *xdg_config = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+
+    if (xdg_config && xdg_config[0] != '\0') {
+      snprintf(resolved, sizeof(resolved), "%s/bongocat/bongocat.conf",
+               xdg_config);
+      if (access(resolved, R_OK) == 0) {
+        file_path = resolved;
+        using_resolved = true;
+      }
+    }
+
+    if (!using_resolved && home && home[0] != '\0') {
+      snprintf(resolved, sizeof(resolved), "%s/.config/bongocat/bongocat.conf",
+               home);
+      if (access(resolved, R_OK) == 0) {
+        file_path = resolved;
+      }
+    }
+  }
+
   FILE *file = fopen(file_path, "r");
   if (!file) {
     bongocat_log_info("Config file '%s' not found, using defaults", file_path);
@@ -382,7 +571,6 @@ static bongocat_error_t config_parse_file(config_t *config,
   }
 
   char line[512];
-  char key[256], value[256];
   int line_number = 0;
   bongocat_error_t result = BONGOCAT_SUCCESS;
 
@@ -401,14 +589,14 @@ static bongocat_error_t config_parse_file(config_t *config,
     }
 
     // Parse key=value pairs
-    if (sscanf(line, " %255[^=] = %255s", key, value) == 2) {
-      char *trimmed_key = config_trim_key(key);
-
+    char *key = NULL;
+    char *value = NULL;
+    if (config_parse_line(line, &key, &value)) {
       bongocat_error_t parse_result =
-          config_parse_key_value(config, trimmed_key, value);
+          config_parse_key_value(config, key, value);
       if (parse_result == BONGOCAT_ERROR_INVALID_PARAM) {
-        bongocat_log_warning("Unknown configuration key '%s' at line %d",
-                             trimmed_key, line_number);
+        bongocat_log_warning("Unknown configuration key '%s' at line %d", key,
+                             line_number);
       } else if (parse_result != BONGOCAT_SUCCESS) {
         result = parse_result;
         break;
@@ -437,12 +625,17 @@ static void config_set_defaults(config_t *config) {
       .screen_width =
           DEFAULT_SCREEN_WIDTH, // Will be updated by Wayland detection
       .output_name = NULL, // Will default to automatic one if kept null
+      .output_names = NULL,
+      .num_output_names = 0,
       .bar_height = DEFAULT_BAR_HEIGHT,
       .asset_paths = {"assets/bongo-cat-both-up.png",
                       "assets/bongo-cat-left-down.png", "assets/bongo-cat-right-down.png",
                       "assets/bongo-cat-both-down.png"},
       .keyboard_devices = NULL,
       .num_keyboard_devices = 0,
+      .hotplug_scan_interval = 300,
+      .keyboard_names = NULL,
+      .num_names = 0,
       .cat_x_offset = 100,
       .cat_y_offset = 10,
       .cat_height = 40,
@@ -457,7 +650,7 @@ static void config_set_defaults(config_t *config) {
       .mirror_y = 0,
       .enable_antialiasing = 1,
       .enable_hand_mapping = 1, // Enabled by default
-      .enable_debug = 1,
+      .enable_debug = 0,
       .layer = LAYER_TOP, // Default to TOP for broader compatibility
       .overlay_position = POSITION_TOP,
       .cat_align = ALIGN_CENTER,
@@ -465,11 +658,12 @@ static void config_set_defaults(config_t *config) {
       .sleep_begin = (config_time_t){0, 0},
       .sleep_end = (config_time_t){0, 0},
       .idle_sleep_timeout_sec = 0,
+      .disable_fullscreen_hide = 0,
   };
 }
 
 static bongocat_error_t config_set_default_devices(config_t *config) {
-  if (config_num_devices == 0) {
+  if (config->num_keyboard_devices == 0) {
     const char *default_device = "/dev/input/event4";
     return config_add_keyboard_device(config, default_device);
   }
@@ -502,6 +696,7 @@ static void config_log_summary(const config_t *config) {
                                            : "bottom");
   bongocat_log_debug("  Layer: %s",
                      config->layer == LAYER_TOP ? "top" : "overlay");
+  bongocat_log_debug("  Monitors: %d configured", config->num_output_names);
 }
 
 // =============================================================================
@@ -510,9 +705,6 @@ static void config_log_summary(const config_t *config) {
 
 bongocat_error_t load_config(config_t *config, const char *config_file_path) {
   BONGOCAT_CHECK_NULL(config, BONGOCAT_ERROR_INVALID_PARAM);
-
-  // Clear existing keyboard devices to prevent accumulation during reloads
-  config_cleanup_devices();
 
   // Initialize with defaults
   config_set_defaults(config);
@@ -523,6 +715,14 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
     bongocat_log_error("Failed to parse configuration file: %s",
                        bongocat_error_string(result));
     return result;
+  }
+
+  // Resolve keyboard_name entries to device paths.
+  // Continue on scan failure so static keyboard_device entries still work.
+  result = config_resolve_devices(config);
+  if (result != BONGOCAT_SUCCESS) {
+    bongocat_log_warning("Failed to resolve keyboard names, continuing: %s",
+                         bongocat_error_string(result));
   }
 
   // Set default keyboard device if none specified
@@ -553,23 +753,60 @@ bongocat_error_t load_config(config_t *config, const char *config_file_path) {
 }
 
 void config_cleanup(void) {
-  config_cleanup_devices();
+  // No global config state to clean up.
 }
 
 void config_cleanup_full(config_t *config) {
-  if (!config)
+  if (!config) {
     return;
+  }
 
-  config_cleanup_devices();
+  config_cleanup_devices(config);
 
   if (config->output_name) {
     free(config->output_name);
     config->output_name = NULL;
   }
+
+  config_free_string_array(&config->output_names, &config->num_output_names);
 }
 
 int get_screen_width(void) {
   // This function is now only used for initial config loading
   // The actual screen width detection happens in wayland_init
   return DEFAULT_SCREEN_WIDTH;
+}
+
+char *config_resolve_path(const char *explicit_path) {
+  if (explicit_path) {
+    return strdup(explicit_path);
+  }
+
+  char path[PATH_MAX];
+
+  // 1. $XDG_CONFIG_HOME/bongocat/bongocat.conf
+  const char *xdg_config = getenv("XDG_CONFIG_HOME");
+  if (xdg_config && xdg_config[0] != '\0') {
+    snprintf(path, sizeof(path), "%s/bongocat/bongocat.conf", xdg_config);
+    if (access(path, R_OK) == 0) {
+      return strdup(path);
+    }
+  }
+
+  // 2. ~/.config/bongocat/bongocat.conf
+  const char *home = getenv("HOME");
+  if (home && home[0] != '\0') {
+    snprintf(path, sizeof(path), "%s/.config/bongocat/bongocat.conf", home);
+    if (access(path, R_OK) == 0) {
+      return strdup(path);
+    }
+  }
+
+  // 3. ./bongocat.conf (CWD)
+  if (access("bongocat.conf", R_OK) == 0) {
+    return strdup("bongocat.conf");
+  }
+
+  // No config found — will use defaults
+  return NULL;
 }

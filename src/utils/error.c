@@ -25,34 +25,34 @@ static void log_timestamp(FILE *stream) {
 
 void bongocat_log_error(const char *format, ...) {
   va_list args;
-  log_timestamp(stderr);
-  fprintf(stderr, "ERROR: ");
+  char message[1024];
   va_start(args, format);
-  vfprintf(stderr, format, args);
+  vsnprintf(message, sizeof(message), format, args);
   va_end(args);
-  fprintf(stderr, "\n");
+  log_timestamp(stderr);
+  fprintf(stderr, "ERROR: %s\n", message);
   fflush(stderr);
 }
 
 void bongocat_log_warning(const char *format, ...) {
   va_list args;
-  log_timestamp(stderr);
-  fprintf(stderr, "WARNING: ");
+  char message[1024];
   va_start(args, format);
-  vfprintf(stderr, format, args);
+  vsnprintf(message, sizeof(message), format, args);
   va_end(args);
-  fprintf(stderr, "\n");
+  log_timestamp(stderr);
+  fprintf(stderr, "WARNING: %s\n", message);
   fflush(stderr);
 }
 
 void bongocat_log_info(const char *format, ...) {
   va_list args;
-  log_timestamp(stdout);
-  fprintf(stdout, "INFO: ");
+  char message[1024];
   va_start(args, format);
-  vfprintf(stdout, format, args);
+  vsnprintf(message, sizeof(message), format, args);
   va_end(args);
-  fprintf(stdout, "\n");
+  log_timestamp(stdout);
+  fprintf(stdout, "INFO: %s\n", message);
   fflush(stdout);
 }
 
@@ -61,12 +61,12 @@ void bongocat_log_debug(const char *format, ...) {
     return;
 
   va_list args;
-  log_timestamp(stdout);
-  fprintf(stdout, "DEBUG: ");
+  char message[1024];
   va_start(args, format);
-  vfprintf(stdout, format, args);
+  vsnprintf(message, sizeof(message), format, args);
   va_end(args);
-  fprintf(stdout, "\n");
+  log_timestamp(stdout);
+  fprintf(stdout, "DEBUG: %s\n", message);
   fflush(stdout);
 }
 

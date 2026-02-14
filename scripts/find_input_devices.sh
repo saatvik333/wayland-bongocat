@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# Bongo Cat - Input Device Discovery Tool v1.3.2
+# Bongo Cat - Input Device Discovery Tool v1.4.0
 # Interactive keyboard detection by listening for actual key events
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
+trap 'exit 0' PIPE
 
-VERSION="1.3.2"
+VERSION="1.4.0"
 SCRIPT_NAME="bongocat-find-devices"
 
 # Colors
@@ -210,9 +211,16 @@ interactive_detect() {
   header "Add to Config"
   echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
   echo
+  echo -e "  ${DIM}# Option 1: By device path (may change on reboot)${NC}"
   for entry in "${detected_keyboards[@]}"; do
     IFS='|' read -r event name <<< "$entry"
     echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
+  done
+  echo
+  echo -e "  ${DIM}# Option 2: By device name (persistent, recommended)${NC}"
+  for entry in "${detected_keyboards[@]}"; do
+    IFS='|' read -r event name <<< "$entry"
+    echo -e "  ${CYAN}keyboard_name=$name${NC}"
   done
   
   echo
@@ -257,9 +265,6 @@ quick_detect() {
   local keyboards=()
   
   while IFS='|' read -r event name; do
-    local status="ok"
-    check_device "/dev/input/$event" || status="denied"
-    
     if is_likely_keyboard "$name"; then
       echo -e "  ${GREEN}✓${NC} ${GREEN}[KEYBOARD]${NC} ${BOLD}$name${NC}"
       keyboards+=("$event|$name")
@@ -280,14 +285,44 @@ quick_detect() {
   header "Add to Config"
   echo -e "  ${BOLD}~/.config/bongocat/bongocat.conf:${NC}"
   echo
+  echo -e "  ${DIM}# Option 1: By device path (may change on reboot)${NC}"
   for entry in "${keyboards[@]}"; do
     IFS='|' read -r event name <<< "$entry"
     echo -e "  ${CYAN}keyboard_device=/dev/input/$event${NC}  ${BOLD}# $name${NC}"
+  done
+  echo
+  echo -e "  ${DIM}# Option 2: By device name (persistent, recommended)${NC}"
+  for entry in "${keyboards[@]}"; do
+    IFS='|' read -r event name <<< "$entry"
+    echo -e "  ${CYAN}keyboard_name=$name${NC}"
   done
   
   echo
   echo -e "  ${DIM}Not accurate? Use: $SCRIPT_NAME --interactive${NC}"
   echo
+}
+
+generate_config_lines() {
+  local devices
+  devices=$(get_kbd_devices) || { error "Cannot read devices"; return 1; }
+
+  if [[ -z "$devices" ]]; then
+    error "No input devices found"
+    return 1
+  fi
+
+  local generated=0
+  while IFS='|' read -r event name; do
+    if is_likely_keyboard "$name" && check_device "/dev/input/$event"; then
+      printf 'keyboard_device=/dev/input/%s\n' "$event"
+      generated=1
+    fi
+  done <<< "$devices"
+
+  if [[ "$generated" -eq 0 ]]; then
+    error "No readable keyboard devices found"
+    return 1
+  fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,12 +357,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -i|--interactive) mode="interactive"; shift ;;
-      -t|--timeout) timeout="$2"; shift 2 ;;
+      -t|--timeout)
+        if [[ $# -lt 2 ]]; then
+          error "--timeout requires a value in seconds"
+          show_usage
+          exit 1
+        fi
+        if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -le 0 ]]; then
+          error "Invalid timeout '$2' (must be a positive integer)"
+          show_usage
+          exit 1
+        fi
+        timeout="$2"
+        shift 2
+        ;;
       -g|--generate) generate=true; shift ;;
       -h|--help) show_usage; exit 0 ;;
       *) error "Unknown option: $1"; show_usage; exit 1 ;;
     esac
   done
+
+  if [[ "$generate" == "true" ]]; then
+    if [[ "$mode" == "interactive" ]]; then
+      warn "--generate ignores --interactive and uses quick detection output"
+    fi
+    generate_config_lines
+    return
+  fi
   
   case "$mode" in
     interactive) interactive_detect "$timeout" ;;

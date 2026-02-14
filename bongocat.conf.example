@@ -35,7 +35,8 @@ overlay_opacity=0
 # Position: top, bottom (Attention!: Requires restart of bongocat)
 overlay_position=bottom
 
-# Layer: top (above windows), overlay (always visible)
+# Layer: top (above windows), overlay (always visible, fullscreen auto-hide detection disabled)
+# (Attention!: Requires restart of bongocat)
 layer=top
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -52,7 +53,8 @@ keyboard_device=/dev/input/event4
 
 # Leave commented to auto-detect
 # Find monitor names with: wlr-randr or hyprctl monitors
-# monitor=HDMI-A-1
+# monitor=eDP-1
+# monitor=eDP-1,HDMI-A-1
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ ANIMATION                                                                   │
@@ -80,5 +82,8 @@ sleep_end=06:00
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ DEBUG                                                                       │
 # └─────────────────────────────────────────────────────────────────────────────┘
-
+#
+# WARNING: Enabling debug mode will log keystrokes!!
+#
+# Enable debug logging (0=disabled, 1=enabled)
 enable_debug=0

@@ -19,6 +19,7 @@ result
 *.swo
 *~
 .idea/
+.agent/
 
 # Temporary files
 *.tmp
