@@ -1,7 +1,7 @@
 # Bongo Cat Wayland Overlay
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/saatvik333/wayland-bongocat/releases)
 
 A cute Wayland overlay that shows an animated bongo cat reacting to your keyboard input.
 
@@ -46,6 +46,8 @@ bongocat-find-devices  # or ./scripts/find_input_devices.sh
 
 ```bash
 bongocat --watch-config
+# Optional: force one monitor from CLI
+bongocat --watch-config --monitor eDP-1
 ```
 
 ## Configuration
@@ -74,8 +76,8 @@ overlay_position=bottom
 # Input device (run bongocat-find-devices to find yours)
 keyboard_device=/dev/input/event4
 
-# Multi-monitor (optional - auto-detects by default)
-# monitor=eDP-1
+# Multi-monitor (comma-separated monitor names)
+# monitor=eDP-1,HDMI-A-1
 
 # Sleep mode (optional)
 # idle_sleep_timeout=300
@@ -101,7 +103,7 @@ keyboard_device=/dev/input/event4
 | `overlay_position`    | top/bottom        | bottom  | Screen position      |
 | `layer`               | top/overlay       | top     | Layer type           |
 | `keyboard_device`     | path              | —       | Device to monitor    |
-| `monitor`             | name              | auto    | Target monitor       |
+| `monitor`             | comma list        | auto    | Monitors to render on |
 | `fps`                 | 1-120             | 60      | Frame rate           |
 | `idle_sleep_timeout`  | seconds           | 0       | Sleep after idle     |
 | `mirror_x`            | 0/1               | 0       | Flip horizontal      |
@@ -114,12 +116,16 @@ keyboard_device=/dev/input/event4
 ```bash
 bongocat [OPTIONS]
 
-  -c, --config FILE    Config file path
+  -c, --config FILE    Config file path (default: auto-detect)
+  -m, --monitor NAME   Force specific monitor output
   -w, --watch-config   Auto-reload on config change
   -t, --toggle         Start/stop toggle
   -h, --help           Help
   -v, --version        Version
 ```
+
+> [!CAUTION]
+> **Privacy Notice**: `enable_debug=1` logs all keystrokes to stdout/stderr. Ensure this is disabled (default: 0) for normal usage.
 
 ## Troubleshooting
 
@@ -145,7 +151,7 @@ sudo usermod -a -G input $USER
 <details>
 <summary>Not showing on correct monitor</summary>
 
-Add `monitor=YOUR_MONITOR` to config. Find monitor names with `wlr-randr` or `hyprctl monitors`.
+Set `monitor=YOUR_MONITOR` (single) or `monitor=MON1,MON2` (multi) in config. Find names with `wlr-randr` or `hyprctl monitors`.
 
 </details>
 

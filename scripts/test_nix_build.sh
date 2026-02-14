@@ -1,5 +1,6 @@
+#!/usr/bin/env bash
 # Test script for Nix builds
-set -e
+set -euo pipefail
 
 echo "🧪 Testing Nix builds for wayland-bongocat"
 echo "=========================================="
@@ -36,4 +37,3 @@ fi
 echo ""
 echo "🎉 All available Nix builds completed successfully!"
 echo ""
-

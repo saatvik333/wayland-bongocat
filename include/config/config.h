@@ -39,6 +39,8 @@ typedef struct {
   // Display settings
   int screen_width;
   char *output_name;
+  char **output_names;
+  int num_output_names;
   int bar_height;
   int overlay_height;
   int overlay_opacity;
@@ -66,12 +68,20 @@ typedef struct {
   // Input devices
   char **keyboard_devices;
   int num_keyboard_devices;
+  int hotplug_scan_interval;
+
+  // Device matching by name (for hotplug/auto-detection)
+  char **keyboard_names;
+  int num_names;
 
   // Sleep schedule
   int enable_scheduled_sleep;
   config_time_t sleep_begin;
   config_time_t sleep_end;
   int idle_sleep_timeout_sec;
+
+  // Fullscreen behavior
+  int disable_fullscreen_hide;
 
   // Debug
   int enable_debug;
@@ -87,6 +97,11 @@ BONGOCAT_NODISCARD bongocat_error_t load_config(config_t *config,
 
 // Get screen width - returns 0 on failure (should be checked)
 BONGOCAT_NODISCARD int get_screen_width(void);
+
+// Resolve config file path with XDG fallback
+// Returns a static/allocated path, or NULL if none found.
+// Caller must free the returned string.
+char *config_resolve_path(const char *explicit_path);
 
 // Cleanup functions
 void config_cleanup(void);

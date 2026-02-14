@@ -4,7 +4,7 @@
 - **`default.nix`** - Main package derivation
 - **`nixos-module.nix`** - NixOS system module
 - **`shell.nix`** - Development environment
-- **`scripts/test-nix-build.sh`** - Test script for validating builds
+- **`scripts/test_nix_build.sh`** - Test script for validating builds
 
 ## Quick Usage
 Run these commands from the root directory of the project where `flake.nix` is.
@@ -19,7 +19,7 @@ nix build
 nix run ./#default
 
 # Test all Nix builds
-./scripts/test-nix-build.sh
+./scripts/test_nix_build.sh
 ```
 
 See [NIXOS.md](NIXOS.md) for further information.

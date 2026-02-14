@@ -37,7 +37,7 @@ If you use flakes for your NixOS configuration (Which you should):
         {
           programs.wayland-bongocat = {
             enable = true;
-            autoStart = true;
+            autostart = true;
           };
         }
       ];
@@ -152,8 +152,8 @@ journalctl --user -u wayland-bongocat -f
 ### Permission Issues
 If you get permission errors accessing input devices:
 1. **Check if you're in the input group:** Run `groups | grep input`
-2. **Add yourself to the `inputs` group:** Add to your configuration `users.users.<your username>.extraGroups = ["input"];`
-3. **Log out and log back in after you add yourself to the `inputs` group**
+2. **Add yourself to the `input` group:** Add to your configuration `users.users.<your username>.extraGroups = ["input"];`
+3. **Log out and log back in after you add yourself to the `input` group**
 
 ### Service Issues
 If the SystemD service fails to start:
@@ -165,7 +165,7 @@ If the SystemD service fails to start:
 If keyboard input isn't detected:
 1. **Find your devices:** `bongocat-find-devices`
 2. **Test device events:** `sudo evtest  # Select your device and type`
-3. **Update yourconfiguration:**
+3. **Update your configuration:**
     If using the NixOS module -
     ```nix
     programs.wayland-bongocat.inputDevices = [

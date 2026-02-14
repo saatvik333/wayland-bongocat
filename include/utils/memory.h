@@ -11,28 +11,35 @@
 // =============================================================================
 
 // Nodiscard attribute for functions that return values that must be used
-#if __STDC_VERSION__ >= 202311L
-#  define BONGOCAT_NODISCARD [[nodiscard]]
-#else
-#  define BONGOCAT_NODISCARD __attribute__((warn_unused_result))
+#ifndef BONGOCAT_NODISCARD
+#  if __STDC_VERSION__ >= 202311L
+#    define BONGOCAT_NODISCARD [[nodiscard]]
+#  else
+#    define BONGOCAT_NODISCARD __attribute__((warn_unused_result))
+#  endif
 #endif
 
 // Null pointer (C23 nullptr or fallback)
-#if __STDC_VERSION__ >= 202311L
-#  define BONGOCAT_NULLPTR nullptr
-#else
-#  define BONGOCAT_NULLPTR NULL
+#ifndef BONGOCAT_NULLPTR
+#  if __STDC_VERSION__ >= 202311L
+#    define BONGOCAT_NULLPTR nullptr
+#  else
+#    define BONGOCAT_NULLPTR NULL
+#  endif
 #endif
 
 // =============================================================================
 // RAII CLEANUP MACROS
 // =============================================================================
 
+// Forward declaration for cleanup function
+void bongocat_free(void *ptr);
+
 // Cleanup function for auto-freeing malloc'd memory
 static inline void bongocat_auto_free_impl(void *ptr) {
   void **p = (void **)ptr;
   if (*p) {
-    free(*p);
+    bongocat_free(*p);
     *p = BONGOCAT_NULLPTR;
   }
 }
@@ -75,7 +82,6 @@ typedef struct memory_pool {
 BONGOCAT_NODISCARD void *bongocat_malloc(size_t size);
 BONGOCAT_NODISCARD void *bongocat_calloc(size_t count, size_t size);
 BONGOCAT_NODISCARD void *bongocat_realloc(void *ptr, size_t size);
-void bongocat_free(void *ptr);
 
 // =============================================================================
 // MEMORY POOL FUNCTIONS

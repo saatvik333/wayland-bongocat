@@ -1,10 +1,25 @@
-# Script to convert PNG assets to C header files for embedding
+#!/usr/bin/env bash
+# Script to convert PNG assets to C header files for embedding.
 # NOTE: This script should be run manually when assets change.
 # The generated files are committed to git and not generated during build.
+
+set -euo pipefail
 
 ASSETS_DIR="assets"
 OUTPUT_DIR="include/graphics"
 OUTPUT_FILE="$OUTPUT_DIR/embedded_assets.h"
+OUTPUT_C_FILE="src/graphics/embedded_assets.c"
+
+mkdir -p "$OUTPUT_DIR" "src/graphics"
+
+file_size_bytes() {
+    local file="$1"
+    if stat -c%s "$file" >/dev/null 2>&1; then
+        stat -c%s "$file"
+    else
+        stat -f%z "$file"
+    fi
+}
 
 echo "Generating embedded assets header..."
 
@@ -32,8 +47,6 @@ extern const size_t bongo_cat_both_down_png_size;
 EOF
 
 # Create source file with embedded data
-OUTPUT_C_FILE="src/graphics/embedded_assets.c"
-
 cat > "$OUTPUT_C_FILE" << 'EOF'
 #include "graphics/embedded_assets.h"
 
@@ -52,7 +65,7 @@ for asset in "bongo-cat-both-up.png" "bongo-cat-left-down.png" "bongo-cat-right-
         echo "" >> "$OUTPUT_C_FILE"
         
         # Add size variable
-        size=$(stat -c%s "$ASSETS_DIR/$asset")
+        size=$(file_size_bytes "$ASSETS_DIR/$asset")
         echo "const size_t ${c_name}_size = $size;" >> "$OUTPUT_C_FILE"
         echo "" >> "$OUTPUT_C_FILE"
     else

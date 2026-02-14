@@ -1,11 +1,6 @@
 #ifndef BONGOCAT_H
 #define BONGOCAT_H
 
-// POSIX feature test macro - must be before includes
-#define _POSIX_C_SOURCE 200809L
-
-#include "../lib/stb_image.h"
-
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
@@ -27,7 +22,7 @@
 // VERSION
 // =============================================================================
 
-#define BONGOCAT_VERSION "1.3.2"
+#define BONGOCAT_VERSION "1.4.0"
 
 // =============================================================================
 // COMPILE-TIME CONSTANTS
@@ -63,7 +58,7 @@ typedef struct {
   int inotify_fd;
   int watch_fd;
   pthread_t watcher_thread;
-  bool watching;
+  _Atomic bool watching;
   char *config_path;
   void (*reload_callback)(const char *config_path);
 } ConfigWatcher;

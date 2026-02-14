@@ -109,17 +109,14 @@ release:
 
 install: $(TARGET)
 	install -D $(TARGET) $(DESTDIR)/usr/local/bin/bongocat
-	install -D bongocat.conf $(DESTDIR)/usr/local/share/bongocat/bongocat.conf.example
+	install -D bongocat.conf.example $(DESTDIR)/usr/local/share/bongocat/bongocat.conf.example
 	install -D scripts/find_input_devices.sh $(DESTDIR)/usr/local/bin/bongocat-find-devices
+	install -D man/bongocat.1 $(DESTDIR)/usr/local/share/man/man1/bongocat.1
 
 uninstall:
 	rm -f $(DESTDIR)/usr/local/bin/bongocat
 	rm -f $(DESTDIR)/usr/local/bin/bongocat-find-devices
 	rm -rf $(DESTDIR)/usr/local/share/bongocat
-
-# Static analysis
-analyze:
-	clang-tidy $(SOURCES) -- $(CFLAGS)
 
 # Memory check (requires valgrind)
 memcheck: debug

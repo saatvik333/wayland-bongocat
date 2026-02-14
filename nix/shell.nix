@@ -41,7 +41,7 @@ pkgs.mkShellNoCC {
     echo ""
     echo "Helper scripts:"
     echo "  ./scripts/find_input_devices.sh - Find input devices"
-    echo "  ./scripts/test-nix-build.sh     - Test Nix flake and package"
+    echo "  ./scripts/test_nix_build.sh     - Test Nix flake and package"
     echo "  ./scripts/test_toggle.sh        - Test Bongocat toggle functionality (Install Bongocat first)"
   '';
 }

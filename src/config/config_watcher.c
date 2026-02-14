@@ -9,14 +9,41 @@
 #include <time.h>
 #include <unistd.h>
 
+static int config_watcher_add_watch(ConfigWatcher *watcher, bool log_errors) {
+  if (!watcher || watcher->inotify_fd < 0 || !watcher->config_path) {
+    return -1;
+  }
+
+  int fd = inotify_add_watch(watcher->inotify_fd, watcher->config_path,
+                             IN_CLOSE_WRITE | IN_MODIFY | IN_MOVED_TO |
+                                 IN_ATTRIB | IN_MOVE_SELF | IN_DELETE_SELF);
+  if (fd < 0 && log_errors) {
+    bongocat_log_error("Failed to add inotify watch for %s: %s",
+                       watcher->config_path, strerror(errno));
+  }
+
+  watcher->watch_fd = fd;
+  return fd;
+}
+
+static long long config_watcher_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
 static void *config_watcher_thread(void *arg) {
   ConfigWatcher *watcher = (ConfigWatcher *)arg;
   char buffer[INOTIFY_BUF_LEN];
-  time_t last_reload_time = 0;
+  long long last_reload_ms = 0;
 
   bongocat_log_info("Config watcher started for: %s", watcher->config_path);
 
   while (watcher->watching) {
+    if (watcher->inotify_fd < 0) {
+      break;
+    }
+
     fd_set read_fds;
     struct timeval timeout;
 
@@ -46,28 +73,58 @@ static void *config_watcher_thread(void *arg) {
       ssize_t length = read(watcher->inotify_fd, buffer, INOTIFY_BUF_LEN);
 
       if (length < 0) {
+        if (errno == EINTR || errno == EAGAIN) {
+          continue;
+        }
         bongocat_log_error("Config watcher read failed: %s", strerror(errno));
         continue;
       }
 
       bool should_reload = false;
+      bool watch_invalidated = false;
       ssize_t i = 0;
       while (i < length) {
         struct inotify_event *event = (struct inotify_event *)&buffer[i];
 
-        if (event->mask & (IN_MODIFY | IN_MOVED_TO)) {
+        if (event->wd == watcher->watch_fd &&
+            (event->mask &
+             (IN_CLOSE_WRITE | IN_MODIFY | IN_MOVED_TO | IN_ATTRIB))) {
           should_reload = true;
+        }
+
+        if (event->wd == watcher->watch_fd &&
+            (event->mask & (IN_MOVE_SELF | IN_DELETE_SELF | IN_IGNORED))) {
+          watch_invalidated = true;
         }
 
         i += INOTIFY_EVENT_SIZE + event->len;
       }
 
-      // Debounce: only reload if at least 200ms have passed since last reload
+      // File can be replaced atomically; re-register watch on the new inode.
+      if (watch_invalidated && watcher->watching) {
+        watcher->watch_fd = -1;
+        bool rewatch_ok = false;
+        for (int retry = 0; retry < 20 && watcher->watching; retry++) {
+          if (config_watcher_add_watch(watcher, false) >= 0) {
+            rewatch_ok = true;
+            bongocat_log_debug("Re-armed config file watcher");
+            break;
+          }
+          usleep(100000);  // 100ms retry interval
+        }
+
+        if (!rewatch_ok) {
+          bongocat_log_warning(
+              "Config watcher lost file watch; hot-reload may stop working");
+        }
+      }
+
+      // Debounce reloads (300ms)
       if (should_reload) {
-        time_t current_time = time(NULL);
-        if (current_time - last_reload_time >= 1) {  // 1 second debounce
+        long long current_ms = config_watcher_now_ms();
+        if (current_ms - last_reload_ms >= 300) {
           bongocat_log_info("Config file changed, reloading...");
-          last_reload_time = current_time;
+          last_reload_ms = current_ms;
 
           // Small delay to ensure file write is complete
           usleep(100000);  // 100ms
@@ -91,6 +148,8 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path,
   }
 
   memset(watcher, 0, sizeof(ConfigWatcher));
+  watcher->inotify_fd = -1;
+  watcher->watch_fd = -1;
 
   // Initialize inotify
   watcher->inotify_fd = inotify_init1(IN_NONBLOCK);
@@ -103,17 +162,15 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path,
   watcher->config_path = strdup(config_path);
   if (!watcher->config_path) {
     close(watcher->inotify_fd);
+    watcher->inotify_fd = -1;
     return -1;
   }
 
-  // Add watch for the config file
-  watcher->watch_fd = inotify_add_watch(watcher->inotify_fd, config_path,
-                                        IN_MODIFY | IN_MOVED_TO | IN_CREATE);
-  if (watcher->watch_fd < 0) {
-    bongocat_log_error("Failed to add inotify watch for %s: %s", config_path,
-                       strerror(errno));
+  if (config_watcher_add_watch(watcher, true) < 0) {
     free(watcher->config_path);
+    watcher->config_path = NULL;
     close(watcher->inotify_fd);
+    watcher->inotify_fd = -1;
     return -1;
   }
 
@@ -124,7 +181,8 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path,
 }
 
 void config_watcher_start(ConfigWatcher *watcher) {
-  if (!watcher || watcher->watching) {
+  if (!watcher || watcher->watching || watcher->inotify_fd < 0 ||
+      watcher->watch_fd < 0) {
     return;
   }
 
@@ -162,12 +220,14 @@ void config_watcher_cleanup(ConfigWatcher *watcher) {
 
   config_watcher_stop(watcher);
 
-  if (watcher->watch_fd >= 0) {
+  if (watcher->inotify_fd >= 0 && watcher->watch_fd >= 0) {
     inotify_rm_watch(watcher->inotify_fd, watcher->watch_fd);
+    watcher->watch_fd = -1;
   }
 
   if (watcher->inotify_fd >= 0) {
     close(watcher->inotify_fd);
+    watcher->inotify_fd = -1;
   }
 
   if (watcher->config_path) {
@@ -176,4 +236,6 @@ void config_watcher_cleanup(ConfigWatcher *watcher) {
   }
 
   memset(watcher, 0, sizeof(ConfigWatcher));
+  watcher->inotify_fd = -1;
+  watcher->watch_fd = -1;
 }

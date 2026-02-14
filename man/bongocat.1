@@ -1,0 +1,59 @@
+.TH BONGOCAT 1 "February 2026" "v1.4.0" "User Commands"
+.SH NAME
+bongocat \- Bongo Cat Wayland Overlay
+.SH SYNOPSIS
+.B bongocat
+[OPTIONS]
+.SH DESCRIPTION
+.B bongocat
+is a lightweight, highly customizable Bongo Cat overlay for Wayland compositors. It displays an animated cat that reacts to your keyboard input in real-time. Features include multi-monitor support, hot-reloadable configuration, and fullscreen auto-hiding.
+
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " \fIFILE\fR"
+Specify the configuration file path. If not provided, \fBbongocat\fR searches for \fBbongocat.conf\fR in:
+.RS
+.IP 1. 3
+\fIXDG_CONFIG_HOME\fR/bongocat/bongocat.conf
+.IP 2. 3
+$HOME/.config/bongocat/bongocat.conf
+.IP 3. 3
+./bongocat.conf
+.RE
+.TP
+.BR \-m ", " \-\-monitor " \fINAME\fR"
+Force the overlay to display on a specific monitor output (e.g., HDMI-A-1). Overrides the \fBmonitor\fR setting in the configuration file.
+.TP
+.BR \-w ", " \-\-watch-config
+Watch the configuration file for changes and automatically reload without restarting (uses inotify).
+.TP
+.BR \-t ", " \-\-toggle
+Send a signal (SIGUSR1) to a running bongocat instance to toggle its visibility on/off. If no instance is running, this starts a new one.
+.TP
+.BR \-h ", " \-\-help
+Display this help message and exit.
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+
+.SH CONFIGURATION
+The default configuration file location is \fB~/.config/bongocat/bongocat.conf\fR.
+.PP
+.B Key Configuration Options:
+.TP
+.B monitor
+Set to one or more output names (e.g., \fBeDP-1\fR or \fBeDP-1,HDMI-A-1\fR). A comma-separated list launches one instance per listed monitor.
+.TP
+.B keyboard_device
+Path to the input device (e.g., \fB/dev/input/event4\fR). Use \fBbongocat-find-devices\fR to locate yours.
+.TP
+.B enable_debug
+Set to \fB1\fR to enable debug logging. \fBWARNING: This logs all keystrokes to stdout/stderr. Keep disabled (0) for privacy.\fR
+
+.SH PRIVACY NOTICE
+By default, debug logging is disabled (\fBenable_debug=0\fR). Taking care not to enable this in production environments is crucial as it logs raw input events.
+
+.SH AUTHOR
+Maintained by Saatvik Sharma.
+.SH SEE ALSO
+.BR bongocat-find-devices (1)
