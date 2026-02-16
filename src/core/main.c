@@ -134,10 +134,11 @@ static int process_handle_toggle(void) {
   if (running_pid > 0) {
     // Process is running, kill it
     bongocat_log_info("Stopping bongocat (PID: %d)", running_pid);
-    if (kill(running_pid, SIGTERM) == 0) {
+    // Negate running pid to allow targetting process group (multiple monitors)
+    if (kill(-running_pid, SIGTERM) == 0) {
       // Wait a bit for graceful shutdown
       for (int i = 0; i < 50; i++) {  // Wait up to 5 seconds
-        if (kill(running_pid, 0) != 0) {
+        if (kill(-running_pid, 0) != 0) {
           bongocat_log_info("Bongocat stopped successfully");
           return 0;
         }
@@ -146,7 +147,11 @@ static int process_handle_toggle(void) {
 
       // Force kill if still running
       bongocat_log_warning("Force killing bongocat");
-      kill(running_pid, SIGKILL);
+      if (kill(running_pid, SIGKILL) != 0) {
+        bongocat_log_error("Failed to force kill bongocat: %s",
+                           strerror(errno));
+        return 1;
+      }
       bongocat_log_info("Bongocat force stopped");
     } else {
       bongocat_log_error("Failed to stop bongocat: %s", strerror(errno));
