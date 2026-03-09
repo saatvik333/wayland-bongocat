@@ -6,10 +6,12 @@
   ...
 }:
 with lib; let
-  inherit (config._bongocat) cfg configFile;
+  cfg = config.programs.wayland-bongocat;
 in {
   imports = [./common.nix];
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (let
+    configFile = config._bongocat.configFile;
+  in {
     environment.systemPackages = [
       cfg.package
 
@@ -35,5 +37,5 @@ in {
         RestartSec = "5s";
       };
     };
-  };
+  });
 }
