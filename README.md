@@ -23,6 +23,8 @@ A cute Wayland overlay that shows an animated bongo cat reacting to your keyboar
 ```bash
 # Arch Linux
 yay -S bongocat
+# Or, if your arch distro uses paru (e.g CachyOS)
+paru -S bongocat
 
 # Other distros - build from source
 git clone https://github.com/saatvik333/wayland-bongocat.git
@@ -32,7 +34,7 @@ cd wayland-bongocat && make
 ### Setup Permissions
 
 ```bash
-sudo usermod -a -G input $USER
+sudo usermod -aG input $USER
 # Log out and back in
 ```
 
