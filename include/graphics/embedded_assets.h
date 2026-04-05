@@ -3,17 +3,20 @@
 
 #include <stddef.h>
 
-// Embedded asset data
-extern const unsigned char bongo_cat_both_up_png[];
-extern const size_t bongo_cat_both_up_png_size;
+// Embedded SVG asset data
+extern const unsigned char bongo_both_up_svg[];
+extern const size_t bongo_both_up_svg_size;
 
-extern const unsigned char bongo_cat_left_down_png[];
-extern const size_t bongo_cat_left_down_png_size;
+extern const unsigned char bongo_left_down_svg[];
+extern const size_t bongo_left_down_svg_size;
 
-extern const unsigned char bongo_cat_right_down_png[];
-extern const size_t bongo_cat_right_down_png_size;
+extern const unsigned char bongo_right_down_svg[];
+extern const size_t bongo_right_down_svg_size;
 
-extern const unsigned char bongo_cat_both_down_png[];
-extern const size_t bongo_cat_both_down_png_size;
+extern const unsigned char bongo_both_down_svg[];
+extern const size_t bongo_both_down_svg_size;
 
-#endif  // EMBEDDED_ASSETS_H
+extern const unsigned char bongo_sleeping_svg[];
+extern const size_t bongo_sleeping_svg_size;
+
+#endif // EMBEDDED_ASSETS_H

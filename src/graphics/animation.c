@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 199309L
-#define STB_IMAGE_IMPLEMENTATION
+#define NANOSVG_IMPLEMENTATION
+#define NANOSVGRAST_IMPLEMENTATION
 #include "graphics/animation.h"
 
 #include "graphics/embedded_assets.h"
@@ -11,8 +12,12 @@
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wshadow"
 #  pragma GCC diagnostic ignored "-Wdouble-promotion"
+#  pragma GCC diagnostic ignored "-Wmissing-prototypes"
+#  pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#  pragma GCC diagnostic ignored "-Wold-style-definition"
 #endif
-#include <stb_image.h>
+#include <nanosvg.h>
+#include <nanosvgrast.h>
 #if defined(__GNUC__)
 #  pragma GCC diagnostic pop
 #endif
@@ -24,12 +29,13 @@
 // GLOBAL STATE AND CONFIGURATION
 // =============================================================================
 
-// Animation frame data
-unsigned char *anim_imgs[NUM_FRAMES];
-int anim_width[NUM_FRAMES], anim_height[NUM_FRAMES];
 int anim_index = 0;
 pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
 cached_frame_t anim_cached_frames[NUM_FRAMES] = {0};
+
+// SVG parsed data and rasterizer
+static NSVGimage *anim_svgs[NUM_FRAMES];
+static NSVGrasterizer *anim_rasterizer;
 
 // Animation system state
 static config_t *current_config;
@@ -37,249 +43,6 @@ static pthread_t anim_thread;
 static atomic_bool animation_running = false;
 static bool animation_thread_started = false;
 static bool animation_initialized = false;
-
-// =============================================================================
-// DRAWING OPERATIONS MODULE
-// =============================================================================
-
-static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src,
-                               int dest_idx, int src_idx) {
-  dest[dest_idx + 0] = src[src_idx + 2];  // B
-  dest[dest_idx + 1] = src[src_idx + 1];  // G
-  dest[dest_idx + 2] = src[src_idx + 0];  // R
-  dest[dest_idx + 3] = src[src_idx + 3];  // A
-}
-
-// Alpha blend source pixel onto destination - enables smooth anti-aliased edges
-static void drawing_blend_pixel(uint8_t *dest, int dest_idx, uint8_t src_r,
-                                uint8_t src_g, uint8_t src_b, uint8_t src_a) {
-  // Skip fully transparent pixels
-  if (src_a == 0) {
-    return;
-  }
-
-  // Fully opaque - direct copy (fast path)
-  if (src_a == 255) {
-    dest[dest_idx + 0] = src_b;
-    dest[dest_idx + 1] = src_g;
-    dest[dest_idx + 2] = src_r;
-    dest[dest_idx + 3] = 255;
-    return;
-  }
-
-  // Alpha blend: out = src * alpha + dest * (1 - alpha)
-  float alpha = src_a / 255.0f;
-  float inv_alpha = 1.0f - alpha;
-
-  uint8_t dest_b = dest[dest_idx + 0];
-  uint8_t dest_g = dest[dest_idx + 1];
-  uint8_t dest_r = dest[dest_idx + 2];
-
-  dest[dest_idx + 0] = (uint8_t)(src_b * alpha + dest_b * inv_alpha + 0.5f);
-  dest[dest_idx + 1] = (uint8_t)(src_g * alpha + dest_g * inv_alpha + 0.5f);
-  dest[dest_idx + 2] = (uint8_t)(src_r * alpha + dest_r * inv_alpha + 0.5f);
-  dest[dest_idx + 3] = 255;
-}
-
-// Box filter for high-quality downscaling - averages all source pixels that
-// map to a destination pixel. Produces much smoother results than bilinear
-// when shrinking images significantly.
-static void drawing_get_box_filtered_pixel(const unsigned char *src, int src_w,
-                                           int src_h, int dest_x, int dest_y,
-                                           int target_w, int target_h,
-                                           int mirror_x, int mirror_y,
-                                           uint8_t *r, uint8_t *g, uint8_t *b,
-                                           uint8_t *a) {
-  // Calculate the source region that maps to this destination pixel
-  float src_x_start = ((float)dest_x * src_w) / target_w;
-  float src_x_end = ((float)(dest_x + 1) * src_w) / target_w;
-  float src_y_start = ((float)dest_y * src_h) / target_h;
-  float src_y_end = ((float)(dest_y + 1) * src_h) / target_h;
-
-  // Clamp to image bounds
-  int x0 = (int)src_x_start;
-  int x1 = (int)src_x_end;
-  int y0 = (int)src_y_start;
-  int y1 = (int)src_y_end;
-
-  if (x0 < 0)
-    x0 = 0;
-  if (y0 < 0)
-    y0 = 0;
-  if (x1 >= src_w)
-    x1 = src_w - 1;
-  if (y1 >= src_h)
-    y1 = src_h - 1;
-  if (x1 < x0)
-    x1 = x0;
-  if (y1 < y0)
-    y1 = y0;
-
-  // Accumulate all pixels in the source region
-  float sum_r = 0, sum_g = 0, sum_b = 0, sum_a = 0;
-  int count = 0;
-
-  for (int sy = y0; sy <= y1; sy++) {
-    for (int sx = x0; sx <= x1; sx++) {
-      int mx = mirror_x ? (src_w - 1 - sx) : sx;
-      int my = mirror_y ? (src_h - 1 - sy) : sy;
-      int idx = (my * src_w + mx) * 4;
-
-      sum_r += src[idx + 0];
-      sum_g += src[idx + 1];
-      sum_b += src[idx + 2];
-      sum_a += src[idx + 3];
-      count++;
-    }
-  }
-
-  // Average the accumulated values
-  if (count > 0) {
-    *r = (uint8_t)(sum_r / count + 0.5f);
-    *g = (uint8_t)(sum_g / count + 0.5f);
-    *b = (uint8_t)(sum_b / count + 0.5f);
-    *a = (uint8_t)(sum_a / count + 0.5f);
-  } else {
-    *r = *g = *b = *a = 0;
-  }
-}
-
-// Bilinear interpolation for smooth scaling
-static void drawing_get_interpolated_pixel(const unsigned char *src, int src_w,
-                                           int src_h, float fx, float fy,
-                                           uint8_t *r, uint8_t *g, uint8_t *b,
-                                           uint8_t *a) {
-  // Clamp coordinates to image bounds
-  if (fx < 0)
-    fx = 0;
-  if (fy < 0)
-    fy = 0;
-  if (fx >= src_w - 1)
-    fx = src_w - 1;
-  if (fy >= src_h - 1)
-    fy = src_h - 1;
-
-  int x1 = (int)fx;
-  int y1 = (int)fy;
-  int x2 = x1 + 1;
-  int y2 = y1 + 1;
-
-  // Clamp to bounds
-  if (x2 >= src_w)
-    x2 = src_w - 1;
-  if (y2 >= src_h)
-    y2 = src_h - 1;
-
-  float dx = fx - x1;
-  float dy = fy - y1;
-
-  // Get the four surrounding pixels
-  int idx_tl = (y1 * src_w + x1) * 4;  // top-left
-  int idx_tr = (y1 * src_w + x2) * 4;  // top-right
-  int idx_bl = (y2 * src_w + x1) * 4;  // bottom-left
-  int idx_br = (y2 * src_w + x2) * 4;  // bottom-right
-
-  // Interpolate each channel
-  for (int c = 0; c < 4; c++) {
-    float top = src[idx_tl + c] * (1.0f - dx) + src[idx_tr + c] * dx;
-    float bottom = src[idx_bl + c] * (1.0f - dx) + src[idx_br + c] * dx;
-    float result = top * (1.0f - dy) + bottom * dy;
-
-    switch (c) {
-    case 0:
-      *r = (uint8_t)(result + 0.5f);
-      break;  // R
-    case 1:
-      *g = (uint8_t)(result + 0.5f);
-      break;  // G
-    case 2:
-      *b = (uint8_t)(result + 0.5f);
-      break;  // B
-    case 3:
-      *a = (uint8_t)(result + 0.5f);
-      break;  // A
-    }
-  }
-}
-
-void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
-                       unsigned char *src, int src_w, int src_h, int offset_x,
-                       int offset_y, int target_w, int target_h) {
-  // OPTIMIZATION: Hoist invariants outside loops
-  const bool use_aa = current_config && current_config->enable_antialiasing;
-  const bool mirror_x = current_config && current_config->mirror_x;
-  const bool mirror_y = current_config && current_config->mirror_y;
-  const bool is_downscaling = (target_w < src_w) || (target_h < src_h);
-
-  // Pre-calculate scale factors (avoid division in loop)
-  const float scale_x = (float)src_w / target_w;
-  const float scale_y = (float)src_h / target_h;
-
-  for (int y = 0; y < target_h; y++) {
-    const int dy = y + offset_y;
-
-    // Skip entire row if out of bounds
-    if (dy < 0 || dy >= dest_h)
-      continue;
-
-    // Pre-calculate row offset
-    const int row_offset = dy * dest_w * 4;
-
-    for (int x = 0; x < target_w; x++) {
-      const int dx = x + offset_x;
-
-      // Skip if out of horizontal bounds
-      if (dx < 0 || dx >= dest_w)
-        continue;
-
-      const int dest_idx = row_offset + dx * 4;
-
-      if (use_aa) {
-        uint8_t r, g, b, a;
-
-        if (is_downscaling) {
-          // Box filter: average all source pixels that map to this dest pixel
-          drawing_get_box_filtered_pixel(src, src_w, src_h, x, y, target_w,
-                                         target_h, mirror_x, mirror_y, &r, &g,
-                                         &b, &a);
-        } else {
-          // Bilinear interpolation for upscaling
-          float fx = x * scale_x;
-          float fy = y * scale_y;
-
-          // Apply mirroring
-          if (mirror_x)
-            fx = (src_w - 1) - fx;
-          if (mirror_y)
-            fy = (src_h - 1) - fy;
-
-          drawing_get_interpolated_pixel(src, src_w, src_h, fx, fy, &r, &g, &b,
-                                         &a);
-        }
-
-        // Alpha blend onto destination (enables smooth anti-aliased edges)
-        drawing_blend_pixel(dest, dest_idx, r, g, b, a);
-      } else {
-        // Use nearest-neighbor scaling (original behavior)
-        int sx = (x * src_w) / target_w;
-        int sy = (y * src_h) / target_h;
-
-        // Apply mirroring
-        if (mirror_x)
-          sx = (src_w - 1) - sx;
-        if (mirror_y)
-          sy = (src_h - 1) - sy;
-
-        const int src_idx = (sy * src_w + sx) * 4;
-
-        // Only draw non-transparent pixels
-        if (src[src_idx + 3] > 128) {
-          drawing_copy_pixel(dest, src, dest_idx, src_idx);
-        }
-      }
-    }
-  }
-}
 
 // =============================================================================
 // ANIMATION STATE MANAGEMENT MODULE
@@ -432,9 +195,9 @@ static void anim_handle_idle_return(animation_state_t *state,
   }
 
   if (show_sleep_frame) {
-    if (anim_index != BONGOCAT_FRAME_BOTH_DOWN) {
+    if (anim_index != BONGOCAT_FRAME_SLEEPING) {
       bongocat_log_debug("Returning to sleep frame");
-      anim_index = BONGOCAT_FRAME_BOTH_DOWN;
+      anim_index = BONGOCAT_FRAME_SLEEPING;
     }
     return;
   }
@@ -533,57 +296,83 @@ static void *anim_thread_main([[maybe_unused]] void *arg) {
 }
 
 // =============================================================================
-// IMAGE LOADING MODULE
+// SVG LOADING MODULE
 // =============================================================================
 
 typedef struct {
   const unsigned char *data;
   size_t size;
   const char *name;
-} embedded_image_t;
+} embedded_svg_t;
 
-static embedded_image_t embedded_images[NUM_FRAMES];
+static embedded_svg_t embedded_svgs[NUM_FRAMES];
 
-static void init_embedded_images(void) {
-  embedded_images[BONGOCAT_FRAME_BOTH_UP] =
-      (embedded_image_t){bongo_cat_both_up_png, bongo_cat_both_up_png_size,
-                         "embedded bongo-cat-both-up.png"};
-  embedded_images[BONGOCAT_FRAME_LEFT_DOWN] =
-      (embedded_image_t){bongo_cat_left_down_png, bongo_cat_left_down_png_size,
-                         "embedded bongo-cat-left-down.png"};
-  embedded_images[BONGOCAT_FRAME_RIGHT_DOWN] = (embedded_image_t){
-      bongo_cat_right_down_png, bongo_cat_right_down_png_size,
-      "embedded bongo-cat-right-down.png"};
-  embedded_images[BONGOCAT_FRAME_BOTH_DOWN] =
-      (embedded_image_t){bongo_cat_both_down_png, bongo_cat_both_down_png_size,
-                         "embedded bongo-cat-both-down.png"};
+static void init_embedded_svgs(void) {
+  embedded_svgs[BONGOCAT_FRAME_BOTH_UP] =
+      (embedded_svg_t){bongo_both_up_svg, bongo_both_up_svg_size,
+                       "bongo-both-up.svg"};
+  embedded_svgs[BONGOCAT_FRAME_LEFT_DOWN] =
+      (embedded_svg_t){bongo_left_down_svg, bongo_left_down_svg_size,
+                       "bongo-left-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_RIGHT_DOWN] =
+      (embedded_svg_t){bongo_right_down_svg, bongo_right_down_svg_size,
+                       "bongo-right-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_BOTH_DOWN] =
+      (embedded_svg_t){bongo_both_down_svg, bongo_both_down_svg_size,
+                       "bongo-both-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_SLEEPING] =
+      (embedded_svg_t){bongo_sleeping_svg, bongo_sleeping_svg_size,
+                       "bongo-sleeping.svg"};
 }
 
-static void anim_cleanup_loaded_images(int count) {
-  for (int i = 0; i < count; i++) {
-    if (anim_imgs[i]) {
-      stbi_image_free(anim_imgs[i]);
-      anim_imgs[i] = NULL;
+static void anim_cleanup_svgs(void) {
+  for (int i = 0; i < NUM_FRAMES; i++) {
+    if (anim_svgs[i]) {
+      nsvgDelete(anim_svgs[i]);
+      anim_svgs[i] = NULL;
     }
+  }
+  if (anim_rasterizer) {
+    nsvgDeleteRasterizer(anim_rasterizer);
+    anim_rasterizer = NULL;
   }
 }
 
-static bongocat_error_t anim_load_embedded_images(void) {
+static bongocat_error_t anim_parse_embedded_svgs(void) {
   for (int i = 0; i < NUM_FRAMES; i++) {
-    const embedded_image_t *img = &embedded_images[i];
+    const embedded_svg_t *svg = &embedded_svgs[i];
 
-    bongocat_log_debug("Loading embedded image: %s", img->name);
+    bongocat_log_debug("Parsing embedded SVG: %s", svg->name);
 
-    anim_imgs[i] = stbi_load_from_memory(img->data, img->size, &anim_width[i],
-                                         &anim_height[i], NULL, 4);
-    if (!anim_imgs[i]) {
-      bongocat_log_error("Failed to load embedded image: %s", img->name);
-      anim_cleanup_loaded_images(i);
+    // nsvgParse modifies the string in-place, so make a mutable copy
+    char *svg_copy = malloc(svg->size + 1);
+    if (!svg_copy) {
+      bongocat_log_error("Failed to allocate SVG copy for: %s", svg->name);
+      anim_cleanup_svgs();
+      return BONGOCAT_ERROR_MEMORY;
+    }
+    memcpy(svg_copy, svg->data, svg->size);
+    svg_copy[svg->size] = '\0';
+
+    anim_svgs[i] = nsvgParse(svg_copy, "px", 96.0f);
+    free(svg_copy);
+
+    if (!anim_svgs[i]) {
+      bongocat_log_error("Failed to parse embedded SVG: %s", svg->name);
+      anim_cleanup_svgs();
       return BONGOCAT_ERROR_FILE_IO;
     }
 
-    bongocat_log_debug("Loaded %dx%d embedded image", anim_width[i],
-                       anim_height[i]);
+    bongocat_log_debug("Parsed SVG %s: %.0fx%.0f", svg->name,
+                       (double)anim_svgs[i]->width,
+                       (double)anim_svgs[i]->height);
+  }
+
+  anim_rasterizer = nsvgCreateRasterizer();
+  if (!anim_rasterizer) {
+    bongocat_log_error("Failed to create SVG rasterizer");
+    anim_cleanup_svgs();
+    return BONGOCAT_ERROR_MEMORY;
   }
 
   return BONGOCAT_SUCCESS;
@@ -603,36 +392,81 @@ void animation_invalidate_cache(void) {
 }
 
 void animation_cache_frames(int target_w, int target_h, int mirror_x,
-                            int mirror_y, int enable_aa) {
-  (void)mirror_x;
-  (void)mirror_y;
-  (void)enable_aa;
-
+                            int mirror_y,
+                            [[maybe_unused]] int enable_aa) {
   animation_invalidate_cache();
 
+  if (!anim_rasterizer || target_w <= 0 || target_h <= 0) {
+    return;
+  }
+
   for (int i = 0; i < NUM_FRAMES; i++) {
-    if (!anim_imgs[i] || anim_width[i] <= 0 || anim_height[i] <= 0) {
+    if (!anim_svgs[i]) {
       continue;
     }
 
-    if (target_w <= 0 || target_h <= 0) {
+    float svg_w = anim_svgs[i]->width;
+    float svg_h = anim_svgs[i]->height;
+    if (svg_w <= 0 || svg_h <= 0) {
       continue;
     }
 
+    // Rasterize SVG at exact target dimensions
+    float scale = (float)target_w / svg_w;
     size_t buf_size = (size_t)target_w * (size_t)target_h * 4U;
-    uint8_t *cache_buf = calloc(1, buf_size);
-    if (!cache_buf) {
-      bongocat_log_error("Failed to allocate frame cache for frame %d", i);
+    uint8_t *rgba_buf = calloc(1, buf_size);
+    if (!rgba_buf) {
+      bongocat_log_error("Failed to allocate raster buffer for frame %d", i);
       continue;
     }
 
-    // blit_image_scaled reads mirror/aa settings from current_config
-    // internally, so we pass src==dst dimensions to perform the scaled blit
-    // into the cache
-    blit_image_scaled(cache_buf, target_w, target_h, anim_imgs[i],
-                      anim_width[i], anim_height[i], 0, 0, target_w, target_h);
+    nsvgRasterize(anim_rasterizer, anim_svgs[i], 0, 0, scale, rgba_buf,
+                  target_w, target_h, target_w * 4);
 
-    anim_cached_frames[i].data = cache_buf;
+    // Apply horizontal mirror
+    if (mirror_x) {
+      for (int y = 0; y < target_h; y++) {
+        for (int left = 0, right = target_w - 1; left < right;
+             left++, right--) {
+          int li = (y * target_w + left) * 4;
+          int ri = (y * target_w + right) * 4;
+          uint8_t tmp[4];
+          memcpy(tmp, &rgba_buf[li], 4);
+          memcpy(&rgba_buf[li], &rgba_buf[ri], 4);
+          memcpy(&rgba_buf[ri], tmp, 4);
+        }
+      }
+    }
+
+    // Apply vertical mirror
+    if (mirror_y) {
+      size_t row_bytes = (size_t)target_w * 4U;
+      uint8_t *tmp_row = malloc(row_bytes);
+      if (tmp_row) {
+        for (int top = 0, bot = target_h - 1; top < bot; top++, bot--) {
+          uint8_t *t = &rgba_buf[(size_t)top * row_bytes];
+          uint8_t *b = &rgba_buf[(size_t)bot * row_bytes];
+          memcpy(tmp_row, t, row_bytes);
+          memcpy(t, b, row_bytes);
+          memcpy(b, tmp_row, row_bytes);
+        }
+        free(tmp_row);
+      }
+    }
+
+    // Convert RGBA -> premultiplied BGRA for Wayland (ARGB8888 is premultiplied)
+    for (size_t px = 0; px < buf_size; px += 4) {
+      uint8_t r = rgba_buf[px + 0];
+      uint8_t g = rgba_buf[px + 1];
+      uint8_t b = rgba_buf[px + 2];
+      uint8_t a = rgba_buf[px + 3];
+      rgba_buf[px + 0] = (uint8_t)((b * a) / 255);
+      rgba_buf[px + 1] = (uint8_t)((g * a) / 255);
+      rgba_buf[px + 2] = (uint8_t)((r * a) / 255);
+      rgba_buf[px + 3] = a;
+    }
+
+    anim_cached_frames[i].data = rgba_buf;
     anim_cached_frames[i].width = target_w;
     anim_cached_frames[i].height = target_h;
   }
@@ -660,12 +494,15 @@ void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
       if (sa == 255) {
         memcpy(&dest[di], &src[si], 4);
       } else {
-        float a = sa / 255.0f;
-        float inv = 1.0f - a;
-        dest[di + 0] = (uint8_t)(src[si + 0] * a + dest[di + 0] * inv);
-        dest[di + 1] = (uint8_t)(src[si + 1] * a + dest[di + 1] * inv);
-        dest[di + 2] = (uint8_t)(src[si + 2] * a + dest[di + 2] * inv);
-        dest[di + 3] = 255;
+        // Premultiplied alpha "over" compositing
+        uint8_t inv_a = 255 - sa;
+        dest[di + 0] =
+            src[si + 0] + (uint8_t)((dest[di + 0] * inv_a) / 255);
+        dest[di + 1] =
+            src[si + 1] + (uint8_t)((dest[di + 1] * inv_a) / 255);
+        dest[di + 2] =
+            src[si + 2] + (uint8_t)((dest[di + 2] * inv_a) / 255);
+        dest[di + 3] = sa + (uint8_t)((dest[di + 3] * inv_a) / 255);
       }
     }
   }
@@ -681,10 +518,10 @@ bongocat_error_t animation_init(config_t *config) {
   current_config = config;
   bongocat_log_info("Initializing animation system");
 
-  // Initialize embedded images data
-  init_embedded_images();
+  // Parse embedded SVG assets
+  init_embedded_svgs();
 
-  bongocat_error_t result = anim_load_embedded_images();
+  bongocat_error_t result = anim_parse_embedded_svgs();
   if (result != BONGOCAT_SUCCESS) {
     return result;
   }
@@ -695,7 +532,7 @@ bongocat_error_t animation_init(config_t *config) {
   srand((unsigned)time(NULL));
 
   bongocat_log_info(
-      "Animation system initialized successfully with embedded assets");
+      "Animation system initialized successfully with embedded SVG assets");
   return BONGOCAT_SUCCESS;
 }
 
@@ -735,9 +572,9 @@ void animation_cleanup(void) {
   // Cleanup cached frames
   animation_invalidate_cache();
 
-  // Cleanup loaded images
+  // Cleanup SVG resources
   if (animation_initialized) {
-    anim_cleanup_loaded_images(NUM_FRAMES);
+    anim_cleanup_svgs();
     animation_initialized = false;
   }
 

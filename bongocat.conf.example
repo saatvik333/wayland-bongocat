@@ -10,12 +10,12 @@
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 # Cat size and position
-cat_height=80
+cat_height=100
 cat_align=center
 cat_x_offset=0
 cat_y_offset=0
 
-# Smooth scaling (recommended)
+# Smooth scaling (always enabled with SVG rendering, kept for compatibility)
 enable_antialiasing=1
 
 # Flip the cat
@@ -26,17 +26,16 @@ mirror_y=0
 # │ OVERLAY BAR                                                                 │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
-# Bar dimensions (Attention!: Requires restart of bongocat)
-overlay_height=80
+# Bar dimensions
+overlay_height=180
 
 # Background: 0=transparent, 255=opaque
 overlay_opacity=0
 
-# Position: top, bottom (Attention!: Requires restart of bongocat)
-overlay_position=bottom
+# Position: top, bottom
+overlay_position=top
 
 # Layer: top (above windows), overlay (always visible, fullscreen auto-hide detection disabled)
-# (Attention!: Requires restart of bongocat)
 layer=top
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -72,6 +71,7 @@ enable_hand_mapping=1
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 # Hide after N seconds of no keyboard activity (0=disabled)
+# When triggered, displays a dedicated sleeping animation frame
 idle_sleep_timeout=0
 
 # Scheduled sleep (requires enable_scheduled_sleep=1)

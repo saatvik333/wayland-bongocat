@@ -36,15 +36,16 @@
 #define MAX_TOPLEVELS        512
 
 // Frame constants
-#define NUM_FRAMES       4
-#define CAT_IMAGE_WIDTH  864
-#define CAT_IMAGE_HEIGHT 360
+#define NUM_FRAMES       5
+#define CAT_IMAGE_WIDTH  500
+#define CAT_IMAGE_HEIGHT 277
 
 // Frame indices
 #define BONGOCAT_FRAME_BOTH_UP    0
 #define BONGOCAT_FRAME_LEFT_DOWN  1
 #define BONGOCAT_FRAME_RIGHT_DOWN 2
 #define BONGOCAT_FRAME_BOTH_DOWN  3
+#define BONGOCAT_FRAME_SLEEPING   4
 
 // Inotify buffer sizing
 #define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))

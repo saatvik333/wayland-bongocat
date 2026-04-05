@@ -44,6 +44,7 @@ static void (*tick_callback_fn)(void) = NULL;
 static int applied_width = 0;
 static int applied_height = 0;
 static layer_type_t applied_layer = LAYER_TOP;
+static overlay_position_t applied_position = POSITION_BOTTOM;
 static char *applied_output_name = NULL;
 
 // =============================================================================
@@ -354,11 +355,8 @@ void draw_bar(void) {
                         current_config->overlay_height, frame->data,
                         frame->width, frame->height, cat_x, cat_y);
     } else {
-      // Fallback: scale from source (cache not ready, does RGBA->BGRA)
-      blit_image_scaled(pixels, current_config->screen_width,
-                        current_config->overlay_height, anim_imgs[anim_index],
-                        anim_width[anim_index], anim_height[anim_index], cat_x,
-                        cat_y, cat_width, cat_height);
+      bongocat_log_debug("Frame %d cache not ready, skipping draw",
+                         anim_index);
     }
   } else {
     bongocat_log_debug("Cat hidden due to fullscreen detection");
@@ -815,6 +813,7 @@ bongocat_error_t wayland_init(config_t *config) {
   applied_width = current_config->screen_width;
   applied_height = current_config->overlay_height;
   applied_layer = current_config->layer;
+  applied_position = current_config->overlay_position;
   if (applied_output_name) {
     free(applied_output_name);
     applied_output_name = NULL;
@@ -897,6 +896,32 @@ void wayland_set_tick_callback(void (*callback)(void)) {
   tick_callback_fn = callback;
 }
 
+// Apply double-buffered layer surface properties without destroying surfaces
+static void apply_layer_properties(const config_t *config,
+                                   bool do_position, bool do_layer) {
+  if (do_position) {
+    uint32_t anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+                      ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+    if (config->overlay_position == POSITION_TOP) {
+      anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+    } else {
+      anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+    }
+    zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
+    bongocat_log_info("Overlay position changed to %s",
+                      config->overlay_position == POSITION_TOP ? "top"
+                                                               : "bottom");
+  }
+  if (do_layer) {
+    uint32_t wl_layer = (config->layer == LAYER_OVERLAY)
+                            ? ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY
+                            : ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+    zwlr_layer_surface_v1_set_layer(layer_surface, wl_layer);
+    bongocat_log_info("Layer changed to %s",
+                      config->layer == LAYER_OVERLAY ? "overlay" : "top");
+  }
+}
+
 void wayland_update_config(config_t *config) {
   if (!config) {
     bongocat_log_error("Cannot update wayland config: config is NULL");
@@ -919,6 +944,7 @@ void wayland_update_config(config_t *config) {
   }
 
   bool layer_changed = (old_layer != config->layer);
+  bool position_changed = (applied_position != config->overlay_position);
   bool output_name_changed =
       ((old_output_name == NULL) != (config->output_name == NULL)) ||
       (old_output_name && config->output_name &&
@@ -928,16 +954,19 @@ void wayland_update_config(config_t *config) {
        strcmp(bound_screen_name, config->output_name) != 0);
   bool screen_changed = output_name_changed || bound_output_changed;
 
-  bool needs_recreate =
-      ((dimensions_changed && old_height > 0 && old_width > 0) ||
-       screen_changed || layer_changed);
-  if (needs_recreate) {
-    int target_width = (new_width > 0) ? new_width : config->screen_width;
-    bongocat_log_info(
-        "Wayland surface update required (size %dx%d -> %dx%d, layer %s -> %s)",
-        old_width, old_height, target_width, config->overlay_height,
-        old_layer == LAYER_TOP ? "top" : "overlay",
-        config->layer == LAYER_TOP ? "top" : "overlay");
+  // Determine which update path to use:
+  // - Full recreate: only for output (monitor) changes
+  // - Buffer recreate: for dimension changes (overlay_height, screen_width)
+  // - Property update: for position/layer changes (double-buffered, no recreate)
+  // - Cache only: for cat_height, mirror, etc.
+  bool needs_full_recreate = screen_changed;
+  bool needs_buffer_recreate =
+      dimensions_changed && old_height > 0 && old_width > 0;
+  bool needs_property_update = layer_changed || position_changed;
+
+  if (needs_full_recreate) {
+    // PATH 3: Output changed — full surface recreation required
+    bongocat_log_info("Output changed, recreating surface");
 
     pthread_mutex_lock(&anim_lock);
     atomic_store(&configured, false);
@@ -946,20 +975,11 @@ void wayland_update_config(config_t *config) {
       wl_buffer_destroy(buffer);
       buffer = NULL;
     }
-    if (pixels) {
-      size_t old_size = 0;
-      if (old_width > 0 && old_height > 0) {
-        old_size = (size_t)old_width * (size_t)old_height * 4U;
-      } else if (config->screen_width > 0 && config->overlay_height > 0) {
-        old_size =
-            (size_t)config->screen_width * (size_t)config->overlay_height * 4U;
-      }
-      if (old_size > 0) {
-        munmap(pixels, old_size);
-      }
+    if (pixels && pixel_buffer_size > 0) {
+      munmap(pixels, pixel_buffer_size);
       pixels = NULL;
+      pixel_buffer_size = 0;
     }
-
     if (layer_surface) {
       zwlr_layer_surface_v1_destroy(layer_surface);
       layer_surface = NULL;
@@ -973,7 +993,7 @@ void wayland_update_config(config_t *config) {
     wayland_update_current_output_info();
 
     if (wayland_setup_surface() != BONGOCAT_SUCCESS) {
-      bongocat_log_error("Failed to recreate surface after config change");
+      bongocat_log_error("Failed to recreate surface after output change");
       pthread_mutex_unlock(&anim_lock);
       free(old_output_name);
       return;
@@ -983,18 +1003,89 @@ void wayland_update_config(config_t *config) {
     wayland_update_current_output_info();
 
     if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
-      bongocat_log_error("Failed to recreate buffer after config change");
+      bongocat_log_error("Failed to recreate buffer after output change");
       pthread_mutex_unlock(&anim_lock);
       free(old_output_name);
       return;
     }
-    pthread_mutex_unlock(&anim_lock);
 
+    animation_invalidate_cache();
+    int cat_h = config->cat_height;
+    int cat_w = (cat_h * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
+    animation_cache_frames(cat_w, cat_h, config->mirror_x, config->mirror_y,
+                           config->enable_antialiasing);
+
+    pthread_mutex_unlock(&anim_lock);
     wl_display_roundtrip(display);
     wayland_update_current_output_info();
 
-    bongocat_log_info("Buffer recreated successfully (%dx%d)",
+    bongocat_log_info("Surface recreated successfully (%dx%d)",
                       config->screen_width, config->overlay_height);
+
+  } else if (needs_buffer_recreate) {
+    // PATH 2: Dimensions changed — update size property, recreate buffer only
+    bongocat_log_info("Overlay dimensions changed (%dx%d -> %dx%d)",
+                      old_width, old_height, config->screen_width,
+                      config->overlay_height);
+
+    // Update double-buffered properties on existing layer surface
+    zwlr_layer_surface_v1_set_size(layer_surface, 0,
+                                   config->overlay_height);
+    apply_layer_properties(config, position_changed, layer_changed);
+    wl_surface_commit(surface);
+
+    // Recreate buffer under lock
+    pthread_mutex_lock(&anim_lock);
+    atomic_store(&configured, false);
+
+    if (buffer) {
+      wl_buffer_destroy(buffer);
+      buffer = NULL;
+    }
+    if (pixels && pixel_buffer_size > 0) {
+      munmap(pixels, pixel_buffer_size);
+      pixels = NULL;
+      pixel_buffer_size = 0;
+    }
+
+    if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
+      bongocat_log_error("Failed to recreate buffer after resize");
+      pthread_mutex_unlock(&anim_lock);
+      free(old_output_name);
+      return;
+    }
+
+    animation_invalidate_cache();
+    int cat_h = config->cat_height;
+    int cat_w = (cat_h * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
+    animation_cache_frames(cat_w, cat_h, config->mirror_x, config->mirror_y,
+                           config->enable_antialiasing);
+
+    pthread_mutex_unlock(&anim_lock);
+
+    // Roundtrip triggers configure callback → configured=true → draw_bar()
+    wl_display_roundtrip(display);
+
+    bongocat_log_info("Buffer resized successfully (%dx%d)",
+                      config->screen_width, config->overlay_height);
+
+  } else if (needs_property_update) {
+    // PATH 1: Position/layer only — no buffer changes needed
+    apply_layer_properties(config, position_changed, layer_changed);
+    wl_surface_commit(surface);
+    wl_display_roundtrip(display);
+  }
+
+  // Always rebuild cache for cat_height/mirror/etc changes (even if no
+  // surface changes). Skip if we already rebuilt above.
+  if (!needs_full_recreate && !needs_buffer_recreate) {
+    pthread_mutex_lock(&anim_lock);
+    animation_invalidate_cache();
+    int cat_h = config->cat_height;
+    int cat_w = (cat_h * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
+    animation_cache_frames(cat_w, cat_h, config->mirror_x, config->mirror_y,
+                           config->enable_antialiasing);
+    pthread_mutex_unlock(&anim_lock);
   }
 
   free(old_output_name);
@@ -1003,16 +1094,10 @@ void wayland_update_config(config_t *config) {
   applied_width = config->screen_width;
   applied_height = config->overlay_height;
   applied_layer = config->layer;
+  applied_position = config->overlay_position;
   free(applied_output_name);
   applied_output_name =
       config->output_name ? strdup(config->output_name) : NULL;
-
-  // Rebuild pre-scaled frame cache with new config dimensions
-  animation_invalidate_cache();
-  int cat_h = config->cat_height;
-  int cat_w = (cat_h * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
-  animation_cache_frames(cat_w, cat_h, config->mirror_x, config->mirror_y,
-                         config->enable_antialiasing);
 
   if (atomic_load(&configured)) {
     draw_bar();
@@ -1115,6 +1200,7 @@ void wayland_cleanup(void) {
   applied_width = 0;
   applied_height = 0;
   applied_layer = LAYER_TOP;
+  applied_position = POSITION_BOTTOM;
   tick_callback_fn = NULL;
   memset(&outputs, 0, sizeof(output_ref_t) * MAX_OUTPUTS);
 

@@ -12,11 +12,6 @@
 // ANIMATION STATE
 // =============================================================================
 
-// Frame images and dimensions
-extern unsigned char *anim_imgs[NUM_FRAMES];
-extern int anim_width[NUM_FRAMES];
-extern int anim_height[NUM_FRAMES];
-
 // Current frame and synchronization
 extern int anim_index;
 extern pthread_mutex_t anim_lock;
@@ -53,11 +48,6 @@ void animation_trigger(void);
 // =============================================================================
 // RENDERING UTILITIES
 // =============================================================================
-
-// Blit scaled image to destination buffer (converts RGBA source to BGRA dest)
-void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
-                       unsigned char *src, int src_w, int src_h, int offset_x,
-                       int offset_y, int target_w, int target_h);
 
 // Blit pre-converted cached frame (BGRA to BGRA, no channel swap)
 void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
