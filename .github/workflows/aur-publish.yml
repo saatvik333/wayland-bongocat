@@ -18,12 +18,12 @@ jobs:
         run: |
           VERSION="${{ github.event.release.tag_name }}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix if present
-          
+
           # Download the release tarball to calculate sha256sum
           curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz" -o release.tar.gz
           SHA256=$(sha256sum release.tar.gz | cut -d' ' -f1)
-          
-          cat > PKGBUILD << 'PKGBUILD_EOF'
+
+          cat > PKGBUILD <<PKGBUILD_EOF
           # Maintainer: saatvik333 <saatvik333sharma@gmail.com>
           pkgname=bongocat
           pkgver=${VERSION}
@@ -33,30 +33,30 @@ jobs:
           url="https://github.com/saatvik333/wayland-bongocat"
           license=('MIT')
           depends=('wayland')
-          makedepends=('wayland-protocols' 'make' 'gcc')
-          source=("$pkgname-$pkgver.tar.gz::https://github.com/saatvik333/wayland-bongocat/archive/refs/tags/v$pkgver.tar.gz")
+          makedepends=('make' 'gcc')
+          source=("\$pkgname-\$pkgver.tar.gz::https://github.com/saatvik333/wayland-bongocat/archive/refs/tags/v\$pkgver.tar.gz")
           sha256sums=('${SHA256}')
 
           build() {
-            cd "wayland-bongocat-$pkgver"
+            cd "wayland-bongocat-\$pkgver"
             make release
           }
 
           package() {
-            cd "wayland-bongocat-$pkgver"
-            install -Dm755 build/bongocat "$pkgdir/usr/bin/bongocat"
-            install -Dm755 scripts/find_input_devices.sh "$pkgdir/usr/bin/bongocat-find-devices"
-            install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-            install -Dm644 bongocat.conf.example "$pkgdir/usr/share/doc/$pkgname/bongocat.conf.example"
+            cd "wayland-bongocat-\$pkgver"
+            install -Dm755 build/bongocat "\$pkgdir/usr/bin/bongocat"
+            install -Dm755 scripts/find_input_devices.sh "\$pkgdir/usr/bin/bongocat-find-devices"
+            install -Dm644 LICENSE "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+            install -Dm644 bongocat.conf.example "\$pkgdir/usr/share/doc/\$pkgname/bongocat.conf.example"
+            install -Dm644 man/bongocat.1 "\$pkgdir/usr/share/man/man1/bongocat.1"
           }
           PKGBUILD_EOF
 
-          # Replace placeholders with actual values
-          sed -i "s/\${VERSION}/${VERSION}/g" PKGBUILD
-          sed -i "s/\${SHA256}/${SHA256}/g" PKGBUILD
+          # Strip leading whitespace from heredoc indentation
+          sed -i 's/^          //' PKGBUILD
 
       - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@a97f56a8425a7a7f3b8c58607f769c69b089cadb # v3.0.1
+        uses: KSXGitHub/github-actions-deploy-aur@abe8ac26b51011c88be58c8809fd2ac674068ea5 # v4.1.2
         with:
           pkgname: bongocat
           pkgbuild: ./PKGBUILD
