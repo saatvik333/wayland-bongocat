@@ -2,7 +2,7 @@
 
 ## Overview
 
-Bongo Cat Wayland Overlay is a lightweight C23 application (~5,300 lines of hand-written code) that renders an animated cat overlay on Wayland compositors, reacting to keyboard input in real-time.
+Bongo Cat Wayland Overlay is a lightweight C23 application (~5,300 lines of hand-written code, ~750 lines of headers) that renders an animated cat overlay on Wayland compositors, reacting to keyboard input in real-time.
 
 ```
                     +-----------------------+
@@ -104,29 +104,29 @@ src/
     main.c              (810 lines)  Entry point, PID file, signal handling, cleanup
     multi_monitor.c     (164 lines)  Fork/exec per monitor, child management
   config/
-    config.c            (837 lines)  INI parser, validation, defaults, XDG path resolution
+    config.c            (839 lines)  INI parser, validation, defaults, XDG path resolution
     config_watcher.c    (237 lines)  inotify thread with debounce and re-watch
   platform/
-    wayland.c          (1129 lines)  Core Wayland: registry, surface, buffer, draw_bar
-    fullscreen.c        (415 lines)  Foreign-toplevel fullscreen detection
+    wayland.c          (1230 lines)  Core Wayland: registry, surface, buffer, draw_bar, hot-reload
+    fullscreen.c        (434 lines)  Foreign-toplevel fullscreen detection + KDE fallback
     hyprland.c          (135 lines)  Hyprland IPC fallback (fork/execvp, not popen)
-    input.c             (493 lines)  evdev reading, shared memory IPC, eventfd
+    input.c             (513 lines)  evdev reading, shared memory IPC, eventfd, fast retry
   graphics/
-    animation.c         (580 lines)  Frame state machine, SVG rasterization, caching, thread
+    animation.c         (588 lines)  Frame state machine, SVG rasterization, caching, thread
     embedded_assets.c                Auto-generated SVG byte arrays (do not edit)
   utils/
     error.c              (94 lines)  Logging with timestamps, atomic debug flag
     memory.c            (242 lines)  Tracked allocator, memory pools, leak checker
 
-include/                (756 lines)  Public headers for each module
+include/                (754 lines)  Public headers for each module
 tests/                  (450 lines)  Unit tests for config parser and memory pool
-protocols/                           Generated Wayland protocol C bindings
+protocols/                           Wayland protocol XML specs + committed C bindings
 lib/                                 Vendored nanosvg.h + nanosvgrast.h for SVG rendering
 ```
 
 ## Wayland Protocol Stack
 
-Four protocols generated from XML via `wayland-scanner`:
+Four protocols with C bindings committed to git (regenerated from XML via `wayland-scanner` with `make protocols`):
 
 | Protocol | Purpose |
 |----------|---------|
@@ -176,6 +176,20 @@ Version negotiation uses `MIN(advertised, desired)` to handle compositors with o
 ### Frame Caching
 
 SVGs (500x277 viewBox) are rasterized by nanosvg directly at target display dimensions at startup and on config reload. The 5 cached frames (including sleep) are stored in BGRA format (Wayland-native). `draw_bar()` performs a direct BGRA-to-BGRA blit without channel conversion or scaling math. Since SVGs are vector graphics, rendering is pixel-perfect at any size with built-in anti-aliasing.
+
+### Hot-Reload
+
+`wayland_update_config()` uses three paths depending on what changed:
+
+1. **Property-only** (position, layer) — updates double-buffered wlr-layer-shell properties and commits. No surface/buffer destruction.
+2. **Buffer recreate** (overlay_height, screen_width) — updates the layer surface size property, then recreates only the SHM buffer under `anim_lock`.
+3. **Full recreate** (output/monitor change) — destroys and recreates the entire surface + buffer.
+
+This avoids the crash-prone full teardown+rebuild for property changes that the protocol handles natively.
+
+### Input Fast Retry
+
+The input child uses a 5-second fast retry interval until at least one device is found, then switches to the configured `hotplug_scan_interval` (default 30s). This prevents the multi-minute input delay on systems where devices aren't ready at startup.
 
 ### Idle Power
 

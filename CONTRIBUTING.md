@@ -8,8 +8,10 @@ Thank you for your interest in contributing! 🐱
 
 - Wayland compositor with layer shell support
 - GCC or Clang (C23 support)
-- wayland-client, wayland-protocols
+- wayland-client
 - Make
+
+> **Note:** `wayland-scanner` and `wayland-protocols` are only needed if you modify protocol XML files (`make protocols`). The generated protocol bindings are committed to git.
 
 ### Building
 
@@ -67,6 +69,9 @@ src/
 ## Testing
 
 ```bash
+# Run unit tests
+make test
+
 # Run with debug logging
 ./build/bongocat -c bongocat.conf -w
 

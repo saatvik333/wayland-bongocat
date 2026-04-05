@@ -15,8 +15,8 @@ cat_align=center
 cat_x_offset=0
 cat_y_offset=0
 
-# Smooth scaling (always enabled with SVG rendering, kept for compatibility)
-enable_antialiasing=1
+# Deprecated: no-op with SVG rendering (antialiasing is always enabled)
+# enable_antialiasing=1
 
 # Flip the cat
 mirror_x=0

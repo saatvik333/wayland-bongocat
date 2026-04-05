@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **SVG Rendering** - Replaced PNG assets with SVG via nanosvg for pixel-perfect rendering at any size. 5 animation frames including a dedicated sleeping frame.
+- **Sleeping Animation** - New `idle_sleep_timeout` now shows a sleeping cat frame instead of hiding the overlay.
+- **Fast Input Retry** - Input child retries device scanning every 5 seconds until devices are found, then switches to the configured `hotplug_scan_interval`. Fixes #69.
+
+### Changed
+
+- **Default `hotplug_scan_interval`** reduced from 300s to 30s for faster device detection after boot.
+- **`enable_antialiasing`** is now a no-op (kept for config compatibility). SVG rendering provides built-in anti-aliasing at any size.
+- **Build system** - Generated Wayland protocol files are now committed to git. Building from source no longer requires `wayland-scanner` or `wayland-protocols`. Use `make protocols` to regenerate after updating XML sources. `make clean` no longer removes protocol files; use `make distclean` for that.
+- **Nix derivation** - Dropped `wayland-scanner` and `wayland-protocols` build dependencies since protocol bindings are pre-generated.
+
+### Fixed
+
+- **Hot-reload crash** (#71) - Changing `overlay_height`, `overlay_position`, or `layer` while running with `-w` no longer crashes. Uses wlr-layer-shell double-buffered properties instead of destroying/recreating surfaces.
+- **Build failure** (#73) - Protocol bindings and vendored `xdg-shell.xml` are now committed to git, eliminating the `wayland-scanner`/`wayland-protocols` build dependency.
+- **KWin fullscreen detection** (#28) - Relaxed the global fullscreen fallback for compositors (KDE/KWin) that don't send per-toplevel output events. Overlay now auto-hides during fullscreen on KDE.
+- **Missing protocol error** (#70) - Error message now names the specific missing protocol instead of a generic failure.
+- **SVG edge artifacts** - Premultiplied alpha compositing for correct Wayland ARGB8888 rendering, eliminating dark fringe on anti-aliased edges.
+
+---
+
 ## [1.4.0] - 2026-02-14
 
 ### Added

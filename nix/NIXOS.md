@@ -226,6 +226,8 @@ Just enter the development environment by running `nix develop` in the
 same directory as the `flake.nix` file. The development environment will
 provide further information e.g. commands to build the project.
 
+> **Note:** The generated Wayland protocol bindings are committed to git, so `wayland-scanner` and `wayland-protocols` are only needed in the dev shell for `make protocols` (regenerating protocol bindings from XML). Regular builds (`make` / `nix build`) don't require them.
+
 ## Contributing
 See the [README](../README.md) for contribution guidelines. The NixOS integration welcomes:
 - Additional compositor testing
