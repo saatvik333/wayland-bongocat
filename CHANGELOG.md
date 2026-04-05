@@ -2,18 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0.0] - 2026-04-05
+
+### Breaking Changes
+
+- **PNG → SVG asset migration** - All cat assets are now SVG, rendered via nanosvg. The new artwork has a different aspect ratio (500x277 vs the old 864x360 PNGs, ~1.8:1 vs ~2.4:1). **Users must re-tune their config values** — at the same `cat_height`, the cat will appear narrower than before. Recommended starting point: `cat_height=110`, `overlay_height=120`.
+- **`enable_antialiasing`** is now a deprecated no-op. SVG rendering always produces anti-aliased output. The option is accepted but ignored.
 
 ### Added
 
-- **SVG Rendering** - Replaced PNG assets with SVG via nanosvg for pixel-perfect rendering at any size. 5 animation frames including a dedicated sleeping frame.
-- **Sleeping Animation** - New `idle_sleep_timeout` now shows a sleeping cat frame instead of hiding the overlay.
+- **SVG Rendering** - Pixel-perfect rendering at any size via nanosvg. No more scaling artifacts or blurry edges.
+- **Sleeping Animation** - 5th animation frame. `idle_sleep_timeout` now shows a sleeping cat instead of hiding the overlay.
 - **Fast Input Retry** - Input child retries device scanning every 5 seconds until devices are found, then switches to the configured `hotplug_scan_interval`. Fixes #69.
 
 ### Changed
 
 - **Default `hotplug_scan_interval`** reduced from 300s to 30s for faster device detection after boot.
-- **`enable_antialiasing`** is now a no-op (kept for config compatibility). SVG rendering provides built-in anti-aliasing at any size.
 - **Build system** - Generated Wayland protocol files are now committed to git. Building from source no longer requires `wayland-scanner` or `wayland-protocols`. Use `make protocols` to regenerate after updating XML sources. `make clean` no longer removes protocol files; use `make distclean` for that.
 - **Nix derivation** - Dropped `wayland-scanner` and `wayland-protocols` build dependencies since protocol bindings are pre-generated.
 
