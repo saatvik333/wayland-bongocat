@@ -51,6 +51,12 @@ static size_t track_toplevels_count = 0;
 // Track the currently active toplevel's fullscreen state
 static bool active_toplevel_fullscreen = false;
 
+// Track whether the compositor has ever sent output_enter for any toplevel.
+// When false, the compositor likely doesn't support per-toplevel output
+// tracking (e.g. older KDE/KWin), and we should use the global fallback
+// regardless of output_count.
+static bool compositor_sends_output_events = false;
+
 // =============================================================================
 // FULLSCREEN DETECTION IMPLEMENTATION
 // =============================================================================
@@ -169,8 +175,14 @@ fs_handle_toplevel_state(void *data,
     output_found |= hypr_fs_update_state(toplevel_data);
   }
 
-  // fallback: global fullscreen (safe only for single-output setups)
-  if (!output_found && output_count <= 1) {
+  // fallback: global fullscreen
+  // Safe when single-output, or when the compositor never sends output_enter
+  // events (e.g. KDE/KWin). In the latter case, per-output tracking is
+  // impossible, so we use the global activated+fullscreen state as a best
+  // effort. On multi-monitor setups without output events, fullscreen on
+  // any monitor will hide the overlay on all monitors — acceptable trade-off
+  // vs never hiding at all.
+  if (!output_found && (output_count <= 1 || !compositor_sends_output_events)) {
     bool was_activated = toplevel_data->is_activated;
     bool was_fullscreen = toplevel_data->is_fullscreen;
 
@@ -259,6 +271,8 @@ fs_handle_output_enter(void *data,
                        struct zwlr_foreign_toplevel_handle_v1 *handle,
                        struct wl_output *toplevel_output) {
   (void)data;
+
+  compositor_sends_output_events = true;
 
   for (size_t i = 0; i < track_toplevels_count; i++) {
     if (track_toplevels[i].handle == handle) {
@@ -403,10 +417,15 @@ void fullscreen_cleanup(void) {
   memset(track_toplevels, 0, sizeof(track_toplevels));
   track_toplevels_count = 0;
   active_toplevel_fullscreen = false;
+  compositor_sends_output_events = false;
 }
 
 bool fullscreen_is_detected(void) {
   return fs_detector.has_fullscreen_toplevel;
+}
+
+bool fs_detector_available(void) {
+  return fs_detector.manager != NULL;
 }
 
 const struct zwlr_foreign_toplevel_manager_v1_listener *

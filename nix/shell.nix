@@ -23,9 +23,6 @@ pkgs.mkShellNoCC {
     wayland-protocols
   ];
   shellHook = ''
-    # Ensure that the Makefile can find and access the Wayland protocols
-    export WAYLAND_PROTOCOLS_DIR="${pkgs.wayland-protocols}/share/wayland-protocols"
-
     # Simple TUI
     echo "🐱 Bongo Cat Development Environment"
     echo "Build output is stored in 'build' if you don't use 'nix build'"

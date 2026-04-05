@@ -125,6 +125,8 @@ static void capture_input_hotplug(char **static_paths, int num_static,
   struct input_event ev[64];
   struct pollfd pfds[MAX_ACTIVE_DEVICES];
   struct timespec last_scan_time = {0, 0};
+  bool initial_devices_found = false;
+  static const int FAST_RETRY_INTERVAL = 5;
 
   while (1) {
     // Check if parent is still alive
@@ -134,10 +136,14 @@ static void capture_input_hotplug(char **static_paths, int num_static,
     }
 
     // Scan for devices periodically
+    // Use a fast retry interval (5s) until at least one device is found,
+    // then switch to the configured scan_interval.
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
-    if (now.tv_sec - last_scan_time.tv_sec >= scan_interval) {
+    int effective_interval =
+        initial_devices_found ? scan_interval : FAST_RETRY_INTERVAL;
+    if (now.tv_sec - last_scan_time.tv_sec >= effective_interval) {
       last_scan_time = now;
       DIR *dir = opendir("/dev/input");
       if (dir) {
@@ -222,6 +228,20 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         // Set to INT_MAX so the condition never triggers again
         last_scan_time.tv_sec = now.tv_sec;
         scan_interval = INT_MAX;
+      }
+
+      // Check if any devices are now open
+      if (!initial_devices_found) {
+        for (int i = 0; i < MAX_ACTIVE_DEVICES; i++) {
+          if (active_devices[i].fd >= 0) {
+            initial_devices_found = true;
+            break;
+          }
+        }
+        if (!initial_devices_found) {
+          bongocat_log_debug("No input devices found yet, retrying in %ds",
+                             FAST_RETRY_INTERVAL);
+        }
       }
     }
 

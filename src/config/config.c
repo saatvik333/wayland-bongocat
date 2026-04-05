@@ -663,7 +663,7 @@ static void config_set_defaults(config_t *config) {
                       "assets/new/bongo-sleeping.svg"},
       .keyboard_devices = NULL,
       .num_keyboard_devices = 0,
-      .hotplug_scan_interval = 300,
+      .hotplug_scan_interval = 30,
       .keyboard_names = NULL,
       .num_names = 0,
       .cat_x_offset = 100,

@@ -25,6 +25,10 @@ void fullscreen_cleanup(void);
 /// toplevel is covering our output).
 bool fullscreen_is_detected(void);
 
+/// Returns true if the foreign-toplevel manager protocol was bound
+/// (fullscreen detection is available).
+bool fs_detector_available(void);
+
 /// Return the listener struct that must be attached when binding the
 /// foreign-toplevel-manager in registry_global.
 const struct zwlr_foreign_toplevel_manager_v1_listener *

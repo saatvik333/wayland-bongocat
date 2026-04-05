@@ -10,7 +10,7 @@
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 # Cat size and position
-cat_height=100
+cat_height=110
 cat_align=center
 cat_x_offset=0
 cat_y_offset=0
@@ -27,13 +27,13 @@ mirror_y=0
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 # Bar dimensions
-overlay_height=180
+overlay_height=120
 
 # Background: 0=transparent, 255=opaque
 overlay_opacity=0
 
 # Position: top, bottom
-overlay_position=top
+overlay_position=bottom
 
 # Layer: top (above windows), overlay (always visible, fullscreen auto-hide detection disabled)
 layer=top
@@ -91,7 +91,7 @@ sleep_end=06:00
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 # How often to rescan for new input devices, in seconds (0=scan once at startup)
-# hotplug_scan_interval=300
+# hotplug_scan_interval=30
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ TEST ANIMATION                                                              │

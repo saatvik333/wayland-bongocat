@@ -8,10 +8,9 @@ result
 *.idb
 *.pdb
 
-# Generated protocol files
-*-protocol.c
-*-protocol.h
-*-client-protocol.h
+# Generated protocol files are now committed to git so that building
+# from source does not require wayland-scanner or wayland-protocols.
+# Regenerate with: make protocols
 
 # IDE files
 .vscode/

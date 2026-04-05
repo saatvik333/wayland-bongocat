@@ -676,10 +676,25 @@ static bongocat_error_t wayland_setup_protocols(void) {
   wayland_update_output();
 
   if (!compositor || !shm || !layer_shell) {
-    bongocat_log_error("Missing required Wayland protocols");
+    if (!compositor)
+      bongocat_log_error("Missing protocol: wl_compositor");
+    if (!shm)
+      bongocat_log_error("Missing protocol: wl_shm");
+    if (!layer_shell)
+      bongocat_log_error("Missing protocol: wlr-layer-shell (required for "
+                         "overlay rendering). Your compositor may not support "
+                         "this protocol.");
+    bongocat_log_error("Cannot start: required Wayland protocols not available");
     wl_registry_destroy(global_registry);
     global_registry = NULL;
     return BONGOCAT_ERROR_WAYLAND;
+  }
+
+  // Warn about optional protocols
+  if (!fs_detector_available()) {
+    bongocat_log_warning("Foreign toplevel protocol not available — fullscreen "
+                         "detection disabled. Overlay will not auto-hide when "
+                         "apps go fullscreen.");
   }
 
   // Configure screen dimensions

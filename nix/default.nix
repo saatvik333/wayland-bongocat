@@ -3,8 +3,6 @@
   stdenv,
   pkg-config,
   wayland,
-  wayland-protocols,
-  wayland-scanner,
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "wayland-bongocat";
@@ -12,18 +10,13 @@ stdenv.mkDerivation (finalAttrs: {
   src = ../.;
 
   # Build toolchain and dependencies
+  # Protocol bindings are pre-generated and committed to git, so
+  # wayland-scanner and wayland-protocols are only needed for `make protocols`.
   strictDeps = true;
-  nativeBuildInputs = [pkg-config wayland-scanner];
+  nativeBuildInputs = [pkg-config];
   buildInputs = [
     wayland
-    wayland-protocols
   ];
-
-  # Build phases
-  # Ensure that the Makefile has the correct directory with the Wayland protocols
-  preBuild = ''
-    export WAYLAND_PROTOCOLS_DIR="${wayland-protocols}/share/wayland-protocols"
-  '';
 
   makeFlags = ["release"];
   installPhase = ''
