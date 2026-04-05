@@ -19,4 +19,4 @@ extern const size_t bongo_both_down_svg_size;
 extern const unsigned char bongo_sleeping_svg[];
 extern const size_t bongo_sleeping_svg_size;
 
-#endif // EMBEDDED_ASSETS_H
+#endif  // EMBEDDED_ASSETS_H

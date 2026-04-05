@@ -355,8 +355,7 @@ void draw_bar(void) {
                         current_config->overlay_height, frame->data,
                         frame->width, frame->height, cat_x, cat_y);
     } else {
-      bongocat_log_debug("Frame %d cache not ready, skipping draw",
-                         anim_index);
+      bongocat_log_debug("Frame %d cache not ready, skipping draw", anim_index);
     }
   } else {
     bongocat_log_debug("Cat hidden due to fullscreen detection");
@@ -684,7 +683,8 @@ static bongocat_error_t wayland_setup_protocols(void) {
       bongocat_log_error("Missing protocol: wlr-layer-shell (required for "
                          "overlay rendering). Your compositor may not support "
                          "this protocol.");
-    bongocat_log_error("Cannot start: required Wayland protocols not available");
+    bongocat_log_error(
+        "Cannot start: required Wayland protocols not available");
     wl_registry_destroy(global_registry);
     global_registry = NULL;
     return BONGOCAT_ERROR_WAYLAND;
@@ -912,11 +912,11 @@ void wayland_set_tick_callback(void (*callback)(void)) {
 }
 
 // Apply double-buffered layer surface properties without destroying surfaces
-static void apply_layer_properties(const config_t *config,
-                                   bool do_position, bool do_layer) {
+static void apply_layer_properties(const config_t *config, bool do_position,
+                                   bool do_layer) {
   if (do_position) {
-    uint32_t anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
-                      ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+    uint32_t anchor =
+        ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
     if (config->overlay_position == POSITION_TOP) {
       anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
     } else {
@@ -972,7 +972,8 @@ void wayland_update_config(config_t *config) {
   // Determine which update path to use:
   // - Full recreate: only for output (monitor) changes
   // - Buffer recreate: for dimension changes (overlay_height, screen_width)
-  // - Property update: for position/layer changes (double-buffered, no recreate)
+  // - Property update: for position/layer changes (double-buffered, no
+  // recreate)
   // - Cache only: for cat_height, mirror, etc.
   bool needs_full_recreate = screen_changed;
   bool needs_buffer_recreate =
@@ -1039,13 +1040,11 @@ void wayland_update_config(config_t *config) {
 
   } else if (needs_buffer_recreate) {
     // PATH 2: Dimensions changed — update size property, recreate buffer only
-    bongocat_log_info("Overlay dimensions changed (%dx%d -> %dx%d)",
-                      old_width, old_height, config->screen_width,
-                      config->overlay_height);
+    bongocat_log_info("Overlay dimensions changed (%dx%d -> %dx%d)", old_width,
+                      old_height, config->screen_width, config->overlay_height);
 
     // Update double-buffered properties on existing layer surface
-    zwlr_layer_surface_v1_set_size(layer_surface, 0,
-                                   config->overlay_height);
+    zwlr_layer_surface_v1_set_size(layer_surface, 0, config->overlay_height);
     apply_layer_properties(config, position_changed, layer_changed);
     wl_surface_commit(surface);
 

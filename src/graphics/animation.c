@@ -308,21 +308,16 @@ typedef struct {
 static embedded_svg_t embedded_svgs[NUM_FRAMES];
 
 static void init_embedded_svgs(void) {
-  embedded_svgs[BONGOCAT_FRAME_BOTH_UP] =
-      (embedded_svg_t){bongo_both_up_svg, bongo_both_up_svg_size,
-                       "bongo-both-up.svg"};
-  embedded_svgs[BONGOCAT_FRAME_LEFT_DOWN] =
-      (embedded_svg_t){bongo_left_down_svg, bongo_left_down_svg_size,
-                       "bongo-left-down.svg"};
-  embedded_svgs[BONGOCAT_FRAME_RIGHT_DOWN] =
-      (embedded_svg_t){bongo_right_down_svg, bongo_right_down_svg_size,
-                       "bongo-right-down.svg"};
-  embedded_svgs[BONGOCAT_FRAME_BOTH_DOWN] =
-      (embedded_svg_t){bongo_both_down_svg, bongo_both_down_svg_size,
-                       "bongo-both-down.svg"};
-  embedded_svgs[BONGOCAT_FRAME_SLEEPING] =
-      (embedded_svg_t){bongo_sleeping_svg, bongo_sleeping_svg_size,
-                       "bongo-sleeping.svg"};
+  embedded_svgs[BONGOCAT_FRAME_BOTH_UP] = (embedded_svg_t){
+      bongo_both_up_svg, bongo_both_up_svg_size, "bongo-both-up.svg"};
+  embedded_svgs[BONGOCAT_FRAME_LEFT_DOWN] = (embedded_svg_t){
+      bongo_left_down_svg, bongo_left_down_svg_size, "bongo-left-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_RIGHT_DOWN] = (embedded_svg_t){
+      bongo_right_down_svg, bongo_right_down_svg_size, "bongo-right-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_BOTH_DOWN] = (embedded_svg_t){
+      bongo_both_down_svg, bongo_both_down_svg_size, "bongo-both-down.svg"};
+  embedded_svgs[BONGOCAT_FRAME_SLEEPING] = (embedded_svg_t){
+      bongo_sleeping_svg, bongo_sleeping_svg_size, "bongo-sleeping.svg"};
 }
 
 static void anim_cleanup_svgs(void) {
@@ -392,8 +387,7 @@ void animation_invalidate_cache(void) {
 }
 
 void animation_cache_frames(int target_w, int target_h, int mirror_x,
-                            int mirror_y,
-                            [[maybe_unused]] int enable_aa) {
+                            int mirror_y, [[maybe_unused]] int enable_aa) {
   animation_invalidate_cache();
 
   if (!anim_rasterizer || target_w <= 0 || target_h <= 0) {
@@ -454,7 +448,8 @@ void animation_cache_frames(int target_w, int target_h, int mirror_x,
       }
     }
 
-    // Convert RGBA -> premultiplied BGRA for Wayland (ARGB8888 is premultiplied)
+    // Convert RGBA -> premultiplied BGRA for Wayland (ARGB8888 is
+    // premultiplied)
     for (size_t px = 0; px < buf_size; px += 4) {
       uint8_t r = rgba_buf[px + 0];
       uint8_t g = rgba_buf[px + 1];
@@ -496,12 +491,9 @@ void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
       } else {
         // Premultiplied alpha "over" compositing
         uint8_t inv_a = 255 - sa;
-        dest[di + 0] =
-            src[si + 0] + (uint8_t)((dest[di + 0] * inv_a) / 255);
-        dest[di + 1] =
-            src[si + 1] + (uint8_t)((dest[di + 1] * inv_a) / 255);
-        dest[di + 2] =
-            src[si + 2] + (uint8_t)((dest[di + 2] * inv_a) / 255);
+        dest[di + 0] = src[si + 0] + (uint8_t)((dest[di + 0] * inv_a) / 255);
+        dest[di + 1] = src[si + 1] + (uint8_t)((dest[di + 1] * inv_a) / 255);
+        dest[di + 2] = src[si + 2] + (uint8_t)((dest[di + 2] * inv_a) / 255);
         dest[di + 3] = sa + (uint8_t)((dest[di + 3] * inv_a) / 255);
       }
     }
