@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <strings.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -24,9 +25,14 @@
 atomic_int *any_key_pressed;
 atomic_int *last_key_code;
 static pid_t input_child_pid = -1;
+static int wake_fd = -1;
 
 pid_t input_get_child_pid(void) {
   return input_child_pid;
+}
+
+int input_get_wake_fd(void) {
+  return wake_fd;
 }
 
 // Child process signal handler - exits quietly without logging
@@ -276,6 +282,12 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         if (key_pressed) {
           atomic_store(last_key_code, code);
           animation_trigger();
+          if (wake_fd >= 0) {
+            uint64_t val = 1;
+            if (write(wake_fd, &val, sizeof(val)) < 0) {
+              // Best-effort wake; ignore errors
+            }
+          }
         }
       }
     }
@@ -322,6 +334,13 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   }
   atomic_store(last_key_code, 0);
 
+  wake_fd = eventfd(0, EFD_NONBLOCK);
+  if (wake_fd < 0) {
+    bongocat_log_warning(
+        "Failed to create eventfd: %s (falling back to polling)",
+        strerror(errno));
+  }
+
   input_child_pid = fork();
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
@@ -330,6 +349,10 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
     munmap(last_key_code, sizeof(atomic_int));
     any_key_pressed = NULL;
     last_key_code = NULL;
+    if (wake_fd >= 0) {
+      close(wake_fd);
+      wake_fd = -1;
+    }
     return BONGOCAT_ERROR_THREAD;
   }
 
@@ -423,6 +446,15 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     atomic_store(last_key_code, 0);
   }
 
+  // Recreate eventfd for the new child process
+  if (wake_fd >= 0) {
+    close(wake_fd);
+  }
+  wake_fd = eventfd(0, EFD_NONBLOCK);
+  if (wake_fd < 0) {
+    bongocat_log_warning("Failed to recreate eventfd: %s", strerror(errno));
+  }
+
   // Fork new process
   input_child_pid = fork();
   if (input_child_pid < 0) {
@@ -478,6 +510,12 @@ void input_cleanup(void) {
     }
 
     input_child_pid = -1;
+  }
+
+  // Cleanup eventfd
+  if (wake_fd >= 0) {
+    close(wake_fd);
+    wake_fd = -1;
   }
 
   // Cleanup shared memory

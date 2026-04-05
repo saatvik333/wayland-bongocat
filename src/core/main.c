@@ -505,6 +505,14 @@ static bongocat_error_t system_initialize_components(void) {
     return result;
   }
 
+  // Build initial pre-scaled frame cache (images loaded, config set)
+  {
+    int cat_h = g_config.cat_height;
+    int cat_w = (cat_h * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
+    animation_cache_frames(cat_w, cat_h, g_config.mirror_x, g_config.mirror_y,
+                           g_config.enable_antialiasing);
+  }
+
   // Start input monitoring
   result = input_start_monitoring(
       g_config.keyboard_devices, g_config.num_keyboard_devices,

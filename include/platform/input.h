@@ -36,4 +36,7 @@ void input_cleanup(void);
 // Get child PID (async-signal-safe accessor for crash handler)
 pid_t input_get_child_pid(void);
 
+// Get eventfd for waking animation thread on input events (-1 if unavailable)
+int input_get_wake_fd(void);
+
 #endif  // INPUT_H

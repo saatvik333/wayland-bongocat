@@ -15,7 +15,9 @@
 #if defined(__GNUC__)
 #  pragma GCC diagnostic pop
 #endif
+#include <poll.h>
 #include <time.h>
+#include <unistd.h>
 
 void draw_bar(void);
 
@@ -28,6 +30,7 @@ unsigned char *anim_imgs[NUM_FRAMES];
 int anim_width[NUM_FRAMES], anim_height[NUM_FRAMES];
 int anim_index = 0;
 pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
+cached_frame_t anim_cached_frames[NUM_FRAMES] = {0};
 
 // Animation system state
 static config_t *current_config;
@@ -521,18 +524,28 @@ static void *anim_thread_main(void *arg __attribute__((unused))) {
       force_redraw = false;
     }
 
-    // Reduce sleep when actively animating, increase when idle
     if (state_changed) {
-      // Active animation - use configured frame rate
       nanosleep(&frame_delay, NULL);
     } else {
-      // Idle - can sleep a bit longer (reduce polling frequency)
-      // Clamp to prevent nanoseconds overflow (max 999999999)
-      long idle_ns = state.frame_time_ns * 2;
-      if (idle_ns > 999999999L)
-        idle_ns = 999999999L;
-      struct timespec idle_delay = {0, idle_ns};
-      nanosleep(&idle_delay, NULL);
+      int wfd = input_get_wake_fd();
+      if (wfd >= 0) {
+        // Wait for input event or 1-second housekeeping timeout
+        struct pollfd pfd = {.fd = wfd, .events = POLLIN};
+        poll(&pfd, 1, 1000);
+        if (pfd.revents & POLLIN) {
+          uint64_t val;
+          if (read(wfd, &val, sizeof(val)) < 0) {
+            // Best-effort drain; ignore errors
+          }
+        }
+      } else {
+        // Fallback: no eventfd, use polling
+        long idle_ns = state.frame_time_ns * 2;
+        if (idle_ns > 999999999L)
+          idle_ns = 999999999L;
+        struct timespec idle_delay = {0, idle_ns};
+        nanosleep(&idle_delay, NULL);
+      }
     }
   }
 
@@ -598,6 +611,58 @@ static bongocat_error_t anim_load_embedded_images(void) {
 }
 
 // =============================================================================
+// FRAME CACHE MODULE
+// =============================================================================
+
+void animation_invalidate_cache(void) {
+  for (int i = 0; i < NUM_FRAMES; i++) {
+    free(anim_cached_frames[i].data);
+    anim_cached_frames[i].data = NULL;
+    anim_cached_frames[i].width = 0;
+    anim_cached_frames[i].height = 0;
+  }
+}
+
+void animation_cache_frames(int target_w, int target_h, int mirror_x,
+                            int mirror_y, int enable_aa) {
+  (void)mirror_x;
+  (void)mirror_y;
+  (void)enable_aa;
+
+  animation_invalidate_cache();
+
+  for (int i = 0; i < NUM_FRAMES; i++) {
+    if (!anim_imgs[i] || anim_width[i] <= 0 || anim_height[i] <= 0) {
+      continue;
+    }
+
+    if (target_w <= 0 || target_h <= 0) {
+      continue;
+    }
+
+    size_t buf_size = (size_t)target_w * (size_t)target_h * 4U;
+    uint8_t *cache_buf = calloc(1, buf_size);
+    if (!cache_buf) {
+      bongocat_log_error("Failed to allocate frame cache for frame %d", i);
+      continue;
+    }
+
+    // blit_image_scaled reads mirror/aa settings from current_config
+    // internally, so we pass src==dst dimensions to perform the scaled blit
+    // into the cache
+    blit_image_scaled(cache_buf, target_w, target_h, anim_imgs[i],
+                      anim_width[i], anim_height[i], 0, 0, target_w, target_h);
+
+    anim_cached_frames[i].data = cache_buf;
+    anim_cached_frames[i].width = target_w;
+    anim_cached_frames[i].height = target_h;
+  }
+
+  bongocat_log_debug("Cached %d animation frames at %dx%d", NUM_FRAMES,
+                     target_w, target_h);
+}
+
+// =============================================================================
 // PUBLIC API IMPLEMENTATION
 // =============================================================================
 
@@ -654,6 +719,9 @@ void animation_cleanup(void) {
     animation_thread_started = false;
     bongocat_log_debug("Animation thread stopped");
   }
+
+  // Cleanup cached frames
+  animation_invalidate_cache();
 
   // Cleanup loaded images
   if (animation_initialized) {

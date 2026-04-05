@@ -64,6 +64,7 @@ typedef struct {
 } ConfigWatcher;
 
 // Output monitor reference for multi-monitor support
+// Combines xdg-output metadata with wl_output screen dimensions
 typedef struct {
   struct wl_output *wl_output;
   struct zxdg_output_v1 *xdg_output;
@@ -73,6 +74,14 @@ typedef struct {
   int x, y;
   int width, height;
   int hypr_id;  // monitor ID in Hyprland
+  // Screen dimensions (from wl_output mode/geometry events)
+  int screen_width;
+  int screen_height;
+  int transform;
+  int raw_width;
+  int raw_height;
+  bool mode_received;
+  bool geometry_received;
 } output_ref_t;
 
 // =============================================================================

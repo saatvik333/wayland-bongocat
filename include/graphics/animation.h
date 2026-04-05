@@ -21,6 +21,19 @@ extern int anim_height[NUM_FRAMES];
 extern int anim_index;
 extern pthread_mutex_t anim_lock;
 
+// Pre-scaled frame cache (avoids repeated scaling of constant source images)
+typedef struct {
+  uint8_t *data;  // Pre-scaled BGRA pixel data (NULL if not cached)
+  int width;
+  int height;
+} cached_frame_t;
+
+extern cached_frame_t anim_cached_frames[NUM_FRAMES];
+
+void animation_cache_frames(int target_w, int target_h, int mirror_x,
+                            int mirror_y, int enable_aa);
+void animation_invalidate_cache(void);
+
 // =============================================================================
 // ANIMATION LIFECYCLE
 // =============================================================================
