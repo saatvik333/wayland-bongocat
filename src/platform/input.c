@@ -7,6 +7,7 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/input.h>
 #include <poll.h>
 #include <signal.h>
@@ -26,6 +27,27 @@ atomic_int *any_key_pressed;
 atomic_int *last_key_code;
 static pid_t input_child_pid = -1;
 static int wake_fd = -1;
+
+static void wait_child_exit(pid_t pid, int max_attempts) {
+  int status;
+  for (int i = 0; i < max_attempts; i++) {
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid || result == -1)
+      return;
+    usleep(100000);
+  }
+  kill(pid, SIGKILL);
+  waitpid(pid, &status, 0);
+}
+
+static atomic_int *alloc_shared_atomic(void) {
+  atomic_int *ptr = mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (ptr == MAP_FAILED)
+    return NULL;
+  atomic_store(ptr, 0);
+  return ptr;
+}
 
 pid_t input_get_child_pid(void) {
   return input_child_pid;
@@ -179,8 +201,8 @@ static void capture_input_hotplug(char **static_paths, int num_static,
 
             if (slot >= 0) {
               active_devices[slot].fd = fd;
-              strncpy(active_devices[slot].path, path,
-                      sizeof(active_devices[slot].path) - 1);
+              snprintf(active_devices[slot].path,
+                       sizeof(active_devices[slot].path), "%s", path);
               bongocat_log_info("Hotplug: Attached device %s (fd=%d)", path,
                                 fd);
             } else {
@@ -199,7 +221,7 @@ static void capture_input_hotplug(char **static_paths, int num_static,
       if (scan_interval == 0) {
         // Set to INT_MAX so the condition never triggers again
         last_scan_time.tv_sec = now.tv_sec;
-        scan_interval = __INT_MAX__;
+        scan_interval = INT_MAX;
       }
     }
 
@@ -312,27 +334,21 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   bongocat_log_info("Initializing input hotplug system");
 
   // Initialize shared memory for key press state
-  any_key_pressed =
-      (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-  if (any_key_pressed == MAP_FAILED) {
+  any_key_pressed = alloc_shared_atomic();
+  if (!any_key_pressed) {
     bongocat_log_error("Failed to create shared memory for input: %s",
                        strerror(errno));
     return BONGOCAT_ERROR_MEMORY;
   }
-  atomic_store(any_key_pressed, 0);
 
   // Shared memory for last key code (hand mapping)
-  last_key_code =
-      (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-  if (last_key_code == MAP_FAILED) {
+  last_key_code = alloc_shared_atomic();
+  if (!last_key_code) {
     bongocat_log_error("Failed to create shared memory for key code: %s",
                        strerror(errno));
     munmap(any_key_pressed, sizeof(atomic_int));
     return BONGOCAT_ERROR_MEMORY;
   }
-  atomic_store(last_key_code, 0);
 
   wake_fd = eventfd(0, EFD_NONBLOCK);
   if (wake_fd < 0) {
@@ -377,37 +393,7 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     bongocat_log_debug("Stopping current input monitoring (PID: %d)",
                        input_child_pid);
     kill(input_child_pid, SIGTERM);
-
-    // Wait for child to terminate with timeout
-    int status;
-    int wait_attempts = 0;
-    while (wait_attempts < 10) {
-      pid_t result = waitpid(input_child_pid, &status, WNOHANG);
-      if (result == input_child_pid) {
-        bongocat_log_debug("Previous input monitoring process terminated");
-        break;
-      } else if (result == -1) {
-        if (errno == ECHILD) {
-          bongocat_log_debug(
-              "Input child process already cleaned up by signal handler");
-          break;
-        } else {
-          bongocat_log_warning("Error waiting for input child process: %s",
-                               strerror(errno));
-          break;
-        }
-      }
-
-      usleep(100000);
-      wait_attempts++;
-    }
-
-    if (wait_attempts >= 10) {
-      bongocat_log_warning("Force killing previous input monitoring process");
-      kill(input_child_pid, SIGKILL);
-      waitpid(input_child_pid, &status, 0);
-    }
-
+    wait_child_exit(input_child_pid, 10);
     input_child_pid = -1;
   }
 
@@ -416,25 +402,20 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
       (any_key_pressed == NULL || any_key_pressed == MAP_FAILED);
 
   if (need_new_shm) {
-    any_key_pressed =
-        (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (any_key_pressed == MAP_FAILED) {
+    any_key_pressed = alloc_shared_atomic();
+    if (!any_key_pressed) {
       bongocat_log_error("Failed to create shared memory for input: %s",
                          strerror(errno));
       return BONGOCAT_ERROR_MEMORY;
     }
-    atomic_store(any_key_pressed, 0);
   }
 
   bool need_new_key_shm =
       (last_key_code == NULL || last_key_code == MAP_FAILED);
 
   if (need_new_key_shm) {
-    last_key_code =
-        (atomic_int *)mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (last_key_code == MAP_FAILED) {
+    last_key_code = alloc_shared_atomic();
+    if (!last_key_code) {
       bongocat_log_error("Failed to create shared memory for key code: %s",
                          strerror(errno));
       if (need_new_shm) {
@@ -443,7 +424,6 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
       }
       return BONGOCAT_ERROR_MEMORY;
     }
-    atomic_store(last_key_code, 0);
   }
 
   // Recreate eventfd for the new child process
@@ -489,26 +469,7 @@ void input_cleanup(void) {
     bongocat_log_debug("Terminating input monitoring child process (PID: %d)",
                        input_child_pid);
     kill(input_child_pid, SIGTERM);
-
-    int status;
-    int wait_attempts = 0;
-    while (wait_attempts < 10) {
-      pid_t result = waitpid(input_child_pid, &status, WNOHANG);
-      if (result == input_child_pid) {
-        break;
-      } else if (result == -1) {
-        break;
-      }
-      usleep(100000);
-      wait_attempts++;
-    }
-
-    if (wait_attempts >= 10) {
-      bongocat_log_warning("Force killing input monitoring child process");
-      kill(input_child_pid, SIGKILL);
-      waitpid(input_child_pid, &status, 0);
-    }
-
+    wait_child_exit(input_child_pid, 10);
     input_child_pid = -1;
   }
 

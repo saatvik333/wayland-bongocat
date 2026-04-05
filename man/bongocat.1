@@ -28,7 +28,7 @@ Force the overlay to display on a specific monitor output (e.g., HDMI-A-1). Over
 Watch the configuration file for changes and automatically reload without restarting (uses inotify).
 .TP
 .BR \-t ", " \-\-toggle
-Send a signal (SIGUSR1) to a running bongocat instance to toggle its visibility on/off. If no instance is running, this starts a new one.
+Send SIGTERM to a running bongocat instance to stop it. If no instance is running, this starts a new one.
 .TP
 .BR \-h ", " \-\-help
 Display this help message and exit.

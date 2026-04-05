@@ -41,7 +41,6 @@ typedef struct {
   char *output_name;
   char **output_names;
   int num_output_names;
-  int bar_height;
   int overlay_height;
   int overlay_opacity;
   layer_type_t layer;

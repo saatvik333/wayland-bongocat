@@ -12,6 +12,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define MAX_CHILD_ARGV 20
+
 int multi_monitor_launch(int argc, char *argv[], const char *config_path,
                          int watch_config, char **output_names,
                          size_t output_count) {
@@ -68,7 +70,7 @@ int multi_monitor_launch(int argc, char *argv[], const char *config_path,
     }
 
     if (pid == 0) {
-      char *new_argv[20];
+      char *new_argv[MAX_CHILD_ARGV];
       int idx = 0;
 
       new_argv[idx++] = argv[0];
@@ -82,6 +84,11 @@ int multi_monitor_launch(int argc, char *argv[], const char *config_path,
       new_argv[idx++] = "--monitor";
       new_argv[idx++] = output_names[i];
       new_argv[idx++] = "--multi-monitor-child";
+      if (idx >= MAX_CHILD_ARGV) {
+        bongocat_log_error("Too many child argv entries for output '%s'",
+                           output_names[i]);
+        _exit(1);
+      }
       new_argv[idx] = NULL;
 
       execvp(argv[0], new_argv);

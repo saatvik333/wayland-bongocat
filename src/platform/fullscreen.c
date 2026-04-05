@@ -78,7 +78,7 @@ static bool update_fullscreen_state_toplevel(tracked_toplevel_t *tracked,
   tracked->is_activated = is_activated;
 
   /// @NOTE: tracked.output can always be NULL when no output.enter/output.leave
-  /// event were triggert
+  /// event were triggered
   // Only trigger overlay update if this fullscreen window is on our output
   if (tracked->output == output && state_changed) {
     fs_update_state(is_fullscreen);
@@ -142,7 +142,7 @@ fs_handle_toplevel_state(void *data,
   }
 
   /// @NOTE: tracked.output can be NULL when no output.enter/output.leave
-  /// event were triggerd
+  /// event were triggered
   bool output_found = false;
   bool handle_tracked = false;
   bool handle_has_output = false;

@@ -3,7 +3,6 @@
 
 #include <stdarg.h>
 #include <stdatomic.h>
-#include <sys/time.h>
 #include <time.h>
 
 static atomic_int debug_enabled = 1;
@@ -13,15 +12,13 @@ void bongocat_error_init(int enable_debug) {
 }
 
 static void log_timestamp(FILE *stream) {
-  struct timeval tv;
-  struct tm tm_info;
-  char timestamp[64];
-
-  gettimeofday(&tv, NULL);
-  localtime_r(&tv.tv_sec, &tm_info);  // Thread-safe version
-
-  strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm_info);
-  fprintf(stream, "[%s.%03ld] ", timestamp, tv.tv_usec / 1000);
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  time_t sec = ts.tv_sec;
+  struct tm *tm_info = localtime(&sec);
+  char time_str[32];
+  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+  fprintf(stream, "[%s.%03ld] ", time_str, ts.tv_nsec / 1000000L);
 }
 
 void bongocat_log_error(const char *format, ...) {

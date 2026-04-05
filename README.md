@@ -91,23 +91,35 @@ keyboard_device=/dev/input/event4
 <details>
 <summary>Click to expand all options</summary>
 
-| Option                | Values            | Default | Description          |
-| --------------------- | ----------------- | ------- | -------------------- |
-| `cat_height`          | 10-200            | 80      | Cat size in pixels   |
-| `cat_align`           | left/center/right | center  | Horizontal alignment |
-| `cat_x_offset`        | any int           | 0       | Horizontal offset    |
-| `cat_y_offset`        | any int           | 0       | Vertical offset      |
-| `enable_antialiasing` | 0/1               | 1       | Smooth scaling       |
-| `overlay_height`      | 20-300            | 80      | Bar height           |
-| `overlay_opacity`     | 0-255             | 0       | Background opacity   |
-| `overlay_position`    | top/bottom        | bottom  | Screen position      |
-| `layer`               | top/overlay       | top     | Layer type           |
-| `keyboard_device`     | path              | —       | Device to monitor    |
-| `monitor`             | comma list        | auto    | Monitors to render on |
-| `fps`                 | 1-120             | 60      | Frame rate           |
-| `idle_sleep_timeout`  | seconds           | 0       | Sleep after idle     |
-| `mirror_x`            | 0/1               | 0       | Flip horizontal      |
-| `mirror_y`            | 0/1               | 0       | Flip vertical        |
+| Option                     | Values            | Default  | Description                          |
+| -------------------------- | ----------------- | -------- | ------------------------------------ |
+| `cat_height`               | 10-200            | 40       | Cat size in pixels                   |
+| `cat_align`                | left/center/right | center   | Horizontal alignment                 |
+| `cat_x_offset`             | any int           | 100      | Horizontal offset from alignment     |
+| `cat_y_offset`             | any int           | 10       | Vertical offset from center          |
+| `enable_antialiasing`      | 0/1               | 1        | Smooth scaling (bilinear/box filter) |
+| `overlay_height`           | 20-300            | 50       | Overlay bar height in pixels         |
+| `overlay_opacity`          | 0-255             | 150      | Background opacity (0=transparent)   |
+| `overlay_position`         | top/bottom        | top      | Screen edge position                 |
+| `layer`                    | top/overlay       | top      | Wayland layer type                   |
+| `keyboard_device`          | /dev/input/path   | auto     | Specific evdev device to monitor     |
+| `keyboard_name`            | string            | —        | Match device by name (for hotplug)   |
+| `monitor`                  | comma list        | auto     | Monitors to render on                |
+| `fps`                      | 1-120             | 60       | Animation frame rate                 |
+| `mirror_x`                 | 0/1               | 0        | Flip cat horizontally                |
+| `mirror_y`                 | 0/1               | 0        | Flip cat vertically                  |
+| `enable_hand_mapping`      | 0/1               | 1        | Map keys to left/right hand frames   |
+| `keypress_duration`        | ms                | 100      | How long key-down frame is held      |
+| `idle_frame`               | 0-3               | 0        | Frame shown when idle                |
+| `idle_sleep_timeout`       | seconds           | 0        | Hide overlay after idle (0=never)    |
+| `hotplug_scan_interval`    | seconds           | 300      | Device rescan interval (0=once)      |
+| `enable_scheduled_sleep`   | 0/1               | 0        | Enable time-based sleep schedule     |
+| `sleep_begin`              | HH:MM             | 00:00    | Sleep schedule start time            |
+| `sleep_end`                | HH:MM             | 00:00    | Sleep schedule end time              |
+| `disable_fullscreen_hide`  | 0/1               | 0        | Keep overlay visible in fullscreen   |
+| `enable_debug`             | 0/1               | 0        | Enable debug logging                 |
+| `test_animation_duration`  | ms                | 200      | Test animation frame duration        |
+| `test_animation_interval`  | ms                | 0        | Test animation repeat interval       |
 
 </details>
 

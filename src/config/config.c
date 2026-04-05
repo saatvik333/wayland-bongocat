@@ -168,8 +168,7 @@ static bongocat_error_t config_expand_array(char ***array_ptr, int *count,
     return BONGOCAT_ERROR_MEMORY;
   }
 
-  strncpy((*array_ptr)[*count], str, len);
-  (*array_ptr)[*count][len] = '\0';
+  memcpy((*array_ptr)[*count], str, len + 1);  // includes null terminator
   (*count)++;
 
   return BONGOCAT_SUCCESS;
@@ -300,54 +299,57 @@ static bool config_parse_int(const char *str, int *out) {
 
 static bongocat_error_t
 config_parse_integer_key(config_t *config, const char *key, const char *value) {
+  // Identify which field this key maps to (NULL = not an integer key)
+  int *target = NULL;
+  if (strcmp(key, "cat_x_offset") == 0)
+    target = &config->cat_x_offset;
+  else if (strcmp(key, "cat_y_offset") == 0)
+    target = &config->cat_y_offset;
+  else if (strcmp(key, "cat_height") == 0)
+    target = &config->cat_height;
+  else if (strcmp(key, "overlay_height") == 0)
+    target = &config->overlay_height;
+  else if (strcmp(key, "idle_frame") == 0)
+    target = &config->idle_frame;
+  else if (strcmp(key, "keypress_duration") == 0)
+    target = &config->keypress_duration;
+  else if (strcmp(key, "test_animation_duration") == 0)
+    target = &config->test_animation_duration;
+  else if (strcmp(key, "test_animation_interval") == 0)
+    target = &config->test_animation_interval;
+  else if (strcmp(key, "fps") == 0)
+    target = &config->fps;
+  else if (strcmp(key, "overlay_opacity") == 0)
+    target = &config->overlay_opacity;
+  else if (strcmp(key, "mirror_x") == 0)
+    target = &config->mirror_x;
+  else if (strcmp(key, "mirror_y") == 0)
+    target = &config->mirror_y;
+  else if (strcmp(key, "enable_antialiasing") == 0)
+    target = &config->enable_antialiasing;
+  else if (strcmp(key, "enable_hand_mapping") == 0)
+    target = &config->enable_hand_mapping;
+  else if (strcmp(key, "enable_debug") == 0)
+    target = &config->enable_debug;
+  else if (strcmp(key, "enable_scheduled_sleep") == 0)
+    target = &config->enable_scheduled_sleep;
+  else if (strcmp(key, "idle_sleep_timeout") == 0)
+    target = &config->idle_sleep_timeout_sec;
+  else if (strcmp(key, "hotplug_scan_interval") == 0)
+    target = &config->hotplug_scan_interval;
+  else if (strcmp(key, "disable_fullscreen_hide") == 0)
+    target = &config->disable_fullscreen_hide;
+
+  if (!target)
+    return BONGOCAT_ERROR_INVALID_PARAM;  // Not an integer key
+
   int int_value;
   if (!config_parse_int(value, &int_value)) {
     bongocat_log_warning("Invalid integer value '%s' for key '%s'", value, key);
     return BONGOCAT_ERROR_INVALID_PARAM;
   }
 
-  if (strcmp(key, "cat_x_offset") == 0) {
-    config->cat_x_offset = int_value;
-  } else if (strcmp(key, "cat_y_offset") == 0) {
-    config->cat_y_offset = int_value;
-  } else if (strcmp(key, "cat_height") == 0) {
-    config->cat_height = int_value;
-  } else if (strcmp(key, "overlay_height") == 0) {
-    config->overlay_height = int_value;
-  } else if (strcmp(key, "idle_frame") == 0) {
-    config->idle_frame = int_value;
-  } else if (strcmp(key, "keypress_duration") == 0) {
-    config->keypress_duration = int_value;
-  } else if (strcmp(key, "test_animation_duration") == 0) {
-    config->test_animation_duration = int_value;
-  } else if (strcmp(key, "test_animation_interval") == 0) {
-    config->test_animation_interval = int_value;
-  } else if (strcmp(key, "fps") == 0) {
-    config->fps = int_value;
-  } else if (strcmp(key, "overlay_opacity") == 0) {
-    config->overlay_opacity = int_value;
-  } else if (strcmp(key, "mirror_x") == 0) {
-    config->mirror_x = int_value;
-  } else if (strcmp(key, "mirror_y") == 0) {
-    config->mirror_y = int_value;
-  } else if (strcmp(key, "enable_antialiasing") == 0) {
-    config->enable_antialiasing = int_value;
-  } else if (strcmp(key, "enable_hand_mapping") == 0) {
-    config->enable_hand_mapping = int_value;
-  } else if (strcmp(key, "enable_debug") == 0) {
-    config->enable_debug = int_value;
-  } else if (strcmp(key, "enable_scheduled_sleep") == 0) {
-    config->enable_scheduled_sleep = int_value;
-  } else if (strcmp(key, "idle_sleep_timeout") == 0) {
-    config->idle_sleep_timeout_sec = int_value;
-  } else if (strcmp(key, "hotplug_scan_interval") == 0) {
-    config->hotplug_scan_interval = int_value;
-  } else if (strcmp(key, "disable_fullscreen_hide") == 0) {
-    config->disable_fullscreen_hide = int_value;
-  } else {
-    return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
-  }
-
+  *target = int_value;
   return BONGOCAT_SUCCESS;
 }
 
@@ -471,8 +473,6 @@ config_parse_string_key(config_t *config, const char *key, const char *value) {
   } else {
     return BONGOCAT_ERROR_INVALID_PARAM;  // Unknown key
   }
-
-  return BONGOCAT_SUCCESS;
 }
 
 static bongocat_error_t
@@ -656,7 +656,6 @@ static void config_set_defaults(config_t *config) {
       .output_name = NULL, // Will default to automatic one if kept null
       .output_names = NULL,
       .num_output_names = 0,
-      .bar_height = DEFAULT_BAR_HEIGHT,
       .asset_paths = {"assets/bongo-cat-both-up.png",
                       "assets/bongo-cat-left-down.png", "assets/bongo-cat-right-down.png",
                       "assets/bongo-cat-both-down.png"},
@@ -700,9 +699,6 @@ static bongocat_error_t config_set_default_devices(config_t *config) {
 }
 
 static void config_finalize(config_t *config) {
-  // Update bar_height from config
-  config->bar_height = config->overlay_height;
-
   // Initialize error system with debug setting
   bongocat_error_init(config->enable_debug);
 }
@@ -710,7 +706,7 @@ static void config_finalize(config_t *config) {
 static void config_log_summary(const config_t *config) {
   bongocat_log_debug("Configuration loaded successfully");
   bongocat_log_debug("  Screen: %dx%d", config->screen_width,
-                     config->bar_height);
+                     config->overlay_height);
   bongocat_log_debug("  Cat: %dx%d at offset (%d,%d)", config->cat_height,
                      (config->cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT,
                      config->cat_x_offset, config->cat_y_offset);

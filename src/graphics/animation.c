@@ -4,6 +4,7 @@
 
 #include "graphics/embedded_assets.h"
 #include "platform/input.h"
+#include "platform/wayland.h"
 #include "utils/memory.h"
 
 #if defined(__GNUC__)
@@ -19,8 +20,6 @@
 #include <time.h>
 #include <unistd.h>
 
-void draw_bar(void);
-
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
 // =============================================================================
@@ -35,17 +34,13 @@ cached_frame_t anim_cached_frames[NUM_FRAMES] = {0};
 // Animation system state
 static config_t *current_config;
 static pthread_t anim_thread;
-static _Atomic bool animation_running = false;
+static atomic_bool animation_running = false;
 static bool animation_thread_started = false;
 static bool animation_initialized = false;
 
 // =============================================================================
 // DRAWING OPERATIONS MODULE
 // =============================================================================
-
-static bool drawing_is_pixel_in_bounds(int x, int y, int width, int height) {
-  return (x >= 0 && y >= 0 && x < width && y < height);
-}
 
 static void drawing_copy_pixel(uint8_t *dest, const unsigned char *src,
                                int dest_idx, int src_idx) {
@@ -286,23 +281,6 @@ void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
   }
 }
 
-void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
-               uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-  for (int j = y; j < y + h; j++) {
-    for (int i = x; i < x + w; i++) {
-      if (!drawing_is_pixel_in_bounds(i, j, width, height)) {
-        continue;
-      }
-
-      int idx = (j * width + i) * 4;
-      dest[idx + 0] = b;
-      dest[idx + 1] = g;
-      dest[idx + 2] = r;
-      dest[idx + 3] = a;
-    }
-  }
-}
-
 // =============================================================================
 // ANIMATION STATE MANAGEMENT MODULE
 // =============================================================================
@@ -316,9 +294,9 @@ typedef struct {
 } animation_state_t;
 
 static long anim_get_current_time_us(void) {
-  struct timeval now;
-  gettimeofday(&now, NULL);
-  return now.tv_sec * 1000000 + now.tv_usec;
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
 }
 
 static bool anim_is_sleep_time(const config_t *config) {
@@ -497,7 +475,7 @@ static void anim_init_state(animation_state_t *state) {
   state->last_key_pressed_timestamp = anim_get_current_time_us();
 }
 
-static void *anim_thread_main(void *arg __attribute__((unused))) {
+static void *anim_thread_main([[maybe_unused]] void *arg) {
   animation_state_t state;
   anim_init_state(&state);
 
@@ -524,12 +502,14 @@ static void *anim_thread_main(void *arg __attribute__((unused))) {
       force_redraw = false;
     }
 
-    if (state_changed) {
+    // Stay at FPS-rate while animating (non-idle frame or state just changed).
+    // Drop to eventfd-driven idle sleep only when truly idle.
+    bool animating = state_changed || anim_index != current_config->idle_frame;
+    if (animating) {
       nanosleep(&frame_delay, NULL);
     } else {
       int wfd = input_get_wake_fd();
       if (wfd >= 0) {
-        // Wait for input event or 1-second housekeeping timeout
         struct pollfd pfd = {.fd = wfd, .events = POLLIN};
         poll(&pfd, 1, 1000);
         if (pfd.revents & POLLIN) {
@@ -539,7 +519,6 @@ static void *anim_thread_main(void *arg __attribute__((unused))) {
           }
         }
       } else {
-        // Fallback: no eventfd, use polling
         long idle_ns = state.frame_time_ns * 2;
         if (idle_ns > 999999999L)
           idle_ns = 999999999L;
@@ -662,6 +641,36 @@ void animation_cache_frames(int target_w, int target_h, int mirror_x,
                      target_w, target_h);
 }
 
+void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
+                       const uint8_t *src, int src_w, int src_h, int offset_x,
+                       int offset_y) {
+  for (int y = 0; y < src_h; y++) {
+    int dy = y + offset_y;
+    if (dy < 0 || dy >= dest_h)
+      continue;
+    for (int x = 0; x < src_w; x++) {
+      int dx = x + offset_x;
+      if (dx < 0 || dx >= dest_w)
+        continue;
+      int si = (y * src_w + x) * 4;
+      int di = (dy * dest_w + dx) * 4;
+      uint8_t sa = src[si + 3];
+      if (sa == 0)
+        continue;
+      if (sa == 255) {
+        memcpy(&dest[di], &src[si], 4);
+      } else {
+        float a = sa / 255.0f;
+        float inv = 1.0f - a;
+        dest[di + 0] = (uint8_t)(src[si + 0] * a + dest[di + 0] * inv);
+        dest[di + 1] = (uint8_t)(src[si + 1] * a + dest[di + 1] * inv);
+        dest[di + 2] = (uint8_t)(src[si + 2] * a + dest[di + 2] * inv);
+        dest[di + 3] = 255;
+      }
+    }
+  }
+}
+
 // =============================================================================
 // PUBLIC API IMPLEMENTATION
 // =============================================================================
@@ -681,6 +690,9 @@ bongocat_error_t animation_init(config_t *config) {
   }
 
   animation_initialized = true;
+
+  // Seed the random number generator so frame selection varies between runs
+  srand((unsigned)time(NULL));
 
   bongocat_log_info(
       "Animation system initialized successfully with embedded assets");

@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,7 +48,7 @@
 
 // Inotify buffer sizing
 #define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))
-#define INOTIFY_BUF_LEN    (1024 * (INOTIFY_EVENT_SIZE + 16))
+#define INOTIFY_BUF_LEN    (16 * (INOTIFY_EVENT_SIZE + 256))
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -58,7 +59,7 @@ typedef struct {
   int inotify_fd;
   int watch_fd;
   pthread_t watcher_thread;
-  _Atomic bool watching;
+  atomic_bool watching;
   char *config_path;
   void (*reload_callback)(const char *config_path);
 } ConfigWatcher;

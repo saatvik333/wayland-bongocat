@@ -29,7 +29,7 @@ static config_t g_config;
 static ConfigWatcher g_config_watcher = {.inotify_fd = -1, .watch_fd = -1};
 static bool g_manage_pid_file = true;
 static const char *g_forced_monitor_name = NULL;
-static _Atomic bool g_reload_pending = false;
+static atomic_bool g_reload_pending = false;
 static int g_pid_fd = -1;
 
 static const char *get_pid_file_path(void) {
@@ -443,7 +443,7 @@ static void config_reload_apply(const char *config_path) {
 
   bongocat_log_info("Configuration reloaded successfully!");
   bongocat_log_info("New screen dimensions: %dx%d", g_config.screen_width,
-                    g_config.bar_height);
+                    g_config.overlay_height);
 }
 
 static void config_reload_callback(const char *config_path) {
@@ -535,7 +535,7 @@ static bongocat_error_t system_initialize_components(void) {
   return BONGOCAT_SUCCESS;
 }
 
-static void system_cleanup_and_exit(int exit_code) {
+_Noreturn static void system_cleanup_and_exit(int exit_code) {
   bongocat_log_info("Performing cleanup...");
 
   // Remove PID file and release lock
@@ -742,7 +742,7 @@ int main(int argc, char *argv[]) {
   }
 
   bongocat_log_info("Screen dimensions: %dx%d", g_config.screen_width,
-                    g_config.bar_height);
+                    g_config.overlay_height);
 
   if (g_config.enable_debug) {
     bongocat_log_warning(

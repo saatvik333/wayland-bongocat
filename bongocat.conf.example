@@ -60,7 +60,7 @@ keyboard_device=/dev/input/event4
 # │ ANIMATION                                                                   │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
-fps=30
+fps=60
 idle_frame=0
 keypress_duration=100
 
@@ -78,6 +78,29 @@ idle_sleep_timeout=0
 enable_scheduled_sleep=0
 sleep_begin=22:00
 sleep_end=06:00
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FULLSCREEN                                                                  │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Keep overlay visible even when a fullscreen window is detected (0=hide, 1=show)
+# disable_fullscreen_hide=0
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ HOTPLUG                                                                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# How often to rescan for new input devices, in seconds (0=scan once at startup)
+# hotplug_scan_interval=300
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ TEST ANIMATION                                                              │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# Duration of each test animation frame in milliseconds
+# test_animation_duration=200
+# Interval between test animation cycles in milliseconds (0=disabled)
+# test_animation_interval=0
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ DEBUG                                                                       │

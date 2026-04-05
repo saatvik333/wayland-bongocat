@@ -189,7 +189,7 @@ Ensure your compositor supports the layer shell protocol:
 - ✅ **Hyprland** - Full support
 - ✅ **Sway** - Full support
 - ✅ **Wayfire** - Compatible
-- ✅ **KDE Wayland** - Compatiable
+- ✅ **KDE Wayland** - Compatible
 - ❌ **GNOME Wayland** - Support Unknown
 
 ## Advanced Usage

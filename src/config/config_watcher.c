@@ -4,6 +4,7 @@
 #include "core/bongocat.h"
 #include "utils/error.h"
 
+#include <errno.h>
 #include <poll.h>
 #include <string.h>
 #include <time.h>

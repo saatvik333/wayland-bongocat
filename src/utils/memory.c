@@ -207,7 +207,8 @@ void *bongocat_malloc_debug(size_t size, const char *file, int line) {
   return ptr;
 }
 
-void bongocat_free_debug(void *ptr, const char *file, int line) {
+void bongocat_free_debug(void *ptr, [[maybe_unused]] const char *file,
+                         [[maybe_unused]] int line) {
   if (!ptr)
     return;
 

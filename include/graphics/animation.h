@@ -54,13 +54,14 @@ void animation_trigger(void);
 // RENDERING UTILITIES
 // =============================================================================
 
-// Blit scaled image to destination buffer
+// Blit scaled image to destination buffer (converts RGBA source to BGRA dest)
 void blit_image_scaled(uint8_t *dest, int dest_w, int dest_h,
                        unsigned char *src, int src_w, int src_h, int offset_x,
                        int offset_y, int target_w, int target_h);
 
-// Draw filled rectangle
-void draw_rect(uint8_t *dest, int width, int height, int x, int y, int w, int h,
-               uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+// Blit pre-converted cached frame (BGRA to BGRA, no channel swap)
+void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
+                       const uint8_t *src, int src_w, int src_h, int offset_x,
+                       int offset_y);
 
 #endif  // ANIMATION_H

@@ -123,10 +123,10 @@ static void wayland_update_current_output_info(void) {
 // Forward declarations for reconnection handling
 static bongocat_error_t wayland_setup_surface(void);
 
-static void handle_xdg_output_name(void *data,
-                                   struct zxdg_output_v1 *xdg_output
-                                   __attribute__((unused)),
-                                   const char *name) {
+static void
+handle_xdg_output_name(void *data,
+                       [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+                       const char *name) {
   // Defensive null check
   if (!data || !name) {
     return;
@@ -188,10 +188,9 @@ static void handle_xdg_output_name(void *data,
   }
 }
 
-static void handle_xdg_output_logical_position(void *data,
-                                               struct zxdg_output_v1 *xdg_output
-                                               __attribute__((unused)),
-                                               int32_t x, int32_t y) {
+static void handle_xdg_output_logical_position(
+    void *data, [[maybe_unused]] struct zxdg_output_v1 *xdg_output, int32_t x,
+    int32_t y) {
   // Defensive null check
   if (!data) {
     return;
@@ -204,10 +203,9 @@ static void handle_xdg_output_logical_position(void *data,
 
   bongocat_log_debug("xdg-output logical position received: %d,%d", x, y);
 }
-static void handle_xdg_output_logical_size(void *data,
-                                           struct zxdg_output_v1 *xdg_output
-                                           __attribute__((unused)),
-                                           int32_t width, int32_t height) {
+static void handle_xdg_output_logical_size(
+    void *data, [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+    int32_t width, int32_t height) {
   // Defensive null check
   if (!data) {
     return;
@@ -220,15 +218,14 @@ static void handle_xdg_output_logical_size(void *data,
 
   bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
 }
-static void handle_xdg_output_done(void *data __attribute__((unused)),
-                                   struct zxdg_output_v1 *xdg_output
-                                   __attribute__((unused))) {}
+static void
+handle_xdg_output_done([[maybe_unused]] void *data,
+                       [[maybe_unused]] struct zxdg_output_v1 *xdg_output) {}
 
-static void handle_xdg_output_description(void *data __attribute__((unused)),
-                                          struct zxdg_output_v1 *xdg_output
-                                          __attribute__((unused)),
-                                          const char *description
-                                          __attribute__((unused))) {}
+static void handle_xdg_output_description(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+    [[maybe_unused]] const char *description) {}
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
     .logical_position = handle_xdg_output_logical_position,
@@ -316,7 +313,7 @@ void draw_bar(void) {
   // Clear buffer with transparency - OPTIMIZED
   // Write all pixels as 32-bit values: RGB=0, A=opacity
   size_t buffer_size = (size_t)current_config->screen_width *
-                       (size_t)current_config->bar_height * 4U;
+                       (size_t)current_config->overlay_height * 4U;
   memset(pixels, 0, buffer_size);
 
   if (effective_opacity > 0) {
@@ -332,7 +329,7 @@ void draw_bar(void) {
   if (!is_fullscreen) {
     int cat_height = current_config->cat_height;
     int cat_width = (cat_height * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
-    int cat_y = (current_config->bar_height - cat_height) / 2 +
+    int cat_y = (current_config->overlay_height - cat_height) / 2 +
                 current_config->cat_y_offset;
 
     int cat_x = 0;
@@ -352,15 +349,14 @@ void draw_bar(void) {
 
     cached_frame_t *frame = &anim_cached_frames[anim_index];
     if (frame->data && frame->width > 0 && frame->height > 0) {
-      // Blit pre-scaled cached frame (no scaling needed, src==dst size)
-      blit_image_scaled(pixels, current_config->screen_width,
-                        current_config->bar_height, frame->data, frame->width,
-                        frame->height, cat_x, cat_y, frame->width,
-                        frame->height);
+      // Blit pre-scaled cached frame (already BGRA, no channel swap)
+      blit_cached_frame(pixels, current_config->screen_width,
+                        current_config->overlay_height, frame->data,
+                        frame->width, frame->height, cat_x, cat_y);
     } else {
-      // Fallback: scale from source (cache not ready)
+      // Fallback: scale from source (cache not ready, does RGBA->BGRA)
       blit_image_scaled(pixels, current_config->screen_width,
-                        current_config->bar_height, anim_imgs[anim_index],
+                        current_config->overlay_height, anim_imgs[anim_index],
                         anim_width[anim_index], anim_height[anim_index], cat_x,
                         cat_y, cat_width, cat_height);
     }
@@ -370,7 +366,7 @@ void draw_bar(void) {
 
   wl_surface_attach(surface, buffer, 0, 0);
   wl_surface_damage_buffer(surface, 0, 0, current_config->screen_width,
-                           current_config->bar_height);
+                           current_config->overlay_height);
   wl_surface_commit(surface);
   pthread_mutex_unlock(&anim_lock);
 
@@ -382,7 +378,7 @@ void draw_bar(void) {
 // WAYLAND EVENT HANDLERS
 // =============================================================================
 
-static void layer_surface_configure(void *data __attribute__((unused)),
+static void layer_surface_configure([[maybe_unused]] void *data,
                                     struct zwlr_layer_surface_v1 *ls,
                                     uint32_t serial, uint32_t w, uint32_t h) {
   bongocat_log_debug("Layer surface configured: %dx%d", w, h);
@@ -392,9 +388,9 @@ static void layer_surface_configure(void *data __attribute__((unused)),
 }
 
 // Handle compositor-requested surface closure
-static void layer_surface_closed(void *data __attribute__((unused)),
-                                 struct zwlr_layer_surface_v1 *ls
-                                 __attribute__((unused))) {
+static void
+layer_surface_closed([[maybe_unused]] void *data,
+                     [[maybe_unused]] struct zwlr_layer_surface_v1 *ls) {
   bongocat_log_info("Layer surface closed by compositor");
   atomic_store(&configured, false);
 }
@@ -404,7 +400,7 @@ static struct zwlr_layer_surface_v1_listener layer_listener = {
     .closed = layer_surface_closed,
 };
 
-static void xdg_wm_base_ping(void *data __attribute__((unused)),
+static void xdg_wm_base_ping([[maybe_unused]] void *data,
                              struct xdg_wm_base *wm_base, uint32_t serial) {
   xdg_wm_base_pong(wm_base, serial);
 }
@@ -413,16 +409,14 @@ static struct xdg_wm_base_listener xdg_wm_base_listener = {
     .ping = xdg_wm_base_ping,
 };
 
-static void output_geometry(void *data __attribute__((unused)),
-                            struct wl_output *wl_output,
-                            int32_t x __attribute__((unused)),
-                            int32_t y __attribute__((unused)),
-                            int32_t physical_width __attribute__((unused)),
-                            int32_t physical_height __attribute__((unused)),
-                            int32_t subpixel __attribute__((unused)),
-                            const char *make __attribute__((unused)),
-                            const char *model __attribute__((unused)),
-                            int32_t transform) {
+static void
+output_geometry([[maybe_unused]] void *data, struct wl_output *wl_output,
+                [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
+                [[maybe_unused]] int32_t physical_width,
+                [[maybe_unused]] int32_t physical_height,
+                [[maybe_unused]] int32_t subpixel,
+                [[maybe_unused]] const char *make,
+                [[maybe_unused]] const char *model, int32_t transform) {
   for (size_t i = 0; i < MAX_OUTPUTS; i++) {
     if (outputs[i].wl_output == wl_output) {
       outputs[i].transform = transform;
@@ -434,10 +428,10 @@ static void output_geometry(void *data __attribute__((unused)),
   }
 }
 
-static void output_mode(void *data __attribute__((unused)),
+static void output_mode([[maybe_unused]] void *data,
                         struct wl_output *wl_output, uint32_t flags,
                         int32_t width, int32_t height,
-                        int32_t refresh __attribute__((unused))) {
+                        [[maybe_unused]] int32_t refresh) {
   if (flags & WL_OUTPUT_MODE_CURRENT) {
     for (size_t i = 0; i < MAX_OUTPUTS; i++) {
       if (outputs[i].wl_output == wl_output) {
@@ -452,7 +446,7 @@ static void output_mode(void *data __attribute__((unused)),
   }
 }
 
-static void output_done(void *data __attribute__((unused)),
+static void output_done([[maybe_unused]] void *data,
                         struct wl_output *wl_output) {
   for (size_t i = 0; i < MAX_OUTPUTS; i++) {
     if (outputs[i].wl_output == wl_output) {
@@ -463,9 +457,9 @@ static void output_done(void *data __attribute__((unused)),
   }
 }
 
-static void output_scale(void *data __attribute__((unused)),
-                         struct wl_output *wl_output __attribute__((unused)),
-                         int32_t factor __attribute__((unused))) {
+static void output_scale([[maybe_unused]] void *data,
+                         [[maybe_unused]] struct wl_output *wl_output,
+                         [[maybe_unused]] int32_t factor) {
   // Scale not needed for our use case
 }
 
@@ -480,7 +474,7 @@ static struct wl_output_listener output_listener = {
 // WAYLAND PROTOCOL REGISTRY
 // =============================================================================
 
-static void registry_global(void *data __attribute__((unused)),
+static void registry_global([[maybe_unused]] void *data,
                             struct wl_registry *reg, uint32_t name,
                             const char *iface, uint32_t ver) {
 #define BIND_MIN_VER(v, desired) ((v) < (desired) ? (v) : (desired))
@@ -539,9 +533,8 @@ static void registry_global(void *data __attribute__((unused)),
 #undef BIND_MIN_VER
 }
 
-static void registry_remove(void *data __attribute__((unused)),
-                            struct wl_registry *registry
-                            __attribute__((unused)),
+static void registry_remove([[maybe_unused]] void *data,
+                            [[maybe_unused]] struct wl_registry *registry,
                             uint32_t name) {
   size_t removed_index = output_count;
   for (size_t i = 0; i < output_count; ++i) {
@@ -733,7 +726,8 @@ static bongocat_error_t wayland_setup_surface(void) {
   }
 
   zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
-  zwlr_layer_surface_v1_set_size(layer_surface, 0, current_config->bar_height);
+  zwlr_layer_surface_v1_set_size(layer_surface, 0,
+                                 current_config->overlay_height);
   zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, -1);
   zwlr_layer_surface_v1_set_keyboard_interactivity(
       layer_surface, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
@@ -752,7 +746,7 @@ static bongocat_error_t wayland_setup_surface(void) {
 
 static bongocat_error_t wayland_setup_buffer(void) {
   size_t size = (size_t)current_config->screen_width *
-                (size_t)current_config->bar_height * 4U;
+                (size_t)current_config->overlay_height * 4U;
   if (size == 0 || size > (size_t)INT32_MAX) {
     bongocat_log_error("Invalid buffer size: %zu", size);
     return BONGOCAT_ERROR_WAYLAND;
@@ -782,7 +776,7 @@ static bongocat_error_t wayland_setup_buffer(void) {
   }
 
   buffer = wl_shm_pool_create_buffer(
-      pool, 0, current_config->screen_width, current_config->bar_height,
+      pool, 0, current_config->screen_width, current_config->overlay_height,
       current_config->screen_width * 4, WL_SHM_FORMAT_ARGB8888);
   if (!buffer) {
     bongocat_log_error("Failed to create buffer");
@@ -819,7 +813,7 @@ bongocat_error_t wayland_init(config_t *config) {
   }
 
   applied_width = current_config->screen_width;
-  applied_height = current_config->bar_height;
+  applied_height = current_config->overlay_height;
   applied_layer = current_config->layer;
   if (applied_output_name) {
     free(applied_output_name);
@@ -830,7 +824,8 @@ bongocat_error_t wayland_init(config_t *config) {
   }
 
   bongocat_log_info("Wayland initialization complete (%dx%d buffer)",
-                    current_config->screen_width, current_config->bar_height);
+                    current_config->screen_width,
+                    current_config->overlay_height);
   return BONGOCAT_SUCCESS;
 }
 
@@ -917,8 +912,8 @@ void wayland_update_config(config_t *config) {
       applied_output_name ? strdup(applied_output_name) : NULL;
   int new_width = wayland_get_new_screen_width();
 
-  bool dimensions_changed =
-      (old_height != config->bar_height) || (old_width != config->screen_width);
+  bool dimensions_changed = (old_height != config->overlay_height) ||
+                            (old_width != config->screen_width);
   if (new_width > 0 && new_width != config->screen_width) {
     dimensions_changed = true;
   }
@@ -940,7 +935,7 @@ void wayland_update_config(config_t *config) {
     int target_width = (new_width > 0) ? new_width : config->screen_width;
     bongocat_log_info(
         "Wayland surface update required (size %dx%d -> %dx%d, layer %s -> %s)",
-        old_width, old_height, target_width, config->bar_height,
+        old_width, old_height, target_width, config->overlay_height,
         old_layer == LAYER_TOP ? "top" : "overlay",
         config->layer == LAYER_TOP ? "top" : "overlay");
 
@@ -955,9 +950,9 @@ void wayland_update_config(config_t *config) {
       size_t old_size = 0;
       if (old_width > 0 && old_height > 0) {
         old_size = (size_t)old_width * (size_t)old_height * 4U;
-      } else if (config->screen_width > 0 && config->bar_height > 0) {
+      } else if (config->screen_width > 0 && config->overlay_height > 0) {
         old_size =
-            (size_t)config->screen_width * (size_t)config->bar_height * 4U;
+            (size_t)config->screen_width * (size_t)config->overlay_height * 4U;
       }
       if (old_size > 0) {
         munmap(pixels, old_size);
@@ -999,14 +994,14 @@ void wayland_update_config(config_t *config) {
     wayland_update_current_output_info();
 
     bongocat_log_info("Buffer recreated successfully (%dx%d)",
-                      config->screen_width, config->bar_height);
+                      config->screen_width, config->overlay_height);
   }
 
   free(old_output_name);
   old_output_name = NULL;
 
   applied_width = config->screen_width;
-  applied_height = config->bar_height;
+  applied_height = config->overlay_height;
   applied_layer = config->layer;
   free(applied_output_name);
   applied_output_name =
