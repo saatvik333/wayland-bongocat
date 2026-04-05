@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   aur-publish:
     runs-on: ubuntu-latest
@@ -53,7 +56,7 @@ jobs:
           sed -i "s/\${SHA256}/${SHA256}/g" PKGBUILD
 
       - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        uses: KSXGitHub/github-actions-deploy-aur@a97f56a8425a7a7f3b8c58607f769c69b089cadb # v3.0.1
         with:
           pkgname: bongocat
           pkgbuild: ./PKGBUILD
@@ -61,4 +64,4 @@ jobs:
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to version ${{ github.event.release.tag_name }}"
-          force_push: true
+          force_push: false

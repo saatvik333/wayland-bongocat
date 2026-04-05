@@ -10,15 +10,14 @@ BASE_CFLAGS += -Wall -Wextra -Wpedantic -Wformat=2 -Wstrict-prototypes
 BASE_CFLAGS += -Wmissing-prototypes -Wold-style-definition -Wredundant-decls
 BASE_CFLAGS += -Wnested-externs -Wmissing-include-dirs -Wlogical-op
 BASE_CFLAGS += -Wjump-misses-init -Wdouble-promotion -Wshadow
-BASE_CFLAGS += -fstack-protector-strong -D_FORTIFY_SOURCE=2
+BASE_CFLAGS += -fstack-protector-strong
 
 # Debug flags
 DEBUG_CFLAGS = $(BASE_CFLAGS) -g3 -O0 -DDEBUG -fsanitize=address -fsanitize=undefined
 DEBUG_LDFLAGS = -fsanitize=address -fsanitize=undefined
 
-# Release flags  
-RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -DNDEBUG -flto -march=native
-RELEASE_CFLAGS += -fomit-frame-pointer -funroll-loops -finline-functions
+# Release flags
+RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -DNDEBUG -flto -fPIE -D_FORTIFY_SOURCE=2
 
 # Set flags based on build type
 ifeq ($(BUILD_TYPE),debug)
@@ -26,7 +25,7 @@ ifeq ($(BUILD_TYPE),debug)
     LDFLAGS = -lwayland-client -lm -lpthread $(DEBUG_LDFLAGS)
 else
     CFLAGS = $(RELEASE_CFLAGS)
-    LDFLAGS = -lwayland-client -lm -lpthread -flto
+    LDFLAGS = -lwayland-client -lm -lpthread -flto -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
 endif
 
 # Directories
@@ -122,12 +121,20 @@ uninstall:
 memcheck: debug
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(TARGET)
 
+# Release with -march=native (local builds only, not for distribution)
+release-local:
+	$(MAKE) BUILD_TYPE=release RELEASE_CFLAGS="$(RELEASE_CFLAGS) -march=native"
+
+# ThreadSanitizer build for detecting data races
+tsan:
+	$(MAKE) BUILD_TYPE=debug DEBUG_CFLAGS="$(BASE_CFLAGS) -g3 -O1 -DDEBUG -fsanitize=thread" DEBUG_LDFLAGS="-fsanitize=thread"
+
 # Performance profiling
 profile: release
 	perf record -g ./$(TARGET)
 	perf report
 
-.PHONY: debug release install uninstall analyze memcheck profile format format-check lint
+.PHONY: debug release release-local tsan install uninstall analyze memcheck profile format format-check lint test
 
 # =============================================================================
 # CODE QUALITY TARGETS
@@ -153,7 +160,7 @@ format-check:
 # Static analysis with clang-tidy (uses .clang-tidy config)
 lint: protocols
 	@echo "Running static analysis..."
-	@clang-tidy $(PROJECT_SOURCES) -- $(CFLAGS) 2>/dev/null || true
+	@clang-tidy $(PROJECT_SOURCES) -- $(CFLAGS)
 	@echo "Static analysis complete."
 
 # Alias for lint
@@ -166,4 +173,39 @@ compiledb: clean
 	@bear -- $(MAKE) all 2>/dev/null || (echo "Note: 'bear' not installed. Install with: sudo pacman -S bear" && false)
 	@echo "compile_commands.json generated!"
 
-.PHONY: compiledb
+# =============================================================================
+# TEST TARGETS
+# =============================================================================
+
+TESTDIR = tests
+TEST_CFLAGS = $(BASE_CFLAGS) -g3 -O0 -DDEBUG -DTEST_BUILD
+TEST_LDFLAGS = -lm -lpthread
+
+# Source files needed by test_config
+CONFIG_TEST_DEPS = src/config/config.c src/utils/error.c src/utils/memory.c
+
+# Source files needed by test_memory
+MEMORY_TEST_DEPS = src/utils/memory.c src/utils/error.c
+
+$(BUILDDIR)/test_config: $(TESTDIR)/test_config.c $(CONFIG_TEST_DEPS) | $(OBJDIR)
+	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
+
+$(BUILDDIR)/test_memory: $(TESTDIR)/test_memory.c $(MEMORY_TEST_DEPS) | $(OBJDIR)
+	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
+
+TEST_BINARIES = $(BUILDDIR)/test_config $(BUILDDIR)/test_memory
+
+test: $(TEST_BINARIES)
+	@echo "Running tests..."
+	@failures=0; \
+	for t in $(TEST_BINARIES); do \
+		echo "--- $$(basename $$t) ---"; \
+		$$t || failures=$$((failures + 1)); \
+	done; \
+	if [ $$failures -gt 0 ]; then \
+		echo "$$failures test suite(s) failed"; \
+		exit 1; \
+	fi; \
+	echo "All tests passed."
+
+.PHONY: compiledb test
