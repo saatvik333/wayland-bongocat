@@ -2,13 +2,14 @@
 #include "utils/error.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <sys/time.h>
 #include <time.h>
 
-static int debug_enabled = 1;
+static atomic_int debug_enabled = 1;
 
 void bongocat_error_init(int enable_debug) {
-  debug_enabled = enable_debug;
+  atomic_store(&debug_enabled, enable_debug);
 }
 
 static void log_timestamp(FILE *stream) {
@@ -57,7 +58,7 @@ void bongocat_log_info(const char *format, ...) {
 }
 
 void bongocat_log_debug(const char *format, ...) {
-  if (!debug_enabled)
+  if (!atomic_load(&debug_enabled))
     return;
 
   va_list args;

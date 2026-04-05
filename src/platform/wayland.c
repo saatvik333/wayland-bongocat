@@ -14,8 +14,10 @@
 #include "graphics/animation.h"
 
 #include <poll.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 
 // =============================================================================
 // GLOBAL STATE AND CONFIGURATION
@@ -34,6 +36,7 @@ struct wl_surface *surface;
 struct wl_buffer *buffer;
 struct zwlr_layer_surface_v1 *layer_surface;
 uint8_t *pixels;
+static size_t pixel_buffer_size = 0;
 
 static config_t *current_config;
 static void (*tick_callback_fn)(void) = NULL;
@@ -105,7 +108,8 @@ static void wayland_update_current_screen_info(void) {
         bound_screen_name = outputs[i].name_str;
       }
       if (screen_infos[i].wl_output == output) {
-        if (screen_infos[i].screen_width > 0) {
+        if (screen_infos[i].screen_width > 0 &&
+            screen_infos[i].screen_width <= 32768) {
           bongocat_log_info("Detected screen width: %d",
                             screen_infos[i].screen_width);
           current_screen_info = &screen_infos[i];
@@ -291,13 +295,67 @@ static void fs_update_state(bool new_state) {
   }
 }
 
+/// Execute a command and capture its stdout into buf. Returns bytes read or -1.
+/// Uses fork/execvp instead of popen to avoid shell interpretation.
+static ssize_t safe_exec_read(const char *const argv[], char *buf,
+                              size_t buf_size) {
+  if (!argv || !argv[0] || !buf || buf_size == 0)
+    return -1;
+
+  int pipefd[2];
+  if (pipe(pipefd) < 0)
+    return -1;
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return -1;
+  }
+
+  if (pid == 0) {
+    // Child: redirect stdout to pipe, suppress stderr
+    close(pipefd[0]);
+    dup2(pipefd[1], STDOUT_FILENO);
+    close(pipefd[1]);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    execvp(argv[0], (char *const *)argv);
+    _exit(127);
+  }
+
+  // Parent: read output from pipe
+  close(pipefd[1]);
+  size_t total = 0;
+  while (total < buf_size - 1) {
+    ssize_t n = read(pipefd[0], buf + total, buf_size - 1 - total);
+    if (n <= 0)
+      break;
+    total += (size_t)n;
+  }
+  buf[total] = '\0';
+  close(pipefd[0]);
+
+  int status;
+  waitpid(pid, &status, 0);
+  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+    return -1;
+
+  return (ssize_t)total;
+}
+
 static void hypr_update_outputs_with_monitor_ids(void) {
-  FILE *fp = popen("hyprctl monitors 2>/dev/null", "r");
-  if (!fp)
+  char buf[8192];
+  const char *argv[] = {"hyprctl", "monitors", NULL};
+  if (safe_exec_read(argv, buf, sizeof(buf)) < 0)
     return;
 
-  char line[512];
-  while (fgets(line, sizeof(line), fp)) {
+  char *saveptr = NULL;
+  char *line = strtok_r(buf, "\n", &saveptr);
+  while (line) {
     int id = -1;
     char name[256];
     int result = sscanf(line, "Monitor %d \"%255[^\"]\"", &id, name);
@@ -306,7 +364,6 @@ static void hypr_update_outputs_with_monitor_ids(void) {
     }
     if (result == 2) {
       for (size_t i = 0; i < output_count; i++) {
-        // match by xdg-output name
         if (outputs[i].name_received &&
             strcmp(outputs[i].name_str, name) == 0) {
           outputs[i].hypr_id = id;
@@ -316,50 +373,47 @@ static void hypr_update_outputs_with_monitor_ids(void) {
         }
       }
     }
+    line = strtok_r(NULL, "\n", &saveptr);
   }
-
-  pclose(fp);
 }
 
 static bool hypr_get_active_window(window_info_t *win) {
-  FILE *fp = popen("hyprctl activewindow 2>/dev/null", "r");
-  if (!fp)
+  char buf[4096];
+  const char *argv[] = {"hyprctl", "activewindow", NULL};
+  if (safe_exec_read(argv, buf, sizeof(buf)) < 0)
     return false;
 
-  char line[512];
   bool has_window = false;
   win->monitor_id = -1;
   win->fullscreen = false;
 
-  while (fgets(line, sizeof(line), fp)) {
-    // monitor: 0
+  char *saveptr = NULL;
+  char *line = strtok_r(buf, "\n", &saveptr);
+  while (line) {
     if (strstr(line, "monitor:")) {
       sscanf(line, "%*[\t ]monitor: %d", &win->monitor_id);
       has_window = true;
     }
-    // fullscreen: 0/1/2
     if (strstr(line, "fullscreen:")) {
       int val;
       if (sscanf(line, "%*[\t ]fullscreen: %d", &val) == 1) {
         win->fullscreen = (val != 0);
       }
     }
-    // at: X,Y
     if (strstr(line, "at:")) {
       if (sscanf(line, "%*[\t ]at: [%d, %d]", &win->x, &win->y) < 2) {
         sscanf(line, "%*[\t ]at: %d,%d", &win->x, &win->y);
       }
     }
-    // size: W,H
     if (strstr(line, "size:")) {
       if (sscanf(line, "%*[\t ]size: [%d, %d]", &win->width, &win->height) <
           2) {
         sscanf(line, "%*[\t ]size: %d,%d", &win->width, &win->height);
       }
     }
+    line = strtok_r(NULL, "\n", &saveptr);
   }
 
-  pclose(fp);
   return has_window;
 }
 
@@ -759,14 +813,14 @@ void draw_bar(void) {
 
   // Clear buffer with transparency - OPTIMIZED
   // Use memset for RGB (zeros) then set only alpha bytes
-  int buffer_size =
-      current_config->screen_width * current_config->bar_height * 4;
+  size_t buffer_size = (size_t)current_config->screen_width *
+                       (size_t)current_config->bar_height * 4U;
   memset(pixels, 0, buffer_size);
 
   // Set alpha channel only (every 4th byte starting at offset 3)
   if (effective_opacity > 0) {
-    for (int i = 3; i < buffer_size; i += 4) {
-      pixels[i] = effective_opacity;
+    for (size_t i = 3; i < buffer_size; i += 4) {
+      pixels[i] = (uint8_t)effective_opacity;
     }
   }
 
@@ -1183,13 +1237,14 @@ static bongocat_error_t wayland_setup_surface(void) {
 }
 
 static bongocat_error_t wayland_setup_buffer(void) {
-  int size = current_config->screen_width * current_config->bar_height * 4;
-  if (size <= 0) {
-    bongocat_log_error("Invalid buffer size: %d", size);
+  size_t size = (size_t)current_config->screen_width *
+                (size_t)current_config->bar_height * 4U;
+  if (size == 0 || size > (size_t)INT32_MAX) {
+    bongocat_log_error("Invalid buffer size: %zu", size);
     return BONGOCAT_ERROR_WAYLAND;
   }
 
-  int fd = create_shm(size);
+  int fd = create_shm((int)size);
   if (fd < 0) {
     return BONGOCAT_ERROR_WAYLAND;
   }
@@ -1201,8 +1256,9 @@ static bongocat_error_t wayland_setup_buffer(void) {
     close(fd);
     return BONGOCAT_ERROR_MEMORY;
   }
+  pixel_buffer_size = size;
 
-  struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
+  struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int)size);
   if (!pool) {
     bongocat_log_error("Failed to create shared memory pool");
     munmap(pixels, size);
@@ -1478,10 +1534,10 @@ void wayland_cleanup(void) {
     buffer = NULL;
   }
 
-  if (pixels && current_config) {
-    int size = current_config->screen_width * current_config->bar_height * 4;
-    munmap(pixels, size);
+  if (pixels && pixel_buffer_size > 0) {
+    munmap(pixels, pixel_buffer_size);
     pixels = NULL;
+    pixel_buffer_size = 0;
   }
 
   if (layer_surface) {

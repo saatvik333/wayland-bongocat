@@ -9,9 +9,11 @@
 #include "utils/error.h"
 #include "utils/memory.h"
 
+#include <limits.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
@@ -28,8 +30,20 @@ static ConfigWatcher g_config_watcher = {.inotify_fd = -1, .watch_fd = -1};
 static bool g_manage_pid_file = true;
 static const char *g_forced_monitor_name = NULL;
 static _Atomic bool g_reload_pending = false;
+static int g_pid_fd = -1;
 
-#define PID_FILE "/tmp/bongocat.pid"
+static const char *get_pid_file_path(void) {
+  static char pid_path[PATH_MAX];
+  if (pid_path[0] != '\0')
+    return pid_path;
+  const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
+  if (runtime_dir && runtime_dir[0] != '\0') {
+    snprintf(pid_path, sizeof(pid_path), "%s/bongocat.pid", runtime_dir);
+  } else {
+    snprintf(pid_path, sizeof(pid_path), "/tmp/bongocat.pid");
+  }
+  return pid_path;
+}
 
 // =============================================================================
 // COMMAND LINE ARGUMENTS STRUCTURE
@@ -50,7 +64,8 @@ typedef struct {
 // =============================================================================
 
 static int process_create_pid_file(void) {
-  int fd = open(PID_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  int fd = open(get_pid_file_path(), O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW,
+                0600);
   if (fd < 0) {
     bongocat_log_error("Failed to create PID file: %s", strerror(errno));
     return -1;
@@ -79,11 +94,11 @@ static int process_create_pid_file(void) {
 }
 
 static void process_remove_pid_file(void) {
-  unlink(PID_FILE);
+  unlink(get_pid_file_path());
 }
 
 static pid_t process_get_running_pid(void) {
-  int fd = open(PID_FILE, O_RDONLY);
+  int fd = open(get_pid_file_path(), O_RDONLY);
   if (fd < 0) {
     return -1;  // No PID file exists
   }
@@ -95,7 +110,7 @@ static pid_t process_get_running_pid(void) {
     if (lock_err == EWOULDBLOCK) {
       // File is locked by another process, so it's running
       // We need to read the PID anyway, so let's try without lock
-      fd = open(PID_FILE, O_RDONLY);
+      fd = open(get_pid_file_path(), O_RDONLY);
       if (fd < 0)
         return -1;
     } else {
@@ -112,20 +127,51 @@ static pid_t process_get_running_pid(void) {
   }
 
   pid_str[bytes_read] = '\0';
-  pid_t pid = (pid_t)atoi(pid_str);
 
-  if (pid <= 0) {
+  // Parse PID with full validation (replaces unsafe atoi)
+  errno = 0;
+  char *endptr;
+  long parsed = strtol(pid_str, &endptr, 10);
+  if (errno != 0 || endptr == pid_str ||
+      (*endptr != '\n' && *endptr != '\0' && *endptr != '\r')) {
+    bongocat_log_error("Invalid PID in PID file");
+    process_remove_pid_file();
+    return -1;
+  }
+  if (parsed <= 1 || parsed > (long)INT32_MAX) {
+    bongocat_log_error("PID value out of safe range: %ld", parsed);
+    process_remove_pid_file();
+    return -1;
+  }
+  pid_t pid = (pid_t)parsed;
+
+  // Check if process is actually running
+  if (kill(pid, 0) != 0) {
+    // Process is not running, remove stale PID file
+    process_remove_pid_file();
     return -1;
   }
 
-  // Check if process is actually running
-  if (kill(pid, 0) == 0) {
-    return pid;  // Process is running
+  // Verify the running process is actually bongocat via /proc/PID/comm
+  char proc_path[64];
+  snprintf(proc_path, sizeof(proc_path), "/proc/%d/comm", pid);
+  FILE *fp = fopen(proc_path, "r");
+  if (fp) {
+    char comm[64] = {0};
+    if (fgets(comm, sizeof(comm), fp)) {
+      comm[strcspn(comm, "\n")] = '\0';
+      if (strcmp(comm, "bongocat") != 0) {
+        fclose(fp);
+        bongocat_log_info("PID %d is not bongocat (is %s), removing stale file",
+                          pid, comm);
+        process_remove_pid_file();
+        return -1;
+      }
+    }
+    fclose(fp);
   }
 
-  // Process is not running, remove stale PID file
-  process_remove_pid_file();
-  return -1;
+  return pid;  // Process is running and verified
 }
 
 static int process_handle_toggle(void) {
@@ -197,7 +243,7 @@ static void crash_signal_handler(int sig) {
 
   // Remove PID file (unlink is async-signal-safe)
   if (g_manage_pid_file) {
-    unlink(PID_FILE);
+    unlink(get_pid_file_path());
   }
 
   // Reset to default handler and re-raise
@@ -484,9 +530,13 @@ static bongocat_error_t system_initialize_components(void) {
 static void system_cleanup_and_exit(int exit_code) {
   bongocat_log_info("Performing cleanup...");
 
-  // Remove PID file
+  // Remove PID file and release lock
   if (g_manage_pid_file) {
     process_remove_pid_file();
+    if (g_pid_fd >= 0) {
+      close(g_pid_fd);
+      g_pid_fd = -1;
+    }
   }
 
   // Stop config watcher
@@ -501,12 +551,15 @@ static void system_cleanup_and_exit(int exit_code) {
   // Cleanup input system
   input_cleanup();
 
+  // Capture debug flag before cleanup to avoid use-after-free
+  bool debug_mode = g_config.enable_debug;
+
   // Cleanup configuration
   config_cleanup_full(&g_config);
   config_cleanup();
 
   // Print memory statistics in debug mode
-  if (g_config.enable_debug) {
+  if (debug_mode) {
     memory_print_stats();
   }
 
@@ -664,7 +717,7 @@ int main(int argc, char *argv[]) {
       bongocat_log_error("Failed to create PID file");
       return 1;
     }
-    (void)pid_fd;
+    g_pid_fd = pid_fd;
   }
 
   // Resolve and load configuration
