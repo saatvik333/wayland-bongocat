@@ -4,8 +4,8 @@
 #include "core/bongocat.h"
 #include "utils/error.h"
 
+#include <poll.h>
 #include <string.h>
-#include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -44,32 +44,27 @@ static void *config_watcher_thread(void *arg) {
       break;
     }
 
-    fd_set read_fds;
-    struct timeval timeout;
+    struct pollfd pfd = {
+        .fd = watcher->inotify_fd,
+        .events = POLLIN,
+        .revents = 0,
+    };
 
-    FD_ZERO(&read_fds);
-    FD_SET(watcher->inotify_fd, &read_fds);
+    int poll_result = poll(&pfd, 1, 1000);
 
-    // Set timeout to 1 second to allow checking watching flag
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-
-    int select_result =
-        select(watcher->inotify_fd + 1, &read_fds, NULL, NULL, &timeout);
-
-    if (select_result < 0) {
+    if (poll_result < 0) {
       if (errno == EINTR)
         continue;
-      bongocat_log_error("Config watcher select failed: %s", strerror(errno));
+      bongocat_log_error("Config watcher poll failed: %s", strerror(errno));
       break;
     }
 
-    if (select_result == 0) {
+    if (poll_result == 0) {
       // Timeout, continue to check watching flag
       continue;
     }
 
-    if (FD_ISSET(watcher->inotify_fd, &read_fds)) {
+    if (pfd.revents & POLLIN) {
       ssize_t length = read(watcher->inotify_fd, buffer, INOTIFY_BUF_LEN);
 
       if (length < 0) {

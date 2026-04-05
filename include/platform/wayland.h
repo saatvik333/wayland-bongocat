@@ -48,6 +48,14 @@ BONGOCAT_NODISCARD bongocat_error_t wayland_run(volatile sig_atomic_t *running);
 void wayland_cleanup(void);
 
 // =============================================================================
+// WAYLAND OUTPUT STATE (shared with fullscreen / hyprland modules)
+// =============================================================================
+
+// Output reference array and count (defined in wayland.c)
+extern output_ref_t outputs[];
+extern size_t output_count;
+
+// =============================================================================
 // WAYLAND UTILITY FUNCTIONS
 // =============================================================================
 
@@ -65,6 +73,9 @@ BONGOCAT_NODISCARD int wayland_get_screen_width(void);
 
 // Get detected output name
 BONGOCAT_NODISCARD const char *wayland_get_output_name(void);
+
+// Get the wl_output associated with the current screen info (may be NULL)
+BONGOCAT_NODISCARD struct wl_output *wayland_get_current_screen_output(void);
 
 // Register a per-loop callback executed on Wayland main thread.
 void wayland_set_tick_callback(void (*callback)(void));

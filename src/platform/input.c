@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -94,8 +95,7 @@ static void capture_input_hotplug(char **static_paths, int num_static,
   }
 
   struct input_event ev[64];
-  fd_set readfds;
-  struct timeval timeout;
+  struct pollfd pfds[MAX_ACTIVE_DEVICES];
   struct timespec last_scan_time = {0, 0};
 
   while (1) {
@@ -197,37 +197,30 @@ static void capture_input_hotplug(char **static_paths, int num_static,
       }
     }
 
-    // Prepare select
-    FD_ZERO(&readfds);
-    int max_fd = -1;
+    // Prepare poll
+    nfds_t nfds = 0;
+    int pfd_to_dev[MAX_ACTIVE_DEVICES];
     for (int i = 0; i < MAX_ACTIVE_DEVICES; i++) {
       if (active_devices[i].fd >= 0) {
-        if (active_devices[i].fd >= FD_SETSIZE) {
-          bongocat_log_error("fd %d exceeds FD_SETSIZE (%d), skipping",
-                             active_devices[i].fd, FD_SETSIZE);
-          continue;
-        }
-        FD_SET(active_devices[i].fd, &readfds);
-        if (active_devices[i].fd > max_fd) {
-          max_fd = active_devices[i].fd;
-        }
+        pfds[nfds].fd = active_devices[i].fd;
+        pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
+        pfd_to_dev[nfds] = i;
+        nfds++;
       }
     }
 
-    if (max_fd < 0) {
+    if (nfds == 0) {
       // No devices open, sleep briefly before next scan
       usleep(500000);
       continue;
     }
 
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-
-    int ret = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+    int ret = poll(pfds, nfds, 1000);
 
     if (ret < 0) {
       if (errno != EINTR) {
-        bongocat_log_error("Select error: %s", strerror(errno));
+        bongocat_log_error("Poll error: %s", strerror(errno));
         usleep(1000000);
       }
       continue;
@@ -238,9 +231,9 @@ static void capture_input_hotplug(char **static_paths, int num_static,
     }
 
     // Read events from ready devices
-    for (int i = 0; i < MAX_ACTIVE_DEVICES; i++) {
-      if (active_devices[i].fd >= 0 &&
-          FD_ISSET(active_devices[i].fd, &readfds)) {
+    for (nfds_t j = 0; j < nfds; j++) {
+      if (pfds[j].revents & POLLIN) {
+        int i = pfd_to_dev[j];
         int rd = read(active_devices[i].fd, ev, sizeof(ev));
 
         if (rd < 0) {
@@ -269,10 +262,10 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         bool key_pressed = false;
         int code = 0;
 
-        for (int j = 0; j < num_events; j++) {
-          if (ev[j].type == EV_KEY && ev[j].value == 1) {
+        for (int k = 0; k < num_events; k++) {
+          if (ev[k].type == EV_KEY && ev[k].value == 1) {
             key_pressed = true;
-            code = ev[j].code;
+            code = ev[k].code;
             if (enable_debug) {
               bongocat_log_debug("Key: %d from %s", code,
                                  active_devices[i].path);
