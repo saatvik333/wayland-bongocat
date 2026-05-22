@@ -56,7 +56,7 @@ TARGET = $(BUILDDIR)/bongocat
 
 .PHONY: all clean protocols embed-assets
 
-all: protocols embed-assets $(TARGET)
+all: embed-assets $(TARGET)
 
 # Generate protocol files first
 protocols: $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR)
@@ -90,6 +90,8 @@ $(TARGET): $(OBJECTS) $(PROTOCOL_OBJECTS)
 
 # Rule to generate Wayland protocol files
 $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR): $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/wlr-foreign-toplevel-management-unstable-v1.xml
+	@if ! command -v wayland-scanner &>/dev/null; then echo "ERROR: wayland-scanner not found. Install: sudo pacman -S wayland"; exit 1; fi
+	@if [ ! -f $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml ]; then echo "ERROR: xdg-shell.xml not found. Install: sudo pacman -S wayland-protocols"; exit 1; fi
 	wayland-scanner client-header $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-client-protocol.h
 	wayland-scanner private-code $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-protocol.c
 	wayland-scanner private-code $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c

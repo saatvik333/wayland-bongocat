@@ -1,5 +1,12 @@
 # Script to convert PNG assets to C header files for embedding
 
+# Dependency check
+if ! command -v xxd &>/dev/null; then
+    echo "ERROR: xxd is required but not found." >&2
+    echo "Install it with: sudo pacman -S xxd" >&2
+    exit 1
+fi
+
 ASSETS_DIR="assets"
 OUTPUT_DIR="include/graphics"
 OUTPUT_FILE="$OUTPUT_DIR/embedded_assets.h"
