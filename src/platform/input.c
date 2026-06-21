@@ -23,8 +23,6 @@
 #include <time.h>
 #include <unistd.h>
 
-atomic_int *any_key_pressed;
-atomic_int *last_key_code;
 key_ring_t *key_ring = NULL;
 static pid_t input_child_pid = -1;
 static int wake_fd = -1;
@@ -39,15 +37,6 @@ static void wait_child_exit(pid_t pid, int max_attempts) {
   }
   kill(pid, SIGKILL);
   waitpid(pid, &status, 0);
-}
-
-static atomic_int *alloc_shared_atomic(void) {
-  atomic_int *ptr = mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-  if (ptr == MAP_FAILED)
-    return NULL;
-  atomic_store(ptr, 0);
-  return ptr;
 }
 
 static key_ring_t *alloc_shared_key_ring(void) {
@@ -335,8 +324,6 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         }
 
         if (key_pressed) {
-          atomic_store(last_key_code, code);
-          animation_trigger();
           if (wake_fd >= 0) {
             uint64_t val = 1;
             if (write(wake_fd, &val, sizeof(val)) < 0) {
@@ -366,32 +353,11 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
                                         int scan_interval, int enable_debug) {
   bongocat_log_info("Initializing input hotplug system");
 
-  // Initialize shared memory for key press state
-  any_key_pressed = alloc_shared_atomic();
-  if (!any_key_pressed) {
-    bongocat_log_error("Failed to create shared memory for input: %s",
-                       strerror(errno));
-    return BONGOCAT_ERROR_MEMORY;
-  }
-
-  // Shared memory for last key code (hand mapping)
-  last_key_code = alloc_shared_atomic();
-  if (!last_key_code) {
-    bongocat_log_error("Failed to create shared memory for key code: %s",
-                       strerror(errno));
-    munmap(any_key_pressed, sizeof(atomic_int));
-    return BONGOCAT_ERROR_MEMORY;
-  }
-
   // Shared keycode ring (producer: this child; consumers: animation threads)
   key_ring = alloc_shared_key_ring();
   if (!key_ring) {
     bongocat_log_error("Failed to create shared memory for key ring: %s",
                        strerror(errno));
-    munmap(any_key_pressed, sizeof(atomic_int));
-    munmap(last_key_code, sizeof(atomic_int));
-    any_key_pressed = NULL;
-    last_key_code = NULL;
     return BONGOCAT_ERROR_MEMORY;
   }
 
@@ -406,11 +372,7 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    munmap(any_key_pressed, sizeof(atomic_int));
-    munmap(last_key_code, sizeof(atomic_int));
     munmap(key_ring, sizeof(key_ring_t));
-    any_key_pressed = NULL;
-    last_key_code = NULL;
     key_ring = NULL;
     if (wake_fd >= 0) {
       close(wake_fd);
@@ -444,35 +406,7 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     input_child_pid = -1;
   }
 
-  // Reuse shared memory if it exists, otherwise allocate new
-  bool need_new_shm =
-      (any_key_pressed == NULL || any_key_pressed == MAP_FAILED);
-
-  if (need_new_shm) {
-    any_key_pressed = alloc_shared_atomic();
-    if (!any_key_pressed) {
-      bongocat_log_error("Failed to create shared memory for input: %s",
-                         strerror(errno));
-      return BONGOCAT_ERROR_MEMORY;
-    }
-  }
-
-  bool need_new_key_shm =
-      (last_key_code == NULL || last_key_code == MAP_FAILED);
-
-  if (need_new_key_shm) {
-    last_key_code = alloc_shared_atomic();
-    if (!last_key_code) {
-      bongocat_log_error("Failed to create shared memory for key code: %s",
-                         strerror(errno));
-      if (need_new_shm) {
-        munmap(any_key_pressed, sizeof(atomic_int));
-        any_key_pressed = NULL;
-      }
-      return BONGOCAT_ERROR_MEMORY;
-    }
-  }
-
+  // Reuse the shared ring if it exists, otherwise allocate new
   bool need_new_ring = (key_ring == NULL || key_ring == MAP_FAILED);
   if (need_new_ring) {
     key_ring = alloc_shared_key_ring();
@@ -497,13 +431,9 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    if (need_new_shm) {
-      munmap(any_key_pressed, sizeof(atomic_int));
-      any_key_pressed = NULL;
-    }
-    if (need_new_key_shm) {
-      munmap(last_key_code, sizeof(atomic_int));
-      last_key_code = NULL;
+    if (need_new_ring) {
+      munmap(key_ring, sizeof(key_ring_t));
+      key_ring = NULL;
     }
     return BONGOCAT_ERROR_THREAD;
   }
@@ -537,13 +467,9 @@ void input_cleanup(void) {
   }
 
   // Cleanup shared memory
-  if (any_key_pressed && any_key_pressed != MAP_FAILED) {
-    munmap(any_key_pressed, sizeof(atomic_int));
-    any_key_pressed = NULL;
-  }
-  if (last_key_code && last_key_code != MAP_FAILED) {
-    munmap(last_key_code, sizeof(atomic_int));
-    last_key_code = NULL;
+  if (key_ring && key_ring != MAP_FAILED) {
+    munmap(key_ring, sizeof(key_ring_t));
+    key_ring = NULL;
   }
 
   bongocat_log_debug("Input monitoring cleanup complete");

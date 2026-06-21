@@ -51,7 +51,7 @@ static bool animation_initialized = false;
 // =============================================================================
 
 typedef struct {
-  long left_hold_until;   // paw down while now_us < left_hold_until
+  long left_hold_until;  // paw down while now_us < left_hold_until
   long right_hold_until;
   unsigned key_ring_tail;  // process-local consumer cursor into key_ring
   int test_counter;
@@ -577,10 +577,4 @@ void animation_cleanup(void) {
   }
 
   bongocat_log_debug("Animation cleanup complete");
-}
-
-void animation_trigger(void) {
-  if (any_key_pressed) {
-    atomic_store(any_key_pressed, 1);
-  }
 }
