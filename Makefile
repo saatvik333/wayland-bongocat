@@ -204,7 +204,10 @@ $(BUILDDIR)/test_config: $(TESTDIR)/test_config.c $(CONFIG_TEST_DEPS) | $(OBJDIR
 $(BUILDDIR)/test_memory: $(TESTDIR)/test_memory.c $(MEMORY_TEST_DEPS) | $(OBJDIR)
 	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
 
-TEST_BINARIES = $(BUILDDIR)/test_config $(BUILDDIR)/test_memory
+$(BUILDDIR)/test_key_ring: $(TESTDIR)/test_key_ring.c | $(OBJDIR)
+	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
+
+TEST_BINARIES = $(BUILDDIR)/test_config $(BUILDDIR)/test_memory $(BUILDDIR)/test_key_ring
 
 test: $(TEST_BINARIES)
 	@echo "Running tests..."
