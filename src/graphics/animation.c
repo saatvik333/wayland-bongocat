@@ -4,7 +4,9 @@
 #include "graphics/animation.h"
 
 #include "graphics/embedded_assets.h"
+#include "graphics/paw_frame.h"
 #include "platform/input.h"
+#include "platform/key_ring.h"
 #include "platform/wayland.h"
 #include "utils/memory.h"
 
@@ -49,7 +51,9 @@ static bool animation_initialized = false;
 // =============================================================================
 
 typedef struct {
-  long hold_until;
+  long left_hold_until;   // paw down while now_us < left_hold_until
+  long right_hold_until;
+  unsigned key_ring_tail;  // process-local consumer cursor into key_ring
   int test_counter;
   int test_interval_frames;
   long frame_time_ns;
@@ -114,29 +118,29 @@ static int get_frame_for_keycode(int keycode) {
   return 2;  // Right hand (default for all other keys)
 }
 
-static int anim_get_active_frame(void) {
+// Map a keycode to a paw frame constant, honoring hand mapping + mirror.
+static int anim_classify_paw(int keycode) {
+  int frame;
   if (current_config && current_config->enable_hand_mapping) {
-    int keycode = atomic_load(last_key_code);
-    int frame = get_frame_for_keycode(keycode);
-    // Flip hands when cat is mirrored horizontally
+    frame = get_frame_for_keycode(keycode);  // 1 = left, 2 = right
     if (current_config->mirror_x) {
       frame = (frame == 1) ? 2 : 1;
     }
-    return frame;
+  } else {
+    frame = (rand() % 2) + 1;  // random hand
   }
-  return (rand() % 2) + 1;  // Random: frame 1 or 2
+  return (frame == 1) ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
 }
 
-static void anim_trigger_frame_change(int new_frame, long duration_us,
-                                      long current_time_us,
-                                      animation_state_t *state) {
-  if (current_config->enable_debug) {
-    bongocat_log_debug("Animation frame change: %d (duration: %ld us)",
-                       new_frame, duration_us);
+// Extend the given paw's deadline to now + keypress_duration.
+static void anim_press_paw(animation_state_t *state, int paw_frame,
+                           long current_time_us) {
+  long duration_us = current_config->keypress_duration * 1000;
+  if (paw_frame == BONGOCAT_FRAME_LEFT_DOWN) {
+    state->left_hold_until = current_time_us + duration_us;
+  } else {
+    state->right_hold_until = current_time_us + duration_us;
   }
-
-  anim_index = new_frame;
-  state->hold_until = current_time_us + duration_us;
 }
 
 static void anim_handle_test_animation(animation_state_t *state,
@@ -147,51 +151,49 @@ static void anim_handle_test_animation(animation_state_t *state,
 
   state->test_counter++;
   if (state->test_counter > state->test_interval_frames) {
-    int new_frame = anim_get_active_frame();
-    long duration_us = current_config->test_animation_duration * 1000;
-
     bongocat_log_debug("Test animation trigger");
-    anim_trigger_frame_change(new_frame, duration_us, current_time_us, state);
+    anim_press_paw(state, anim_classify_paw(rand()), current_time_us);
     state->test_counter = 0;
   }
 }
 
-static void anim_handle_key_press(animation_state_t *state,
-                                  long current_time_us) {
-  if (!atomic_load(any_key_pressed)) {
+// Drain all pending keycodes and extend per-paw deadlines.
+static void anim_drain_keys(animation_state_t *state, long current_time_us) {
+  // During a scheduled-sleep window, ignore key intake (matches prior guard).
+  if (current_config->enable_scheduled_sleep &&
+      anim_is_sleep_time(current_config)) {
+    return;
+  }
+  if (!key_ring) {
     return;
   }
 
-  if (!current_config->enable_scheduled_sleep ||
-      !anim_is_sleep_time(current_config)) {
-    int new_frame = anim_get_active_frame();
-    long duration_us = current_config->keypress_duration * 1000;
-
-    bongocat_log_debug("Key press detected - switching to frame %d", new_frame);
-    anim_trigger_frame_change(new_frame, duration_us, current_time_us, state);
-
-    atomic_store(any_key_pressed, 0);
-    state->test_counter = 0;  // Reset test counter
-    state->last_key_pressed_timestamp = current_time_us;
+  int codes[KEY_RING_SIZE];
+  unsigned n =
+      key_ring_drain(key_ring, &state->key_ring_tail, codes, KEY_RING_SIZE);
+  if (n == 0) {
+    return;
   }
+
+  for (unsigned i = 0; i < n; i++) {
+    anim_press_paw(state, anim_classify_paw(codes[i]), current_time_us);
+  }
+  state->last_key_pressed_timestamp = current_time_us;
+  state->test_counter = 0;
 }
 
-static void anim_handle_idle_return(animation_state_t *state,
-                                    long current_time_us) {
+// Derive anim_index from sleep state, then per-paw deadlines.
+static void anim_select_frame(animation_state_t *state, long current_time_us) {
   int show_sleep_frame = 0;
-  // Sleep Mode
-  if (current_config->enable_scheduled_sleep) {
-    if (anim_is_sleep_time(current_config)) {
-      show_sleep_frame = 1;
-    }
+  if (current_config->enable_scheduled_sleep &&
+      anim_is_sleep_time(current_config)) {
+    show_sleep_frame = 1;
   }
-  // Idle Sleep
   if (current_config->idle_sleep_timeout_sec > 0 &&
-      state->last_key_pressed_timestamp > 0) {
-    if (anim_get_current_time_us() - state->last_key_pressed_timestamp >=
-        current_config->idle_sleep_timeout_sec * 1000000L) {
-      show_sleep_frame = 1;
-    }
+      state->last_key_pressed_timestamp > 0 &&
+      anim_get_current_time_us() - state->last_key_pressed_timestamp >=
+          current_config->idle_sleep_timeout_sec * 1000000L) {
+    show_sleep_frame = 1;
   }
 
   if (show_sleep_frame) {
@@ -202,15 +204,15 @@ static void anim_handle_idle_return(animation_state_t *state,
     return;
   }
 
-  if (current_time_us <= state->hold_until) {
-    return;
+  bool left_live = current_time_us < state->left_hold_until;
+  bool right_live = current_time_us < state->right_hold_until;
+  int new_frame =
+      frame_from_paw_state(left_live, right_live, current_config->idle_frame);
+  if (new_frame != anim_index && current_config->enable_debug) {
+    bongocat_log_debug("Frame -> %d (left=%d right=%d)", new_frame,
+                       (int)left_live, (int)right_live);
   }
-
-  if (anim_index != current_config->idle_frame) {
-    bongocat_log_debug("Returning to idle frame %d",
-                       current_config->idle_frame);
-    anim_index = current_config->idle_frame;
-  }
+  anim_index = new_frame;
 }
 
 static void anim_update_state(animation_state_t *state) {
@@ -219,8 +221,8 @@ static void anim_update_state(animation_state_t *state) {
   pthread_mutex_lock(&anim_lock);
 
   anim_handle_test_animation(state, current_time_us);
-  anim_handle_key_press(state, current_time_us);
-  anim_handle_idle_return(state, current_time_us);
+  anim_drain_keys(state, current_time_us);
+  anim_select_frame(state, current_time_us);
 
   pthread_mutex_unlock(&anim_lock);
 }
@@ -230,7 +232,11 @@ static void anim_update_state(animation_state_t *state) {
 // =============================================================================
 
 static void anim_init_state(animation_state_t *state) {
-  state->hold_until = 0;
+  state->left_hold_until = 0;
+  state->right_hold_until = 0;
+  state->key_ring_tail =
+      key_ring ? atomic_load_explicit(&key_ring->head, memory_order_acquire)
+               : 0;  // start at current head; ignore prior codes
   state->test_counter = 0;
   state->test_interval_frames =
       current_config->test_animation_interval * current_config->fps;
