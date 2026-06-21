@@ -25,6 +25,7 @@
 
 atomic_int *any_key_pressed;
 atomic_int *last_key_code;
+key_ring_t *key_ring = NULL;
 static pid_t input_child_pid = -1;
 static int wake_fd = -1;
 
@@ -46,6 +47,15 @@ static atomic_int *alloc_shared_atomic(void) {
   if (ptr == MAP_FAILED)
     return NULL;
   atomic_store(ptr, 0);
+  return ptr;
+}
+
+static key_ring_t *alloc_shared_key_ring(void) {
+  key_ring_t *ptr = mmap(NULL, sizeof(key_ring_t), PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (ptr == MAP_FAILED)
+    return NULL;
+  key_ring_init(ptr);
   return ptr;
 }
 
@@ -314,6 +324,9 @@ static void capture_input_hotplug(char **static_paths, int num_static,
           if (ev[k].type == EV_KEY && ev[k].value == 1) {
             key_pressed = true;
             code = ev[k].code;
+            if (key_ring) {
+              key_ring_push(key_ring, code);
+            }
             if (enable_debug) {
               bongocat_log_debug("Key: %d from %s", code,
                                  active_devices[i].path);
@@ -370,6 +383,18 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
     return BONGOCAT_ERROR_MEMORY;
   }
 
+  // Shared keycode ring (producer: this child; consumers: animation threads)
+  key_ring = alloc_shared_key_ring();
+  if (!key_ring) {
+    bongocat_log_error("Failed to create shared memory for key ring: %s",
+                       strerror(errno));
+    munmap(any_key_pressed, sizeof(atomic_int));
+    munmap(last_key_code, sizeof(atomic_int));
+    any_key_pressed = NULL;
+    last_key_code = NULL;
+    return BONGOCAT_ERROR_MEMORY;
+  }
+
   wake_fd = eventfd(0, EFD_NONBLOCK);
   if (wake_fd < 0) {
     bongocat_log_warning(
@@ -383,8 +408,10 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
                        strerror(errno));
     munmap(any_key_pressed, sizeof(atomic_int));
     munmap(last_key_code, sizeof(atomic_int));
+    munmap(key_ring, sizeof(key_ring_t));
     any_key_pressed = NULL;
     last_key_code = NULL;
+    key_ring = NULL;
     if (wake_fd >= 0) {
       close(wake_fd);
       wake_fd = -1;
@@ -442,6 +469,16 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
         munmap(any_key_pressed, sizeof(atomic_int));
         any_key_pressed = NULL;
       }
+      return BONGOCAT_ERROR_MEMORY;
+    }
+  }
+
+  bool need_new_ring = (key_ring == NULL || key_ring == MAP_FAILED);
+  if (need_new_ring) {
+    key_ring = alloc_shared_key_ring();
+    if (!key_ring) {
+      bongocat_log_error("Failed to create shared memory for key ring: %s",
+                         strerror(errno));
       return BONGOCAT_ERROR_MEMORY;
     }
   }

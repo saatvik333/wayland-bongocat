@@ -2,6 +2,7 @@
 #define INPUT_H
 
 #include "core/bongocat.h"
+#include "platform/key_ring.h"
 #include "utils/error.h"
 
 #include <stdatomic.h>
@@ -15,6 +16,9 @@ extern atomic_int *any_key_pressed;
 
 // Last pressed key code for hand mapping (0 = none)
 extern atomic_int *last_key_code;
+
+// Shared keycode ring: input child (producer) -> animation threads (consumers)
+extern key_ring_t *key_ring;
 
 // =============================================================================
 // INPUT MONITORING FUNCTIONS
