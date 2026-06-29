@@ -1,9 +1,12 @@
 # NixOS Installation Guide
+
 > [!WARNING]
 > This guide may contain misinformation, please open a PR with the changes if you find something wrong
 
 ## Quick Start
+
 ### Direct Installation with Flakes
+
 ```bash
 # Try `wayland-bongocat` without installing
 nix run github:saatvik333/wayland-bongocat
@@ -16,10 +19,13 @@ bongocat-find-devices
 ```
 
 ### Using the NixOS Module (Recommended)
+
 Remember to rebuild your system!
 
 #### With Flakes (Recommended)
+
 If you use flakes for your NixOS configuration (Which you should):
+
 ```nix
 # In your `flake.nix`
 {
@@ -47,7 +53,9 @@ If you use flakes for your NixOS configuration (Which you should):
 ```
 
 #### Without Flakes
+
 Download this repository wherever you desire and add this to your NixOS configuration:
+
 ```nix
 { config, pkgs, ... }: {
   # Import the module
@@ -91,8 +99,38 @@ Download this repository wherever you desire and add this to your NixOS configur
 }
 ```
 
+### Using the Home Manager Module
+
+A home manager module is also provided by the repository flake. It's just like the NixOS module, but for home-manager!
+
+```nix
+# In your `flake.nix`
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    bongocat.url = "github:saatvik333/wayland-bongocat";
+  };
+
+  outputs = inputs: {
+    homeConfigurations.user = inputs.home-manager.lib.homeManagerConfiguration {
+      # ...
+      modules = [
+        inputs.bongocat.homeModule.default
+        # ...
+      ];
+    };
+  };
+}
+```
+
 ## Developing
+
 ### Using Flakes (RECOMMENDED)
+
 Just enter the development environment with the `nix develop` command and build the project
 with `nix build`. This command has to be executed in the same directory as the `flake.nix`
 file.
@@ -101,15 +139,18 @@ The build output will be stored in `result/` with the binaries in `result/bin` i
 current directory.
 
 ## Configuration
+
 Run `bongocat-find-devices` to find all input devices.
 
 This will show you:
+
 - Available input devices
 - Device details with human-readable names
 - Suggested configuration entries
 - Testing instructions
 
 ### Manual Configuration
+
 Create a `bongocat.conf` file wherever you desire:
 
 ```ini
@@ -134,8 +175,10 @@ enable_debug=0
 ```
 
 ## SystemD Service Management
+
 Set `programs.wayland-bongocat.autostart = true;` to create a SystemD user service so
 it gets automatically started upon login.
+
 ```bash
 # Check service status
 systemctl --user status wayland-bongocat
@@ -149,43 +192,64 @@ journalctl --user -u wayland-bongocat -f
 ```
 
 ## Troubleshooting
+
 ### Permission Issues
+
 If you get permission errors accessing input devices:
+
 1. **Check if you're in the input group:** Run `groups | grep input`
-2. **Add yourself to the `input` group:** Add to your configuration `users.users.<your username>.extraGroups = ["input"];`
-3. **Log out and log back in after you add yourself to the `input` group**
+1. **Add yourself to the `input` group:** Add to your configuration `users.users.<your username>.extraGroups = ["input"];`
+1. **Log out and log back in after you add yourself to the `input` group**
 
 ### Service Issues
+
 If the SystemD service fails to start:
+
 1. **Check logs:** `journalctl --user -u wayland-bongocat -n 50`
-2. **Test manually:** `bongocat --config /nix/store/.../bongocat.conf`
-3. **Enable debug mode:** `programs.wayland-bongocat.enableDebug = true;`
+1. **Test manually:** `bongocat --config /nix/store/.../bongocat.conf`
+1. **Enable debug mode:** `programs.wayland-bongocat.enableDebug = true;`
 
 ### Input Device Detection
-If keyboard input isn't detected:
-1. **Find your devices:** `bongocat-find-devices`
-2. **Test device events:** `sudo evtest  # Select your device and type`
-3. **Update your configuration:**
-    If using the NixOS module -
-    ```nix
-    programs.wayland-bongocat.inputDevices = [
-        # Add as many devices as required and replace X with your device number
-        "/dev/input/eventX"
-        "/dev/input/eventX"
-        "/dev/input/eventX"
-    ];
-    ```
 
-    Standalone (In your `bongocat.conf` file) -
-    ```ini
-    # Add as many devices as required and replace `X` with the actual device number
-    keyboard_device=/dev/input/eventX
-    keyboard_device=/dev/input/eventX
-    keyboard_device=/dev/input/eventX
-    ```
+If keyboard input isn't detected:
+
+1. **Find your devices:** `bongocat-find-devices`
+
+1. **Test device events:** `sudo evtest  # Select your device and type`
+
+1. **Update your configuration:**
+   If using the NixOS or home-manager module -
+
+   ```nix
+   programs.wayland-bongocat.inputDevices = [
+       # Add as many devices as required and replace X with your device number
+       "/dev/input/eventX"
+       "/dev/input/eventX"
+       "/dev/input/eventX"
+   ];
+   ```
+
+   Standalone (In your `bongocat.conf` file) -
+
+   ```ini
+   # Add as many devices as required and replace `X` with the actual device number
+   keyboard_device=/dev/input/eventX
+   keyboard_device=/dev/input/eventX
+   keyboard_device=/dev/input/eventX
+   ```
+
+You can also use the recommended `keyboard_name=your keyboard` config suggestion provided by `bongocat-find-devices`.
+
+In the NixOS or home-manager module -
+
+```nix
+programs.wayland-bongocat.inputDeviceNames = ["your keyboard"]
+```
 
 ### Wayland Compositor Compatibility
+
 Ensure your compositor supports the layer shell protocol:
+
 - ✅ **Hyprland** - Full support
 - ✅ **Sway** - Full support
 - ✅ **Wayfire** - Compatible
@@ -193,8 +257,11 @@ Ensure your compositor supports the layer shell protocol:
 - ❌ **GNOME Wayland** - Support Unknown
 
 ## Advanced Usage
+
 ### Custom Package
+
 You can override the package in the module:
+
 ```nix
 programs.wayland-bongocat = {
   enable = true;
@@ -206,7 +273,9 @@ programs.wayland-bongocat = {
 ```
 
 ### Multiple Configurations
+
 You can run multiple instances using different configurations
+
 ```bash
 # Instance 1
 bongocat --config ~/.config/bongocat/work.conf &
@@ -216,11 +285,14 @@ bongocat --config ~/.config/bongocat/gaming.conf &
 ```
 
 ### Integration with Window Managers
+
 - **Hyprland:** `exec-once = bongocat`
 - **Sway:** `exec bongocat`
 
 ## Building from Source
+
 ### Prerequisites
+
 The flake includes all the necessary dependencies to build the project.
 Just enter the development environment by running `nix develop` in the
 same directory as the `flake.nix` file. The development environment will
@@ -229,15 +301,19 @@ provide further information e.g. commands to build the project.
 > **Note:** The generated Wayland protocol bindings are committed to git, so `wayland-scanner` and `wayland-protocols` are only needed in the dev shell for `make protocols` (regenerating protocol bindings from XML). Regular builds (`make` / `nix build`) don't require them.
 
 ## Contributing
+
 See the [README](../README.md) for contribution guidelines. The NixOS integration welcomes:
+
 - Additional compositor testing
 - Module option improvements
 - Documentation enhancements
 - Bug reports and fixes
 
 ## Support
+
 For NixOS-specific issues:
+
 1. Read through this guide thoroughly
-2. Read through `nixos-module.nix`
-3. Test with the development shell
-4. Open an issue with your NixOS version and configuration
+1. Read through `nixos-module.nix`
+1. Test with the development shell
+1. Open an issue with your NixOS version and configuration
