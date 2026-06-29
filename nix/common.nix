@@ -3,9 +3,10 @@
   config,
   pkgs,
   ...
-}: let
+}:
+let
   cfg = config.programs.wayland-bongocat;
-  wayland-bongocat = pkgs.callPackage ./default.nix {};
+  wayland-bongocat = pkgs.callPackage ./default.nix { };
   configFile = pkgs.writeTextFile {
     name = "bongocat.conf";
     text = ''
@@ -50,10 +51,13 @@
 
       # Input devices
       ${lib.concatMapStringsSep "\n" (device: "keyboard_device=${device}") cfg.inputDevices}
-    '';
+      ${lib.concatMapStringsSep "\n" (name: "keyboard_name=${name}") cfg.inputDeviceNames}
+    ''
+    + lib.optionalString (cfg.extraConfig != "") ("\n# Extra Config\n" + cfg.extraConfig);
   };
-in {
-  meta.maintainers = with lib.maintainers; [];
+in
+{
+  meta.maintainers = with lib.maintainers; [ ];
   options.programs.wayland-bongocat = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -218,11 +222,20 @@ in {
     # Input devices
     inputDevices = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = ["/dev/input/event4"];
+      default = [ "/dev/input/event4" ];
       description = "List of input devices to monitor, run `bongocat-find-devices` to see all devices to add to this list";
       example = [
         "/dev/input/event4"
         "/dev/input/event20"
+      ];
+    };
+
+    inputDeviceNames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "List of input device names to monitor, run `bongocat-find-devices` to see all devices to add to this list";
+      example = [
+        "hfd.cn KW75 Keyboard"
       ];
     };
 
@@ -232,6 +245,13 @@ in {
       description = "The monitor for the Cat";
       example = "eDP-1";
     };
+
+    # Extra Config
+    extraConfig = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Extra lines to add to bongocat.conf";
+    };
   };
 
   # Internal configuration (not exposed to users)
@@ -239,7 +259,7 @@ in {
     type = lib.types.attrs;
     internal = true;
     visible = false;
-    default = {};
+    default = { };
   };
 
   config._bongocat = lib.mkIf cfg.enable {
