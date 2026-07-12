@@ -42,9 +42,6 @@ BONGOCAT_NODISCARD bongocat_error_t animation_start(void);
 // Cleanup animation resources
 void animation_cleanup(void);
 
-// Trigger key press animation
-void animation_trigger(void);
-
 // =============================================================================
 // RENDERING UTILITIES
 // =============================================================================

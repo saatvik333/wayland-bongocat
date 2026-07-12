@@ -2,7 +2,7 @@
 #define _DEFAULT_SOURCE
 #include "platform/input.h"
 
-#include "graphics/animation.h"
+#include "graphics/paw_frame.h"
 #include "utils/memory.h"
 
 #include <dirent.h>
@@ -23,8 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 
-atomic_int *any_key_pressed;
-atomic_int *last_key_code;
+atomic_uint *pending_paws = NULL;
 static pid_t input_child_pid = -1;
 static int wake_fd = -1;
 
@@ -40,12 +39,12 @@ static void wait_child_exit(pid_t pid, int max_attempts) {
   waitpid(pid, &status, 0);
 }
 
-static atomic_int *alloc_shared_atomic(void) {
-  atomic_int *ptr = mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+static atomic_uint *alloc_shared_pending_paws(void) {
+  atomic_uint *ptr = mmap(NULL, sizeof(*ptr), PROT_READ | PROT_WRITE,
+                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (ptr == MAP_FAILED)
     return NULL;
-  atomic_store(ptr, 0);
+  atomic_init(ptr, 0u);
   return ptr;
 }
 
@@ -308,22 +307,22 @@ static void capture_input_hotplug(char **static_paths, int num_static,
 
         int num_events = rd / sizeof(struct input_event);
         bool key_pressed = false;
-        int code = 0;
-
         for (int k = 0; k < num_events; k++) {
           if (ev[k].type == EV_KEY && ev[k].value == 1) {
             key_pressed = true;
-            code = ev[k].code;
+            if (pending_paws) {
+              atomic_fetch_or_explicit(pending_paws,
+                                       paw_for_keycode(ev[k].code),
+                                       memory_order_release);
+            }
             if (enable_debug) {
-              bongocat_log_debug("Key: %d from %s", code,
+              bongocat_log_debug("Key: %d from %s", ev[k].code,
                                  active_devices[i].path);
             }
           }
         }
 
         if (key_pressed) {
-          atomic_store(last_key_code, code);
-          animation_trigger();
           if (wake_fd >= 0) {
             uint64_t val = 1;
             if (write(wake_fd, &val, sizeof(val)) < 0) {
@@ -353,20 +352,10 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
                                         int scan_interval, int enable_debug) {
   bongocat_log_info("Initializing input hotplug system");
 
-  // Initialize shared memory for key press state
-  any_key_pressed = alloc_shared_atomic();
-  if (!any_key_pressed) {
-    bongocat_log_error("Failed to create shared memory for input: %s",
+  pending_paws = alloc_shared_pending_paws();
+  if (!pending_paws) {
+    bongocat_log_error("Failed to create shared pending-paw state: %s",
                        strerror(errno));
-    return BONGOCAT_ERROR_MEMORY;
-  }
-
-  // Shared memory for last key code (hand mapping)
-  last_key_code = alloc_shared_atomic();
-  if (!last_key_code) {
-    bongocat_log_error("Failed to create shared memory for key code: %s",
-                       strerror(errno));
-    munmap(any_key_pressed, sizeof(atomic_int));
     return BONGOCAT_ERROR_MEMORY;
   }
 
@@ -381,10 +370,8 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    munmap(any_key_pressed, sizeof(atomic_int));
-    munmap(last_key_code, sizeof(atomic_int));
-    any_key_pressed = NULL;
-    last_key_code = NULL;
+    munmap(pending_paws, sizeof(*pending_paws));
+    pending_paws = NULL;
     if (wake_fd >= 0) {
       close(wake_fd);
       wake_fd = -1;
@@ -417,31 +404,12 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     input_child_pid = -1;
   }
 
-  // Reuse shared memory if it exists, otherwise allocate new
-  bool need_new_shm =
-      (any_key_pressed == NULL || any_key_pressed == MAP_FAILED);
-
-  if (need_new_shm) {
-    any_key_pressed = alloc_shared_atomic();
-    if (!any_key_pressed) {
-      bongocat_log_error("Failed to create shared memory for input: %s",
+  bool need_new_state = (pending_paws == NULL || pending_paws == MAP_FAILED);
+  if (need_new_state) {
+    pending_paws = alloc_shared_pending_paws();
+    if (!pending_paws) {
+      bongocat_log_error("Failed to create shared pending-paw state: %s",
                          strerror(errno));
-      return BONGOCAT_ERROR_MEMORY;
-    }
-  }
-
-  bool need_new_key_shm =
-      (last_key_code == NULL || last_key_code == MAP_FAILED);
-
-  if (need_new_key_shm) {
-    last_key_code = alloc_shared_atomic();
-    if (!last_key_code) {
-      bongocat_log_error("Failed to create shared memory for key code: %s",
-                         strerror(errno));
-      if (need_new_shm) {
-        munmap(any_key_pressed, sizeof(atomic_int));
-        any_key_pressed = NULL;
-      }
       return BONGOCAT_ERROR_MEMORY;
     }
   }
@@ -460,13 +428,9 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    if (need_new_shm) {
-      munmap(any_key_pressed, sizeof(atomic_int));
-      any_key_pressed = NULL;
-    }
-    if (need_new_key_shm) {
-      munmap(last_key_code, sizeof(atomic_int));
-      last_key_code = NULL;
+    if (need_new_state) {
+      munmap(pending_paws, sizeof(*pending_paws));
+      pending_paws = NULL;
     }
     return BONGOCAT_ERROR_THREAD;
   }
@@ -500,13 +464,9 @@ void input_cleanup(void) {
   }
 
   // Cleanup shared memory
-  if (any_key_pressed && any_key_pressed != MAP_FAILED) {
-    munmap(any_key_pressed, sizeof(atomic_int));
-    any_key_pressed = NULL;
-  }
-  if (last_key_code && last_key_code != MAP_FAILED) {
-    munmap(last_key_code, sizeof(atomic_int));
-    last_key_code = NULL;
+  if (pending_paws && pending_paws != MAP_FAILED) {
+    munmap(pending_paws, sizeof(*pending_paws));
+    pending_paws = NULL;
   }
 
   bongocat_log_debug("Input monitoring cleanup complete");

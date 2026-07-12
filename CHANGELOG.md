@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Concurrent paw animation** - Pressing keys on both sides of the keyboard now
+  moves both paws at once (the `both-down` frame). Previously only the
+  last-pressed key's paw animated. Keycodes now flow through a lock-free ring
+  buffer to per-paw timers, which also fixes a multi-monitor keypress race on the
+  old single shared flag. Fixes #78.
+
 ## [2.0.0] - 2026-04-05
 
 ### Breaking Changes

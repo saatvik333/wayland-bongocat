@@ -10,11 +10,8 @@
 // INPUT STATE
 // =============================================================================
 
-// Shared memory for key press state (thread-safe)
-extern atomic_int *any_key_pressed;
-
-// Last pressed key code for hand mapping (0 = none)
-extern atomic_int *last_key_code;
+// Shared pending-paw bits: input child producer, animation thread consumer.
+extern atomic_uint *pending_paws;
 
 // =============================================================================
 // INPUT MONITORING FUNCTIONS

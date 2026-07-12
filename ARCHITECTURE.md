@@ -60,7 +60,7 @@ Each instance runs 3 threads + 1 child process:
 | **Main thread** | Wayland event loop | `poll()` on `wl_display` fd, dispatches protocol events, handles config reload ticks |
 | **Animation thread** | pthread | Runs frame state machine, calls `draw_bar()` when frame changes, sleeps via `eventfd` when idle |
 | **Config watcher** | pthread | `inotify` on config file, debounces (300ms), triggers hot-reload |
-| **Input child** | fork | Reads `/dev/input/eventX` via `poll()`, writes atomic key state + eventfd wake signal |
+| **Input child** | fork | Reads `/dev/input/eventX` via `poll()`, ORs paw bits into shared state + eventfd wake signal |
 
 ## Data Flow
 
@@ -71,8 +71,7 @@ Each instance runs 3 threads + 1 child process:
   Input Child Process
   (poll on evdev fds)
        |
-       | atomic_store(any_key_pressed, 1)
-       | atomic_store(last_key_code, code)
+       | atomic_fetch_or(pending_paws, paw)
        | write(eventfd)  -- wake animation thread
        |
        v
@@ -80,7 +79,8 @@ Each instance runs 3 threads + 1 child process:
   (poll on eventfd, nanosleep at FPS rate)
        |
        | anim_update_state() under anim_lock
-       | selects frame 0-4 based on key + hand mapping + sleep state
+       | exchanges pending paw bits -> per-paw deadlines -> frame 0-4
+       |   (both-down when both paws live; sleep takes priority)
        |
        v
   draw_bar() under anim_lock
@@ -144,8 +144,7 @@ Version negotiation uses `MIN(advertised, desired)` to handle compositors with o
 |-----------|----------|-------|
 
 | `anim_lock` (pthread_mutex) | `anim_index`, `pixels`, `surface`, `buffer`, `current_config` pointer, cached frames | Animation thread + Wayland main thread |
-| `atomic_int any_key_pressed` | Key press flag | Input child -> Animation thread (via `MAP_SHARED` mmap) |
-| `atomic_int last_key_code` | Last keycode for hand mapping | Input child -> Animation thread (via `MAP_SHARED` mmap) |
+| `atomic_uint pending_paws` | Pending left/right paw bits | Input child -> animation thread via `MAP_SHARED` mmap |
 | `atomic_bool configured` | Surface ready flag | Wayland callbacks -> Animation thread |
 | `atomic_bool fullscreen_detected` | Fullscreen state | Fullscreen module -> draw_bar() |
 | `atomic_bool g_reload_pending` | Config change flag | Config watcher -> Main thread tick |
