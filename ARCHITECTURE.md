@@ -60,7 +60,7 @@ Each instance runs 3 threads + 1 child process:
 | **Main thread** | Wayland event loop | `poll()` on `wl_display` fd, dispatches protocol events, handles config reload ticks |
 | **Animation thread** | pthread | Runs frame state machine, calls `draw_bar()` when frame changes, sleeps via `eventfd` when idle |
 | **Config watcher** | pthread | `inotify` on config file, debounces (300ms), triggers hot-reload |
-| **Input child** | fork | Reads `/dev/input/eventX` via `poll()`, pushes keycodes to a shared ring + eventfd wake signal |
+| **Input child** | fork | Reads `/dev/input/eventX` via `poll()`, ORs paw bits into shared state + eventfd wake signal |
 
 ## Data Flow
 
@@ -71,15 +71,15 @@ Each instance runs 3 threads + 1 child process:
   Input Child Process
   (poll on evdev fds)
        |
-       | key_ring_push(key_ring, code)  -- per key, lock-free
-       | write(eventfd)                 -- wake animation thread
+       | atomic_fetch_or(pending_paws, paw)
+       | write(eventfd)  -- wake animation thread
        |
        v
   Animation Thread
   (poll on eventfd, nanosleep at FPS rate)
        |
        | anim_update_state() under anim_lock
-       | drains key_ring -> per-paw deadlines -> frame 0-4
+       | exchanges pending paw bits -> per-paw deadlines -> frame 0-4
        |   (both-down when both paws live; sleep takes priority)
        |
        v
@@ -144,7 +144,7 @@ Version negotiation uses `MIN(advertised, desired)` to handle compositors with o
 |-----------|----------|-------|
 
 | `anim_lock` (pthread_mutex) | `anim_index`, `pixels`, `surface`, `buffer`, `current_config` pointer, cached frames | Animation thread + Wayland main thread |
-| `key_ring_t` (atomic `head` + per-consumer local `tail`) | Keycode stream | Input child (producer) -> Animation thread(s) (consumers) via `MAP_SHARED` mmap |
+| `atomic_uint pending_paws` | Pending left/right paw bits | Input child -> animation thread via `MAP_SHARED` mmap |
 | `atomic_bool configured` | Surface ready flag | Wayland callbacks -> Animation thread |
 | `atomic_bool fullscreen_detected` | Fullscreen state | Fullscreen module -> draw_bar() |
 | `atomic_bool g_reload_pending` | Config change flag | Config watcher -> Main thread tick |

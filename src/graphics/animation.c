@@ -6,7 +6,6 @@
 #include "graphics/embedded_assets.h"
 #include "graphics/paw_frame.h"
 #include "platform/input.h"
-#include "platform/key_ring.h"
 #include "platform/wayland.h"
 #include "utils/memory.h"
 
@@ -53,7 +52,6 @@ static bool animation_initialized = false;
 typedef struct {
   long left_hold_until;  // paw down while now_us < left_hold_until
   long right_hold_until;
-  unsigned key_ring_tail;  // process-local consumer cursor into key_ring
   int test_counter;
   int test_interval_frames;
   long frame_time_ns;
@@ -84,58 +82,9 @@ static bool anim_is_sleep_time(const config_t *config) {
                       : (now_minutes >= begin || now_minutes < end));
 }
 
-// Get frame based on keyboard position (left=1, right=2)
-// Uses Linux input keycodes from <linux/input-event-codes.h>
-static int get_frame_for_keycode(int keycode) {
-  // Left-hand keys on QWERTY keyboard
-  // clang-format off
-  static const int left_keys[] = {
-    // Number row left half (1-6)
-    2, 3, 4, 5, 6, 7,           // KEY_1 to KEY_6
-    // QWERTY row left half
-    16, 17, 18, 19, 20,         // KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T
-    // Home row left half
-    30, 31, 32, 33, 34,         // KEY_A, KEY_S, KEY_D, KEY_F, KEY_G
-    // Bottom row left half
-    44, 45, 46, 47, 48,         // KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B
-    // Modifiers and special keys (left side)
-    1,                          // KEY_ESC
-    15,                         // KEY_TAB
-    58,                         // KEY_CAPSLOCK
-    42,                         // KEY_LEFTSHIFT
-    29,                         // KEY_LEFTCTRL
-    56,                         // KEY_LEFTALT
-    41,                         // KEY_GRAVE (backtick)
-    125,                        // KEY_LEFTMETA (super)
-  };
-  // clang-format on
-
-  for (size_t i = 0; i < sizeof(left_keys) / sizeof(left_keys[0]); i++) {
-    if (keycode == left_keys[i]) {
-      return 1;  // Left hand
-    }
-  }
-  return 2;  // Right hand (default for all other keys)
-}
-
-// Map a keycode to a paw frame constant, honoring hand mapping + mirror.
-static int anim_classify_paw(int keycode) {
-  int frame;
-  if (current_config && current_config->enable_hand_mapping) {
-    frame = get_frame_for_keycode(keycode);  // 1 = left, 2 = right
-    if (current_config->mirror_x) {
-      frame = (frame == 1) ? 2 : 1;
-    }
-  } else {
-    frame = (rand() % 2) + 1;  // random hand
-  }
-  return (frame == 1) ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
-}
-
 // Extend the given paw's deadline to now + keypress_duration.
 static void anim_press_paw(animation_state_t *state, int paw_frame,
-                           long current_time_us) {
-  long duration_us = current_config->keypress_duration * 1000;
+                           long current_time_us, long duration_us) {
   if (paw_frame == BONGOCAT_FRAME_LEFT_DOWN) {
     state->left_hold_until = current_time_us + duration_us;
   } else {
@@ -152,31 +101,40 @@ static void anim_handle_test_animation(animation_state_t *state,
   state->test_counter++;
   if (state->test_counter > state->test_interval_frames) {
     bongocat_log_debug("Test animation trigger");
-    anim_press_paw(state, anim_classify_paw(rand()), current_time_us);
+    int paw =
+        (rand() & 1) ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
+    anim_press_paw(state, paw, current_time_us,
+                   current_config->test_animation_duration * 1000L);
     state->test_counter = 0;
   }
 }
 
-// Drain all pending keycodes and extend per-paw deadlines.
-static void anim_drain_keys(animation_state_t *state, long current_time_us) {
-  // During a scheduled-sleep window, ignore key intake (matches prior guard).
+static void anim_take_pending_paws(animation_state_t *state,
+                                   long current_time_us) {
+  unsigned paws = pending_paws ? atomic_exchange_explicit(pending_paws, 0u,
+                                                          memory_order_acquire)
+                               : 0u;
+  if (paws == 0u) {
+    return;
+  }
+  // Exchange first: events received while sleeping are discarded, not replayed.
   if (current_config->enable_scheduled_sleep &&
       anim_is_sleep_time(current_config)) {
     return;
   }
-  if (!key_ring) {
-    return;
+  if (!current_config->enable_hand_mapping) {
+    paws = (rand() & 1) ? PAW_LEFT : PAW_RIGHT;
+  } else {
+    paws = paw_apply_mirror(paws, current_config->mirror_x != 0);
   }
-
-  int codes[KEY_RING_SIZE];
-  unsigned n =
-      key_ring_drain(key_ring, &state->key_ring_tail, codes, KEY_RING_SIZE);
-  if (n == 0) {
-    return;
+  long duration_us = current_config->keypress_duration * 1000L;
+  if (paws & PAW_LEFT) {
+    anim_press_paw(state, BONGOCAT_FRAME_LEFT_DOWN, current_time_us,
+                   duration_us);
   }
-
-  for (unsigned i = 0; i < n; i++) {
-    anim_press_paw(state, anim_classify_paw(codes[i]), current_time_us);
+  if (paws & PAW_RIGHT) {
+    anim_press_paw(state, BONGOCAT_FRAME_RIGHT_DOWN, current_time_us,
+                   duration_us);
   }
   state->last_key_pressed_timestamp = current_time_us;
   state->test_counter = 0;
@@ -221,7 +179,7 @@ static void anim_update_state(animation_state_t *state) {
   pthread_mutex_lock(&anim_lock);
 
   anim_handle_test_animation(state, current_time_us);
-  anim_drain_keys(state, current_time_us);
+  anim_take_pending_paws(state, current_time_us);
   anim_select_frame(state, current_time_us);
 
   pthread_mutex_unlock(&anim_lock);
@@ -234,9 +192,6 @@ static void anim_update_state(animation_state_t *state) {
 static void anim_init_state(animation_state_t *state) {
   state->left_hold_until = 0;
   state->right_hold_until = 0;
-  state->key_ring_tail =
-      key_ring ? atomic_load_explicit(&key_ring->head, memory_order_acquire)
-               : 0;  // start at current head; ignore prior codes
   state->test_counter = 0;
   state->test_interval_frames =
       current_config->test_animation_interval * current_config->fps;

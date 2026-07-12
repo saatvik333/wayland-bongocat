@@ -2,7 +2,7 @@
 #define _DEFAULT_SOURCE
 #include "platform/input.h"
 
-#include "graphics/animation.h"
+#include "graphics/paw_frame.h"
 #include "utils/memory.h"
 
 #include <dirent.h>
@@ -23,7 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 
-key_ring_t *key_ring = NULL;
+atomic_uint *pending_paws = NULL;
 static pid_t input_child_pid = -1;
 static int wake_fd = -1;
 
@@ -39,12 +39,12 @@ static void wait_child_exit(pid_t pid, int max_attempts) {
   waitpid(pid, &status, 0);
 }
 
-static key_ring_t *alloc_shared_key_ring(void) {
-  key_ring_t *ptr = mmap(NULL, sizeof(key_ring_t), PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+static atomic_uint *alloc_shared_pending_paws(void) {
+  atomic_uint *ptr = mmap(NULL, sizeof(*ptr), PROT_READ | PROT_WRITE,
+                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (ptr == MAP_FAILED)
     return NULL;
-  key_ring_init(ptr);
+  atomic_init(ptr, 0u);
   return ptr;
 }
 
@@ -307,17 +307,16 @@ static void capture_input_hotplug(char **static_paths, int num_static,
 
         int num_events = rd / sizeof(struct input_event);
         bool key_pressed = false;
-        int code = 0;
-
         for (int k = 0; k < num_events; k++) {
           if (ev[k].type == EV_KEY && ev[k].value == 1) {
             key_pressed = true;
-            code = ev[k].code;
-            if (key_ring) {
-              key_ring_push(key_ring, code);
+            if (pending_paws) {
+              atomic_fetch_or_explicit(pending_paws,
+                                       paw_for_keycode(ev[k].code),
+                                       memory_order_release);
             }
             if (enable_debug) {
-              bongocat_log_debug("Key: %d from %s", code,
+              bongocat_log_debug("Key: %d from %s", ev[k].code,
                                  active_devices[i].path);
             }
           }
@@ -353,10 +352,9 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
                                         int scan_interval, int enable_debug) {
   bongocat_log_info("Initializing input hotplug system");
 
-  // Shared keycode ring (producer: this child; consumers: animation threads)
-  key_ring = alloc_shared_key_ring();
-  if (!key_ring) {
-    bongocat_log_error("Failed to create shared memory for key ring: %s",
+  pending_paws = alloc_shared_pending_paws();
+  if (!pending_paws) {
+    bongocat_log_error("Failed to create shared pending-paw state: %s",
                        strerror(errno));
     return BONGOCAT_ERROR_MEMORY;
   }
@@ -372,8 +370,8 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    munmap(key_ring, sizeof(key_ring_t));
-    key_ring = NULL;
+    munmap(pending_paws, sizeof(*pending_paws));
+    pending_paws = NULL;
     if (wake_fd >= 0) {
       close(wake_fd);
       wake_fd = -1;
@@ -406,12 +404,11 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     input_child_pid = -1;
   }
 
-  // Reuse the shared ring if it exists, otherwise allocate new
-  bool need_new_ring = (key_ring == NULL || key_ring == MAP_FAILED);
-  if (need_new_ring) {
-    key_ring = alloc_shared_key_ring();
-    if (!key_ring) {
-      bongocat_log_error("Failed to create shared memory for key ring: %s",
+  bool need_new_state = (pending_paws == NULL || pending_paws == MAP_FAILED);
+  if (need_new_state) {
+    pending_paws = alloc_shared_pending_paws();
+    if (!pending_paws) {
+      bongocat_log_error("Failed to create shared pending-paw state: %s",
                          strerror(errno));
       return BONGOCAT_ERROR_MEMORY;
     }
@@ -431,9 +428,9 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
   if (input_child_pid < 0) {
     bongocat_log_error("Failed to fork input monitoring process: %s",
                        strerror(errno));
-    if (need_new_ring) {
-      munmap(key_ring, sizeof(key_ring_t));
-      key_ring = NULL;
+    if (need_new_state) {
+      munmap(pending_paws, sizeof(*pending_paws));
+      pending_paws = NULL;
     }
     return BONGOCAT_ERROR_THREAD;
   }
@@ -467,9 +464,9 @@ void input_cleanup(void) {
   }
 
   // Cleanup shared memory
-  if (key_ring && key_ring != MAP_FAILED) {
-    munmap(key_ring, sizeof(key_ring_t));
-    key_ring = NULL;
+  if (pending_paws && pending_paws != MAP_FAILED) {
+    munmap(pending_paws, sizeof(*pending_paws));
+    pending_paws = NULL;
   }
 
   bongocat_log_debug("Input monitoring cleanup complete");

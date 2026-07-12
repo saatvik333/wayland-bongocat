@@ -2,7 +2,6 @@
 #define INPUT_H
 
 #include "core/bongocat.h"
-#include "platform/key_ring.h"
 #include "utils/error.h"
 
 #include <stdatomic.h>
@@ -11,8 +10,8 @@
 // INPUT STATE
 // =============================================================================
 
-// Shared keycode ring: input child (producer) -> animation threads (consumers)
-extern key_ring_t *key_ring;
+// Shared pending-paw bits: input child producer, animation thread consumer.
+extern atomic_uint *pending_paws;
 
 // =============================================================================
 // INPUT MONITORING FUNCTIONS

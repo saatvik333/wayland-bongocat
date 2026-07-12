@@ -38,6 +38,18 @@ static void test_combinations(void) {
               "both -> both down");
 }
 
+static void test_key_mapping_and_mirror(void) {
+  printf("test_key_mapping_and_mirror...\n");
+  TEST_ASSERT(paw_for_keycode(30) == PAW_LEFT, "A maps left");
+  TEST_ASSERT(paw_for_keycode(38) == PAW_RIGHT, "L maps right");
+  TEST_ASSERT(paw_apply_mirror(PAW_LEFT, true) == PAW_RIGHT,
+              "mirror swaps left to right");
+  TEST_ASSERT(paw_apply_mirror(PAW_RIGHT, true) == PAW_LEFT,
+              "mirror swaps right to left");
+  TEST_ASSERT(paw_apply_mirror(PAW_BOTH, true) == PAW_BOTH,
+              "mirror preserves both");
+}
+
 static void test_custom_idle_frame(void) {
   printf("test_custom_idle_frame...\n");
   // A non-default idle_frame is honored when no paw is live.
@@ -49,6 +61,7 @@ static void test_custom_idle_frame(void) {
 int main(void) {
   printf("=== Paw Frame Tests ===\n");
   test_combinations();
+  test_key_mapping_and_mirror();
   test_custom_idle_frame();
   printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
   return tests_failed > 0 ? 1 : 0;
