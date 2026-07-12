@@ -17,7 +17,7 @@ echo "✅ Flake build: SUCCESS"
 # Test development shell
 echo ""
 echo "🔧 Testing development shell..."
-nix-shell nix/shell.nix --run "echo 'Shell works'" >/dev/null
+nix develop --command true
 echo "✅ Development shell: SUCCESS"
 
 echo ""
