@@ -2,7 +2,6 @@
 #include "config/config.h"
 
 #include "utils/error.h"
-#include "utils/memory.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -73,6 +72,14 @@ static void config_validate_timing(config_t *config) {
     config->hotplug_scan_interval =
         (config->hotplug_scan_interval < 0) ? 0 : MAX_INTERVAL;
   }
+
+  if (config->idle_sleep_timeout_sec < 0 ||
+      config->idle_sleep_timeout_sec > MAX_INTERVAL) {
+    bongocat_log_warning("idle_sleep_timeout %d out of range [0-%d], clamping",
+                         config->idle_sleep_timeout_sec, MAX_INTERVAL);
+    config->idle_sleep_timeout_sec =
+        config->idle_sleep_timeout_sec < 0 ? 0 : MAX_INTERVAL;
+  }
 }
 
 static void config_validate_appearance(config_t *config) {
@@ -89,7 +96,7 @@ static void config_validate_appearance(config_t *config) {
 
 static void config_validate_enums(config_t *config) {
   // Validate layer
-  if (config->layer != LAYER_TOP && config->layer != LAYER_OVERLAY) {
+  if (config->layer < LAYER_BACKGROUND || config->layer > LAYER_OVERLAY) {
     bongocat_log_warning("Invalid layer %d, resetting to top", config->layer);
     config->layer = LAYER_TOP;
   }
@@ -105,7 +112,7 @@ static void config_validate_enums(config_t *config) {
 
 static void config_validate_positioning(config_t *config) {
   // Validate cat positioning doesn't go off-screen
-  if (abs(config->cat_x_offset) > config->screen_width) {
+  if (llabs((long long)config->cat_x_offset) > config->screen_width) {
     bongocat_log_warning(
         "cat_x_offset %d may position cat off-screen (screen width: %d)",
         config->cat_x_offset, config->screen_width);
@@ -155,15 +162,14 @@ static bongocat_error_t config_validate(config_t *config) {
 
 static bongocat_error_t config_expand_array(char ***array_ptr, int *count,
                                             const char *str) {
-  char **new_array =
-      bongocat_realloc(*array_ptr, (*count + 1) * sizeof(char *));
+  char **new_array = realloc(*array_ptr, (*count + 1) * sizeof(char *));
   if (!new_array) {
     return BONGOCAT_ERROR_MEMORY;
   }
   *array_ptr = new_array;
 
   size_t len = strlen(str);
-  (*array_ptr)[*count] = BONGOCAT_MALLOC(len + 1);
+  (*array_ptr)[*count] = malloc(len + 1);
   if (!(*array_ptr)[*count]) {
     return BONGOCAT_ERROR_MEMORY;
   }
@@ -209,7 +215,7 @@ static bongocat_error_t config_resolve_devices(config_t *config) {
     }
 
     snprintf(path, sizeof(path), "/dev/input/%s", entry->d_name);
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
       continue;
     }
@@ -243,9 +249,10 @@ static bongocat_error_t config_resolve_devices(config_t *config) {
 static void config_free_string_array(char ***array_ptr, int *count) {
   if (*array_ptr) {
     for (int i = 0; i < *count; i++) {
-      BONGOCAT_SAFE_FREE((*array_ptr)[i]);
+      free((*array_ptr)[i]);
     }
-    BONGOCAT_SAFE_FREE(*array_ptr);
+    free(*array_ptr);
+    *array_ptr = NULL;
     *count = 0;
   }
 }
@@ -288,8 +295,11 @@ static bool config_parse_int(const char *str, int *out) {
   errno = 0;
   char *endptr;
   long val = strtol(str, &endptr, 10);
-  if (errno != 0 || endptr == str ||
-      (*endptr != '\0' && *endptr != ' ' && *endptr != '\t'))
+  if (errno != 0 || endptr == str)
+    return false;
+  while (*endptr == ' ' || *endptr == '\t')
+    endptr++;
+  if (*endptr != '\0')
     return false;
   if (val < INT_MIN || val > INT_MAX)
     return false;
@@ -349,6 +359,18 @@ config_parse_integer_key(config_t *config, const char *key, const char *value) {
     return BONGOCAT_ERROR_INVALID_PARAM;
   }
 
+  bool boolean_key = target == &config->mirror_x ||
+                     target == &config->mirror_y ||
+                     target == &config->enable_antialiasing ||
+                     target == &config->enable_hand_mapping ||
+                     target == &config->enable_debug ||
+                     target == &config->enable_scheduled_sleep ||
+                     target == &config->disable_fullscreen_hide;
+  if (boolean_key && int_value != 0 && int_value != 1) {
+    bongocat_log_warning("Invalid boolean value '%s' for key '%s'", value, key);
+    return BONGOCAT_ERROR_INVALID_PARAM;
+  }
+
   *target = int_value;
   return BONGOCAT_SUCCESS;
 }
@@ -356,7 +378,11 @@ config_parse_integer_key(config_t *config, const char *key, const char *value) {
 static bongocat_error_t config_parse_enum_key(config_t *config, const char *key,
                                               const char *value) {
   if (strcmp(key, "layer") == 0) {
-    if (strcmp(value, "top") == 0) {
+    if (strcmp(value, "background") == 0) {
+      config->layer = LAYER_BACKGROUND;
+    } else if (strcmp(value, "bottom") == 0) {
+      config->layer = LAYER_BOTTOM;
+    } else if (strcmp(value, "top") == 0) {
       config->layer = LAYER_TOP;
     } else if (strcmp(value, "overlay") == 0) {
       config->layer = LAYER_OVERLAY;
@@ -398,11 +424,14 @@ static bongocat_error_t config_parse_time_key(config_t *config, const char *key,
     return BONGOCAT_ERROR_INVALID_PARAM;  // Not a time key
   }
 
-  int hour, min;
-  if (sscanf(value, "%d:%d", &hour, &min) != 2) {
+  if (strlen(value) != 5 || !isdigit((unsigned char)value[0]) ||
+      !isdigit((unsigned char)value[1]) || value[2] != ':' ||
+      !isdigit((unsigned char)value[3]) || !isdigit((unsigned char)value[4])) {
     bongocat_log_warning("Invalid time format '%s', expected HH:MM", value);
     return BONGOCAT_ERROR_INVALID_PARAM;
   }
+  int hour = (value[0] - '0') * 10 + (value[1] - '0');
+  int min = (value[3] - '0') * 10 + (value[4] - '0');
 
   if (hour < 0 || hour > 23 || min < 0 || min > 59) {
     bongocat_log_warning(
@@ -425,7 +454,8 @@ static bongocat_error_t config_parse_time_key(config_t *config, const char *key,
 static bongocat_error_t config_parse_monitor_list(config_t *config,
                                                   const char *value) {
   config_free_string_array(&config->output_names, &config->num_output_names);
-  BONGOCAT_SAFE_FREE(config->output_name);
+  free(config->output_name);
+  config->output_name = NULL;
 
   char *monitor_list = strdup(value);
   if (!monitor_list) {

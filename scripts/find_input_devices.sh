@@ -9,6 +9,7 @@ trap 'exit 0' PIPE
 
 VERSION="1.4.0"
 SCRIPT_NAME="bongocat-find-devices"
+cleanup_dir=""
 
 # Colors
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
@@ -129,7 +130,8 @@ interactive_detect() {
   # Create temp directory for output files
   local tmpdir
   tmpdir=$(mktemp -d)
-  trap "rm -rf '$tmpdir'" EXIT
+  cleanup_dir=$tmpdir
+  trap 'rm -rf "$cleanup_dir"' EXIT
   
   header "Interactive Keyboard Detection"
   echo

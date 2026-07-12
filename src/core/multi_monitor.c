@@ -37,19 +37,6 @@ int multi_monitor_launch(int argc, char *argv[], const char *config_path,
   bongocat_log_info("Multi-monitor mode: launching %zu instances",
                     output_count);
 
-  struct sigaction old_sigchld = {0};
-  struct sigaction default_sigchld = {0};
-  bool restore_sigchld = false;
-  default_sigchld.sa_handler = SIG_DFL;
-  sigemptyset(&default_sigchld.sa_mask);
-  default_sigchld.sa_flags = 0;
-  if (sigaction(SIGCHLD, &default_sigchld, &old_sigchld) == 0) {
-    restore_sigchld = true;
-  } else {
-    bongocat_log_warning("Failed to override SIGCHLD handler: %s",
-                         strerror(errno));
-  }
-
   pid_t children[MULTI_MONITOR_MAX_OUTPUTS];
   for (size_t i = 0; i < MULTI_MONITOR_MAX_OUTPUTS; i++) {
     children[i] = -1;
@@ -105,9 +92,6 @@ int multi_monitor_launch(int argc, char *argv[], const char *config_path,
 
   if (alive == 0) {
     bongocat_log_error("Failed to launch any multi-monitor child instances");
-    if (restore_sigchld) {
-      sigaction(SIGCHLD, &old_sigchld, NULL);
-    }
     return 1;
   }
 
@@ -154,10 +138,6 @@ int multi_monitor_launch(int argc, char *argv[], const char *config_path,
         }
       }
     }
-  }
-
-  if (restore_sigchld) {
-    sigaction(SIGCHLD, &old_sigchld, NULL);
   }
 
   return exit_code;

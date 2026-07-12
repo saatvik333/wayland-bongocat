@@ -35,7 +35,7 @@ overlay_opacity=0
 # Position: top, bottom
 overlay_position=bottom
 
-# Layer: top (above windows), overlay (always visible, fullscreen auto-hide detection disabled)
+# Layer: background, bottom, top, or overlay (always visible)
 layer=top
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐

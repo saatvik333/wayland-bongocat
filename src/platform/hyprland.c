@@ -20,7 +20,7 @@ ssize_t safe_exec_read(const char *const argv[], char *buf, size_t buf_size) {
     return -1;
 
   int pipefd[2];
-  if (pipe(pipefd) < 0)
+  if (pipe2(pipefd, O_CLOEXEC) < 0)
     return -1;
 
   pid_t pid = fork();
@@ -35,7 +35,7 @@ ssize_t safe_exec_read(const char *const argv[], char *buf, size_t buf_size) {
     close(pipefd[0]);
     dup2(pipefd[1], STDOUT_FILENO);
     close(pipefd[1]);
-    int devnull = open("/dev/null", O_WRONLY);
+    int devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
     if (devnull >= 0) {
       dup2(devnull, STDERR_FILENO);
       close(devnull);
@@ -80,7 +80,7 @@ void hypr_update_outputs_with_monitor_ids(void) {
       result = sscanf(line, "Monitor %255s (ID %d)", name, &id);
     }
     if (result == 2) {
-      for (size_t i = 0; i < output_count; i++) {
+      for (size_t i = 0; i < MAX_OUTPUTS; i++) {
         if (outputs[i].name_received &&
             strcmp(outputs[i].name_str, name) == 0) {
           outputs[i].hypr_id = id;

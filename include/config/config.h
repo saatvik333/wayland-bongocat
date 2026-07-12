@@ -16,8 +16,10 @@ typedef enum {
 } overlay_position_t;
 
 typedef enum {
-  LAYER_TOP = 0,
-  LAYER_OVERLAY = 1
+  LAYER_BACKGROUND = 0,
+  LAYER_BOTTOM,
+  LAYER_TOP,
+  LAYER_OVERLAY
 } layer_type_t;
 
 typedef enum {

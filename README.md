@@ -101,7 +101,7 @@ keyboard_device=/dev/input/event4
 | `overlay_height`           | 20-300            | 50       | Overlay bar height in pixels         |
 | `overlay_opacity`          | 0-255             | 150      | Background opacity (0=transparent)   |
 | `overlay_position`         | top/bottom        | top      | Screen edge position                 |
-| `layer`                    | top/overlay       | top      | Wayland layer type                   |
+| `layer`                    | background/bottom/top/overlay | top | Wayland layer type            |
 | `keyboard_device`          | /dev/input/path   | auto     | Specific evdev device to monitor     |
 | `keyboard_name`            | string            | —        | Match device by name (for hotplug)   |
 | `monitor`                  | comma list        | auto     | Monitors to render on                |
@@ -120,6 +120,9 @@ keyboard_device=/dev/input/event4
 | `enable_debug`             | 0/1               | 0        | Enable debug logging                 |
 | `test_animation_duration`  | ms                | 200      | Test animation frame duration        |
 | `test_animation_interval`  | ms                | 0        | Test animation repeat interval       |
+
+Changing monitor count while running requires a restart; other settings are
+hot-reloadable with `--watch-config`.
 
 </details>
 

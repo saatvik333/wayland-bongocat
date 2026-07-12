@@ -7,7 +7,6 @@
 #include "platform/input.h"
 #include "platform/wayland.h"
 #include "utils/error.h"
-#include "utils/memory.h"
 
 #include <limits.h>
 #include <signal.h>
@@ -18,6 +17,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 // =============================================================================
@@ -64,8 +64,8 @@ typedef struct {
 // =============================================================================
 
 static int process_create_pid_file(void) {
-  int fd = open(get_pid_file_path(), O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW,
-                0600);
+  int fd = open(get_pid_file_path(),
+                O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (fd < 0) {
     bongocat_log_error("Failed to create PID file: %s", strerror(errno));
     return -1;
@@ -98,7 +98,7 @@ static void process_remove_pid_file(void) {
 }
 
 static pid_t process_get_running_pid(void) {
-  int fd = open(get_pid_file_path(), O_RDONLY);
+  int fd = open(get_pid_file_path(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return -1;  // No PID file exists
   }
@@ -110,7 +110,7 @@ static pid_t process_get_running_pid(void) {
     if (lock_err == EWOULDBLOCK) {
       // File is locked by another process, so it's running
       // We need to read the PID anyway, so let's try without lock
-      fd = open(get_pid_file_path(), O_RDONLY);
+      fd = open(get_pid_file_path(), O_RDONLY | O_CLOEXEC);
       if (fd < 0)
         return -1;
     } else {
@@ -193,7 +193,7 @@ static int process_handle_toggle(void) {
 
       // Force kill if still running
       bongocat_log_warning("Force killing bongocat");
-      if (kill(running_pid, SIGKILL) != 0) {
+      if (kill(-running_pid, SIGKILL) != 0) {
         bongocat_log_error("Failed to force kill bongocat: %s",
                            strerror(errno));
         return 1;
@@ -223,10 +223,6 @@ static void signal_handler(int sig) {
   case SIGQUIT:
   case SIGHUP:
     running = 0;
-    break;
-  case SIGCHLD:
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-      ;
     break;
   default:
     break;
@@ -266,11 +262,6 @@ static bongocat_error_t signal_setup_handlers(void) {
 
   if (sigaction(SIGTERM, &sa, NULL) == -1) {
     bongocat_log_error("Failed to setup SIGTERM handler: %s", strerror(errno));
-    return BONGOCAT_ERROR_THREAD;
-  }
-
-  if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-    bongocat_log_error("Failed to setup SIGCHLD handler: %s", strerror(errno));
     return BONGOCAT_ERROR_THREAD;
   }
 
@@ -346,24 +337,27 @@ static bongocat_error_t config_apply_forced_monitor(config_t *config,
   return BONGOCAT_SUCCESS;
 }
 
+static bool string_arrays_equal(char **a, int a_count, char **b, int b_count) {
+  if (a_count != b_count)
+    return false;
+  for (int i = 0; i < a_count; i++) {
+    if ((a[i] == NULL) != (b[i] == NULL) || (a[i] && strcmp(a[i], b[i]) != 0))
+      return false;
+  }
+  return true;
+}
+
+static bool config_input_settings_equal(const config_t *a, const config_t *b) {
+  return a->hotplug_scan_interval == b->hotplug_scan_interval &&
+         a->enable_debug == b->enable_debug &&
+         string_arrays_equal(a->keyboard_devices, a->num_keyboard_devices,
+                             b->keyboard_devices, b->num_keyboard_devices) &&
+         string_arrays_equal(a->keyboard_names, a->num_names, b->keyboard_names,
+                             b->num_names);
+}
+
 static void config_reload_apply(const char *config_path) {
   bongocat_log_info("Reloading configuration from: %s", config_path);
-
-  // Save old device info before loading so we can detect input-device changes.
-  int old_num_devices = g_config.num_keyboard_devices;
-
-  // Copy old device paths so we can compare after reload
-  char **old_device_paths = NULL;
-  if (old_num_devices > 0 && g_config.keyboard_devices != NULL) {
-    old_device_paths = malloc(sizeof(char *) * old_num_devices);
-    if (old_device_paths != NULL) {
-      for (int i = 0; i < old_num_devices; i++) {
-        old_device_paths[i] = g_config.keyboard_devices[i]
-                                  ? strdup(g_config.keyboard_devices[i])
-                                  : NULL;
-      }
-    }
-  }
 
   // Create a temporary config to test loading
   config_t temp_config = {0};
@@ -374,39 +368,10 @@ static void config_reload_apply(const char *config_path) {
                        bongocat_error_string(result));
     bongocat_log_info("Keeping current configuration");
     config_cleanup_full(&temp_config);
-    // Free saved paths
-    if (old_device_paths != NULL) {
-      for (int i = 0; i < old_num_devices; i++) {
-        free(old_device_paths[i]);
-      }
-      free(old_device_paths);
-    }
     return;
   }
 
-  // Check if devices changed (count or any path differs)
-  bool devices_changed = (old_num_devices != temp_config.num_keyboard_devices);
-  if (!devices_changed && old_device_paths != NULL) {
-    // Same count - check if any paths differ
-    for (int i = 0; i < old_num_devices; i++) {
-      const char *old_path = old_device_paths[i];
-      const char *new_path = temp_config.keyboard_devices[i];
-      if ((old_path == NULL) != (new_path == NULL) ||
-          (old_path != NULL && new_path != NULL &&
-           strcmp(old_path, new_path) != 0)) {
-        devices_changed = true;
-        break;
-      }
-    }
-  }
-
-  // Free saved paths
-  if (old_device_paths != NULL) {
-    for (int i = 0; i < old_num_devices; i++) {
-      free(old_device_paths[i]);
-    }
-    free(old_device_paths);
-  }
+  bool input_changed = !config_input_settings_equal(&g_config, &temp_config);
 
   // Swap in new config under animation lock to avoid reader races
   pthread_mutex_lock(&anim_lock);
@@ -422,13 +387,14 @@ static void config_reload_apply(const char *config_path) {
     }
   }
   pthread_mutex_unlock(&anim_lock);
+  bongocat_error_init(g_config.enable_debug);
 
   // Update the running systems with new config
   wayland_update_config(&g_config);
 
   // Check if input devices changed and restart monitoring if needed
-  if (devices_changed) {
-    bongocat_log_info("Input devices changed, restarting input monitoring");
+  if (input_changed) {
+    bongocat_log_info("Input settings changed, restarting input monitoring");
     bongocat_error_t input_result = input_restart_monitoring(
         g_config.keyboard_devices, g_config.num_keyboard_devices,
         g_config.keyboard_names, g_config.num_names,
@@ -464,7 +430,22 @@ static void config_process_pending_reload(void) {
 }
 
 static void wayland_tick_callback(void) {
+  static time_t last_input_restart = 0;
   config_process_pending_reload();
+  if (!input_child_is_alive()) {
+    time_t now = time(NULL);
+    if (now - last_input_restart >= 5) {
+      last_input_restart = now;
+      bongocat_log_warning("Input monitor exited; restarting");
+      bongocat_error_t restart_result = input_restart_monitoring(
+          g_config.keyboard_devices, g_config.num_keyboard_devices,
+          g_config.keyboard_names, g_config.num_names,
+          g_config.hotplug_scan_interval, g_config.enable_debug);
+      if (restart_result != BONGOCAT_SUCCESS)
+        bongocat_log_error("Input monitor restart failed: %s",
+                           bongocat_error_string(restart_result));
+    }
+  }
 }
 
 static bongocat_error_t config_setup_watcher(const char *config_file) {
@@ -562,21 +543,9 @@ _Noreturn static void system_cleanup_and_exit(int exit_code) {
   // Cleanup input system
   input_cleanup();
 
-  // Capture debug flag before cleanup to avoid use-after-free
-  bool debug_mode = g_config.enable_debug;
-
   // Cleanup configuration
   config_cleanup_full(&g_config);
   config_cleanup();
-
-  // Print memory statistics in debug mode
-  if (debug_mode) {
-    memory_print_stats();
-  }
-
-#ifdef DEBUG
-  memory_leak_check();
-#endif
 
   bongocat_log_info("Cleanup complete, exiting with code %d", exit_code);
   exit(exit_code);
@@ -707,6 +676,11 @@ int main(int argc, char *argv[]) {
   } else if (args.toggle_mode) {
     bongocat_log_error(
         "--toggle is not valid in internal multi-monitor child mode");
+    return 1;
+  }
+
+  if (g_manage_pid_file && setpgid(0, 0) < 0 && getpgrp() != getpid()) {
+    bongocat_log_error("Failed to create process group: %s", strerror(errno));
     return 1;
   }
 

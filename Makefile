@@ -46,7 +46,7 @@ EMBEDDED_ASSETS_C = $(SRCDIR)/graphics/embedded_assets.c
 
 # Protocol files
 C_PROTOCOL_SRC = $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c $(PROTOCOLDIR)/xdg-shell-protocol.c $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-protocol.c $(PROTOCOLDIR)/xdg-output-unstable-v1-protocol.c $(PROTOCOLDIR)/fractional-scale-v1-protocol.c $(PROTOCOLDIR)/viewporter-protocol.c
-H_PROTOCOL_HDR = $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h $(PROTOCOLDIR)/xdg-shell-client-protocol.h $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-client-protocol.h $(PROTOCOLDIR)/xdg-output-unstable-v1-client-protocol.h $(PROTOCOLDIR)/fractional-scale-v1-client-protocol.h $(PROTOCOLDIR)/viewporter-client-protocol.h
+H_PROTOCOL_HDR = $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-client-protocol.h $(PROTOCOLDIR)/xdg-output-unstable-v1-client-protocol.h $(PROTOCOLDIR)/fractional-scale-v1-client-protocol.h $(PROTOCOLDIR)/viewporter-client-protocol.h
 PROTOCOL_OBJECTS = $(C_PROTOCOL_SRC:$(PROTOCOLDIR)/%.c=$(OBJDIR)/%.o)
 
 # Target executable
@@ -90,7 +90,6 @@ protocols:
 		echo "Install it with your package manager (e.g. 'pacman -S wayland', 'apt install libwayland-bin')."; \
 		exit 1; \
 	}
-	wayland-scanner client-header $(PROTOCOLDIR)/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-client-protocol.h
 	wayland-scanner private-code $(PROTOCOLDIR)/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-protocol.c
 	wayland-scanner private-code $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c
 	wayland-scanner client-header $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h
@@ -193,21 +192,18 @@ TEST_CFLAGS = $(BASE_CFLAGS) -g3 -O0 -DDEBUG -DTEST_BUILD
 TEST_LDFLAGS = -lm -lpthread
 
 # Source files needed by test_config
-CONFIG_TEST_DEPS = src/config/config.c src/utils/error.c src/utils/memory.c
-
-# Source files needed by test_memory
-MEMORY_TEST_DEPS = src/utils/memory.c src/utils/error.c
+CONFIG_TEST_DEPS = src/config/config.c src/utils/error.c
 
 $(BUILDDIR)/test_config: $(TESTDIR)/test_config.c $(CONFIG_TEST_DEPS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_memory: $(TESTDIR)/test_memory.c $(MEMORY_TEST_DEPS) | $(OBJDIR)
 	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
 
 $(BUILDDIR)/test_paw_frame: $(TESTDIR)/test_paw_frame.c | $(OBJDIR)
 	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
 
-TEST_BINARIES = $(BUILDDIR)/test_config $(BUILDDIR)/test_memory $(BUILDDIR)/test_paw_frame
+$(BUILDDIR)/test_scale: $(TESTDIR)/test_scale.c | $(OBJDIR)
+	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
+
+TEST_BINARIES = $(BUILDDIR)/test_config $(BUILDDIR)/test_paw_frame $(BUILDDIR)/test_scale
 
 test: $(TEST_BINARIES)
 	@echo "Running tests..."
@@ -222,4 +218,8 @@ test: $(TEST_BINARIES)
 	fi; \
 	echo "All tests passed."
 
-.PHONY: compiledb test
+.PHONY: compiledb test test-sanitize
+
+test-sanitize:
+	$(MAKE) clean
+	$(MAKE) TEST_CFLAGS="$(TEST_CFLAGS) -fsanitize=address,undefined" TEST_LDFLAGS="$(TEST_LDFLAGS) -fsanitize=address,undefined" test

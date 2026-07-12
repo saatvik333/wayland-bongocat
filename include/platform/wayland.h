@@ -1,7 +1,6 @@
 #ifndef WAYLAND_H
 #define WAYLAND_H
 
-#include "../protocols/xdg-shell-client-protocol.h"
 #include "../protocols/zwlr-layer-shell-v1-client-protocol.h"
 #include "config/config.h"
 #include "core/bongocat.h"
@@ -23,12 +22,8 @@ extern struct wl_output *output;
 // Layer shell objects
 extern struct zwlr_layer_shell_v1 *layer_shell;
 extern struct zwlr_layer_surface_v1 *layer_surface;
-extern struct xdg_wm_base *xdg_wm_base;
-
-// Surface and buffer
+// Surface
 extern struct wl_surface *surface;
-extern struct wl_buffer *buffer;
-extern uint8_t *pixels;
 
 // Thread-safe state flags
 extern atomic_bool configured;
@@ -64,24 +59,13 @@ void wayland_update_config(config_t *config);
 
 // Draw the overlay bar
 void draw_bar(void);
-
-// Create shared memory buffer - returns fd or -1 on error
-BONGOCAT_NODISCARD int create_shm(int size);
-
-// Get detected screen width
-BONGOCAT_NODISCARD int wayland_get_screen_width(void);
-
-// Get detected output name
-BONGOCAT_NODISCARD const char *wayland_get_output_name(void);
+void wayland_request_redraw(void);
 
 // Get the wl_output associated with the current screen info (may be NULL)
 BONGOCAT_NODISCARD struct wl_output *wayland_get_current_screen_output(void);
 
 // Register a per-loop callback executed on Wayland main thread.
 void wayland_set_tick_callback(void (*callback)(void));
-
-// Get current layer name for logging
-BONGOCAT_NODISCARD const char *wayland_get_current_layer_name(void);
 
 // HiDPI: convert a logical-pixel dimension to physical (buffer-coordinate)
 // pixels using the active render scale. Defaults to identity (scale 1.0×) if

@@ -7,8 +7,6 @@
 #include "graphics/paw_frame.h"
 #include "platform/input.h"
 #include "platform/wayland.h"
-#include "utils/memory.h"
-
 #if defined(__GNUC__)
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wshadow"
@@ -52,8 +50,7 @@ static bool animation_initialized = false;
 typedef struct {
   long left_hold_until;  // paw down while now_us < left_hold_until
   long right_hold_until;
-  int test_counter;
-  int test_interval_frames;
+  long next_test_timestamp;
   long frame_time_ns;
   long last_key_pressed_timestamp;
 } animation_state_t;
@@ -98,14 +95,14 @@ static void anim_handle_test_animation(animation_state_t *state,
     return;
   }
 
-  state->test_counter++;
-  if (state->test_counter > state->test_interval_frames) {
+  if (current_time_us >= state->next_test_timestamp) {
     bongocat_log_debug("Test animation trigger");
     int paw =
         (rand() & 1) ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
     anim_press_paw(state, paw, current_time_us,
                    current_config->test_animation_duration * 1000L);
-    state->test_counter = 0;
+    state->next_test_timestamp =
+        current_time_us + current_config->test_animation_interval * 1000000L;
   }
 }
 
@@ -137,7 +134,8 @@ static void anim_take_pending_paws(animation_state_t *state,
                    duration_us);
   }
   state->last_key_pressed_timestamp = current_time_us;
-  state->test_counter = 0;
+  state->next_test_timestamp =
+      current_time_us + current_config->test_animation_interval * 1000000L;
 }
 
 // Derive anim_index from sleep state, then per-paw deadlines.
@@ -192,9 +190,9 @@ static void anim_update_state(animation_state_t *state) {
 static void anim_init_state(animation_state_t *state) {
   state->left_hold_until = 0;
   state->right_hold_until = 0;
-  state->test_counter = 0;
-  state->test_interval_frames =
-      current_config->test_animation_interval * current_config->fps;
+  state->next_test_timestamp =
+      anim_get_current_time_us() +
+      current_config->test_animation_interval * 1000000L;
   state->frame_time_ns = 1000000000L / current_config->fps;
   state->last_key_pressed_timestamp = anim_get_current_time_us();
 }

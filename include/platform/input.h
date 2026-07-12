@@ -33,6 +33,9 @@ void input_cleanup(void);
 // Get child PID (async-signal-safe accessor for crash handler)
 pid_t input_get_child_pid(void);
 
+// Reap child if it exited; true while monitoring process is alive.
+bool input_child_is_alive(void);
+
 // Get eventfd for waking animation thread on input events (-1 if unavailable)
 int input_get_wake_fd(void);
 

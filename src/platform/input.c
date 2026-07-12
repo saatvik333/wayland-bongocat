@@ -3,7 +3,6 @@
 #include "platform/input.h"
 
 #include "graphics/paw_frame.h"
-#include "utils/memory.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -54,6 +53,18 @@ pid_t input_get_child_pid(void) {
 
 int input_get_wake_fd(void) {
   return wake_fd;
+}
+
+bool input_child_is_alive(void) {
+  if (input_child_pid <= 0)
+    return false;
+  int status;
+  pid_t result = waitpid(input_child_pid, &status, WNOHANG);
+  if (result == 0 || (result < 0 && errno == EINTR))
+    return true;
+  if (result == input_child_pid || (result < 0 && errno == ECHILD))
+    input_child_pid = -1;
+  return false;
 }
 
 // Child process signal handler - exits quietly without logging
@@ -125,6 +136,7 @@ static void capture_input_hotplug(char **static_paths, int num_static,
   struct pollfd pfds[MAX_ACTIVE_DEVICES];
   struct timespec last_scan_time = {0, 0};
   bool initial_devices_found = false;
+  bool scanning_enabled = true;
   static const int FAST_RETRY_INTERVAL = 5;
 
   while (1) {
@@ -142,7 +154,8 @@ static void capture_input_hotplug(char **static_paths, int num_static,
 
     int effective_interval =
         initial_devices_found ? scan_interval : FAST_RETRY_INTERVAL;
-    if (now.tv_sec - last_scan_time.tv_sec >= effective_interval) {
+    if (scanning_enabled &&
+        now.tv_sec - last_scan_time.tv_sec >= effective_interval) {
       last_scan_time = now;
       DIR *dir = opendir("/dev/input");
       if (dir) {
@@ -174,7 +187,7 @@ static void capture_input_hotplug(char **static_paths, int num_static,
             continue;
           }
 
-          int fd = open(path, O_RDONLY | O_NONBLOCK);
+          int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
           if (fd < 0) {
             continue;
           }
@@ -222,12 +235,8 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         closedir(dir);
       }
 
-      // If scan_interval is 0, only scan once (at startup) and never again
-      if (scan_interval == 0) {
-        // Set to INT_MAX so the condition never triggers again
-        last_scan_time.tv_sec = now.tv_sec;
-        scan_interval = INT_MAX;
-      }
+      if (scan_interval == 0)
+        scanning_enabled = false;
 
       // Check if any devices are now open
       if (!initial_devices_found) {
@@ -359,7 +368,7 @@ bongocat_error_t input_start_monitoring(char **device_paths, int num_devices,
     return BONGOCAT_ERROR_MEMORY;
   }
 
-  wake_fd = eventfd(0, EFD_NONBLOCK);
+  wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (wake_fd < 0) {
     bongocat_log_warning(
         "Failed to create eventfd: %s (falling back to polling)",
@@ -414,11 +423,13 @@ bongocat_error_t input_restart_monitoring(char **device_paths, int num_devices,
     }
   }
 
+  atomic_store(pending_paws, 0u);
+
   // Recreate eventfd for the new child process
   if (wake_fd >= 0) {
     close(wake_fd);
   }
-  wake_fd = eventfd(0, EFD_NONBLOCK);
+  wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (wake_fd < 0) {
     bongocat_log_warning("Failed to recreate eventfd: %s", strerror(errno));
   }

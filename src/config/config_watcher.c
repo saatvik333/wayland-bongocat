@@ -91,6 +91,7 @@ static void *config_watcher_thread(void *arg) {
         if (event->wd == watcher->watch_fd &&
             (event->mask & (IN_MOVE_SELF | IN_DELETE_SELF | IN_IGNORED))) {
           watch_invalidated = true;
+          should_reload = true;
         }
 
         i += INOTIFY_EVENT_SIZE + event->len;
@@ -148,7 +149,7 @@ int config_watcher_init(ConfigWatcher *watcher, const char *config_path,
   watcher->watch_fd = -1;
 
   // Initialize inotify
-  watcher->inotify_fd = inotify_init1(IN_NONBLOCK);
+  watcher->inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
   if (watcher->inotify_fd < 0) {
     bongocat_log_error("Failed to initialize inotify: %s", strerror(errno));
     return -1;

@@ -115,11 +115,10 @@ src/
     animation.c         (588 lines)  Frame state machine, SVG rasterization, caching, thread
     embedded_assets.c                Auto-generated SVG byte arrays (do not edit)
   utils/
-    error.c              (94 lines)  Logging with timestamps, atomic debug flag
-    memory.c            (242 lines)  Tracked allocator, memory pools, leak checker
+    error.c              Logging with timestamps, atomic debug flag
 
 include/                (754 lines)  Public headers for each module
-tests/                  (450 lines)  Unit tests for config parser and memory pool
+tests/                  Unit tests for config, paw state, and output scaling
 protocols/                           Wayland protocol XML specs + committed C bindings
 lib/                                 Vendored nanosvg.h + nanosvgrast.h for SVG rendering
 ```
@@ -134,7 +133,6 @@ Four protocols with C bindings committed to git (regenerated from XML via `wayla
 | **wlr-layer-shell** | Positions the overlay on a specific layer (top/overlay) with anchoring |
 | **xdg-output** | Enumerates monitors by name for multi-monitor targeting |
 | **wlr-foreign-toplevel-management** | Detects fullscreen windows to auto-hide the overlay |
-| **xdg-shell** | Standard shell surface (base requirement) |
 
 Version negotiation uses `MIN(advertised, desired)` to handle compositors with older protocol versions.
 
@@ -143,7 +141,7 @@ Version negotiation uses `MIN(advertised, desired)` to handle compositors with o
 | Mechanism | Protects | Scope |
 |-----------|----------|-------|
 
-| `anim_lock` (pthread_mutex) | `anim_index`, `pixels`, `surface`, `buffer`, `current_config` pointer, cached frames | Animation thread + Wayland main thread |
+| `anim_lock` (pthread_mutex) | animation state, release-aware SHM buffers, surface, config pointer, cached frames | Animation thread + Wayland main thread |
 | `atomic_uint pending_paws` | Pending left/right paw bits | Input child -> animation thread via `MAP_SHARED` mmap |
 | `atomic_bool configured` | Surface ready flag | Wayland callbacks -> Animation thread |
 | `atomic_bool fullscreen_detected` | Fullscreen state | Fullscreen module -> draw_bar() |

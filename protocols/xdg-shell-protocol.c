@@ -79,7 +79,6 @@ static const struct wl_interface *xdg_shell_types[] = {
 	&xdg_positioner_interface,
 	NULL,
 };
-
 static const struct wl_message xdg_wm_base_requests[] = {
 	{ "destroy", "", xdg_shell_types + 0 },
 	{ "create_positioner", "n", xdg_shell_types + 4 },

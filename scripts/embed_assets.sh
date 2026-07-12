@@ -77,7 +77,8 @@ for asset in "bongo-both-up.svg" "bongo-left-down.svg" "bongo-right-down.svg" "b
             "$ASSETS_DIR/$asset" > "$tmp_file"
 
         # Convert filename to C identifier (strip extension, replace non-alnum with _)
-        c_name=$(echo "${asset%.svg}" | sed 's/[^a-zA-Z0-9]/_/g')_svg
+        c_name=${asset%.svg}
+        c_name=${c_name//[^a-zA-Z0-9]/_}_svg
 
         # Generate C array using xxd
         xxd -i "$tmp_file" | sed "s/unsigned char.*\[\]/const unsigned char ${c_name}[]/" >> "$OUTPUT_C_FILE"

@@ -15,9 +15,10 @@ static void log_timestamp(FILE *stream) {
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
   time_t sec = ts.tv_sec;
-  struct tm *tm_info = localtime(&sec);
+  struct tm tm_info = {0};
   char time_str[32];
-  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+  localtime_r(&sec, &tm_info);
+  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &tm_info);
   fprintf(stream, "[%s.%03ld] ", time_str, ts.tv_nsec / 1000000L);
 }
 

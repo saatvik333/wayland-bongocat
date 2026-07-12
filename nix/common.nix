@@ -52,6 +52,7 @@ let
       # Input devices
       ${lib.concatMapStringsSep "\n" (device: "keyboard_device=${device}") cfg.inputDevices}
       ${lib.concatMapStringsSep "\n" (name: "keyboard_name=${name}") cfg.inputDeviceNames}
+      hotplug_scan_interval=${toString cfg.hotplugScanInterval}
     ''
     + lib.optionalString (cfg.extraConfig != "") ("\n# Extra Config\n" + cfg.extraConfig);
   };
@@ -88,19 +89,19 @@ in
 
     # Overlay
     overlayPosition = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.enum [ "top" "bottom" ];
       default = "top";
       example = "bottom";
       description = "Bongocat overlay position on screen - `top` or `bottom`";
     };
     overlayHeight = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 20 300;
       default = 60;
       example = 70;
       description = "Height of the entire overlay bar";
     };
     overlayOpacity = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 255;
       default = 0;
       example = 20;
       description = "Overlay background opacity (0-255, 0 = transparent)";
@@ -122,13 +123,13 @@ in
 
     # Size
     catHeight = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 10 200;
       default = 80;
       example = 50;
       description = "Height of the bongo cat in pixels";
     };
     catAlign = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.enum [ "left" "center" "right" ];
       default = "center";
       example = "right";
       description = "Horizontal alignment: left, center, or right";
@@ -151,15 +152,15 @@ in
       description = "Enable smooth scaling (recommended)";
     };
     layer = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.enum [ "background" "bottom" "top" "overlay" ];
       default = "top";
       example = "overlay";
-      description = "Layer type: top or overlay";
+      description = "Layer type: background, bottom, top, or overlay";
     };
 
     # Sleep mode
     idleSleepTimeout = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 3600;
       default = 0;
       example = 300;
       description = "Seconds of inactivity before sleep (0 = disabled)";
@@ -182,25 +183,25 @@ in
 
     # Animations
     idleFrame = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 4;
       default = 0;
       example = 1;
       description = "Frame to use when idle (0, 1, or 2)";
     };
     keypressDuration = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 10 5000;
       default = 150;
       example = 100;
       description = "Animation duration after keypress (ms)";
     };
     testAnimationDuration = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 10 5000;
       default = 200;
       example = 100;
       description = "Test animation duration (ms)";
     };
     testAnimationInterval = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 3600;
       default = 0;
       example = 10;
       description = "How often to trigger test animation (seconds, 0 = disabled)";
@@ -208,7 +209,7 @@ in
 
     # Performance
     fps = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 1 120;
       default = 60;
       example = 120;
       description = "Animation framerate (FPS)";
@@ -237,6 +238,12 @@ in
       example = [
         "hfd.cn KW75 Keyboard"
       ];
+    };
+
+    hotplugScanInterval = lib.mkOption {
+      type = lib.types.ints.between 0 3600;
+      default = 30;
+      description = "Seconds between input rescans (0 scans once)";
     };
 
     monitor = lib.mkOption {

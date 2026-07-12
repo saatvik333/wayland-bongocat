@@ -62,6 +62,7 @@ static void test_defaults(void) {
   // load_config should succeed even with missing file (uses defaults)
   TEST_ASSERT(err == BONGOCAT_SUCCESS || err != BONGOCAT_SUCCESS,
               "load_config returns");
+  config_cleanup_full(&config);
 
   // Test with a valid empty config
   char path[] = "/tmp/bongocat_test_XXXXXX";
@@ -166,6 +167,17 @@ static void test_malformed_integers(void) {
   TEST_ASSERT_EQ(config.fps, 60, "fps stays at default on invalid input");
 
   config_cleanup_full(&config);
+  write_temp_config(
+      path, "fps=60junk\nsleep_begin=22:30junk\nenable_debug=2\n");
+  memset(&config, 0, sizeof(config));
+  err = load_config(&config, path);
+  TEST_ASSERT_EQ(err, BONGOCAT_SUCCESS, "trailing junk is rejected safely");
+  TEST_ASSERT_EQ(config.fps, 60, "invalid integer leaves default");
+  TEST_ASSERT_EQ(config.sleep_begin.hour, 0, "invalid time leaves default");
+  TEST_ASSERT_EQ(config.sleep_begin.min, 0, "invalid time leaves default minute");
+  TEST_ASSERT_EQ(config.enable_debug, 0, "invalid boolean leaves default");
+
+  config_cleanup_full(&config);
   unlink(path);
 }
 
@@ -239,7 +251,7 @@ static void test_enum_parsing(void) {
   assert(fd >= 0);
   close(fd);
 
-  write_temp_config(path, "overlay_position=bottom\nlayer=overlay\n"
+  write_temp_config(path, "overlay_position=bottom\nlayer=background\n"
                           "cat_align=right\n");
 
   config_t config = {0};
@@ -247,10 +259,23 @@ static void test_enum_parsing(void) {
   TEST_ASSERT_EQ(err, BONGOCAT_SUCCESS, "enum config loads");
   TEST_ASSERT_EQ(config.overlay_position, POSITION_BOTTOM,
                  "position is bottom");
-  TEST_ASSERT_EQ(config.layer, LAYER_OVERLAY, "layer is overlay");
+  TEST_ASSERT_EQ(config.layer, LAYER_BACKGROUND, "layer is background");
   TEST_ASSERT_EQ(config.cat_align, ALIGN_RIGHT, "align is right");
 
   config_cleanup_full(&config);
+
+  static const char *layer_names[] = {"background", "bottom", "top",
+                                      "overlay"};
+  for (int i = LAYER_BACKGROUND; i <= LAYER_OVERLAY; i++) {
+    char line[32];
+    snprintf(line, sizeof(line), "layer=%s\n", layer_names[i]);
+    write_temp_config(path, line);
+    memset(&config, 0, sizeof(config));
+    err = load_config(&config, path);
+    TEST_ASSERT_EQ(err, BONGOCAT_SUCCESS, "layer config loads");
+    TEST_ASSERT_EQ(config.layer, (layer_type_t)i, "layer maps correctly");
+    config_cleanup_full(&config);
+  }
   unlink(path);
 }
 

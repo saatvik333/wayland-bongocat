@@ -16,6 +16,7 @@
 #include "graphics/animation.h"
 #include "platform/fullscreen.h"
 #include "platform/hyprland.h"
+#include "platform/scale.h"
 
 #include <poll.h>
 #include <signal.h>
@@ -33,13 +34,21 @@ struct wl_display *display;
 struct wl_compositor *compositor;
 struct wl_shm *shm;
 struct zwlr_layer_shell_v1 *layer_shell;
-struct xdg_wm_base *xdg_wm_base;
 struct wl_output *output;
 struct wl_surface *surface;
-struct wl_buffer *buffer;
 struct zwlr_layer_surface_v1 *layer_surface;
-uint8_t *pixels;
-static size_t pixel_buffer_size = 0;
+
+typedef struct buffer_slot {
+  struct wl_buffer *buffer;
+  uint8_t *pixels;
+  size_t size;
+  atomic_bool busy;
+  bool retired;
+  struct buffer_slot *next;
+} buffer_slot_t;
+
+static buffer_slot_t *active_buffers[2] = {0};
+static buffer_slot_t *retired_buffers = NULL;
 
 // HiDPI: fractional-scale + viewporter
 static struct wp_viewporter *viewporter = NULL;
@@ -50,15 +59,17 @@ static struct wp_fractional_scale_v1 *fractional_scale_obj = NULL;
 // 2.0×, 180 = 1.5×). Updated via wp_fractional_scale_v1::preferred_scale or
 // wl_output::scale fallback.
 static uint32_t current_scale_120 = 120;
+static atomic_uint pending_scale_120 = 120;
+static atomic_bool scale_change_pending = false;
+static atomic_bool output_change_pending = false;
+static atomic_bool redraw_pending = false;
 // Physical (buffer-coordinate) dimensions of the active buffer.
 static int physical_buffer_w = 0;
 static int physical_buffer_h = 0;
 
 // Ceil-divide logical pixels by 120 / scale_120 to get physical pixels.
 static inline int phys_dim(int logical) {
-  if (logical <= 0)
-    return 0;
-  return (int)(((int64_t)logical * (int64_t)current_scale_120 + 119) / 120);
+  return scale_size_120(logical, current_scale_120);
 }
 
 int wayland_phys_dim(int logical) {
@@ -70,8 +81,37 @@ static void (*tick_callback_fn)(void) = NULL;
 static int applied_width = 0;
 static int applied_height = 0;
 static layer_type_t applied_layer = LAYER_TOP;
+static uint32_t layer_shell_version = 0;
 static overlay_position_t applied_position = POSITION_BOTTOM;
 static char *applied_output_name = NULL;
+
+static uint32_t wayland_layer_value(layer_type_t layer) {
+  switch (layer) {
+  case LAYER_BACKGROUND:
+    return ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
+  case LAYER_BOTTOM:
+    return ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
+  case LAYER_OVERLAY:
+    return ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
+  case LAYER_TOP:
+  default:
+    return ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+  }
+}
+
+static const char *wayland_layer_name(layer_type_t layer) {
+  switch (layer) {
+  case LAYER_BACKGROUND:
+    return "background";
+  case LAYER_BOTTOM:
+    return "bottom";
+  case LAYER_OVERLAY:
+    return "overlay";
+  case LAYER_TOP:
+  default:
+    return "top";
+  }
+}
 
 // =============================================================================
 // SCREEN DIMENSION MANAGEMENT
@@ -92,7 +132,7 @@ static char *bound_screen_name = NULL;
 
 BONGOCAT_NODISCARD static struct wl_output *wayland_find_new_output(void) {
   if (current_config->output_name) {
-    for (size_t i = 0; i < output_count; ++i) {
+    for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
       if (outputs[i].name_received &&
           strcmp(outputs[i].name_str, current_config->output_name) == 0) {
         return outputs[i].wl_output;
@@ -104,7 +144,7 @@ BONGOCAT_NODISCARD static struct wl_output *wayland_find_new_output(void) {
 
 BONGOCAT_NODISCARD static int wayland_get_new_screen_width(void) {
   struct wl_output *matching_wl_output = wayland_find_new_output();
-  for (size_t i = 0; i < output_count; ++i) {
+  for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
     if (outputs[i].wl_output == matching_wl_output) {
       return outputs[i].screen_width;
     }
@@ -116,8 +156,6 @@ BONGOCAT_NODISCARD static int wayland_get_new_screen_width(void) {
 static void wayland_update_current_output_info(void) {
   bool output_found = false;
   if (output) {
-    wl_display_roundtrip(display);
-
     for (size_t i = 0; i < MAX_OUTPUTS; i++) {
       if (outputs[i].wl_output == output) {
         bongocat_log_info("Detected screen name: %s", outputs[i].name_str);
@@ -149,6 +187,7 @@ static void wayland_update_current_output_info(void) {
 
 // Forward declarations for reconnection handling
 static bongocat_error_t wayland_setup_surface(void);
+static void screen_calculate_dimensions(output_ref_t *screen_info);
 
 static void
 handle_xdg_output_name(void *data,
@@ -242,6 +281,8 @@ static void handle_xdg_output_logical_size(
 
   oref->width = width;
   oref->height = height;
+  screen_calculate_dimensions(oref);
+  atomic_store(&output_change_pending, true);
 
   bongocat_log_debug("xdg-output logical size received: %dx%d", width, height);
 }
@@ -270,36 +311,21 @@ static void screen_calculate_dimensions(output_ref_t *screen_info) {
     return;
   }
 
-  if (!screen_info->mode_received || !screen_info->geometry_received ||
-      screen_info->screen_width > 0) {
+  if ((!screen_info->mode_received || !screen_info->geometry_received) &&
+      (screen_info->width <= 0 || screen_info->height <= 0)) {
     return;
   }
-
-  bool is_rotated = (screen_info->transform == WL_OUTPUT_TRANSFORM_90 ||
-                     screen_info->transform == WL_OUTPUT_TRANSFORM_270 ||
-                     screen_info->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
-                     screen_info->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270);
-
-  if (is_rotated) {
-    screen_info->screen_width = screen_info->raw_height;
-    screen_info->screen_height = screen_info->raw_width;
-    bongocat_log_info("Detected rotated screen: %dx%d (transform: %d)",
-                      screen_info->raw_height, screen_info->raw_width,
-                      screen_info->transform);
-  } else {
-    screen_info->screen_width = screen_info->raw_width;
-    screen_info->screen_height = screen_info->raw_height;
-    bongocat_log_info("Detected screen: %dx%d (transform: %d)",
-                      screen_info->raw_width, screen_info->raw_height,
-                      screen_info->transform);
-  }
+  output_logical_size(screen_info->raw_width, screen_info->raw_height,
+                      screen_info->transform, screen_info->wl_scale,
+                      screen_info->width, screen_info->height,
+                      &screen_info->screen_width, &screen_info->screen_height);
 }
 
 // =============================================================================
 // BUFFER AND DRAWING MANAGEMENT
 // =============================================================================
 
-int create_shm(int size) {
+static int create_shm(int size) {
   int fd = memfd_create("bongocat-shm", MFD_CLOEXEC);
   if (fd < 0) {
     bongocat_log_error("memfd_create failed: %s", strerror(errno));
@@ -315,6 +341,55 @@ int create_shm(int size) {
   return fd;
 }
 
+static void buffer_released(void *data,
+                            [[maybe_unused]] struct wl_buffer *wl_buffer) {
+  buffer_slot_t *slot = data;
+  atomic_store_explicit(&slot->busy, false, memory_order_release);
+  if (slot->retired)
+    atomic_store(&redraw_pending, true);
+}
+
+static const struct wl_buffer_listener buffer_listener = {
+    .release = buffer_released,
+};
+
+static void destroy_buffer_slot(buffer_slot_t *slot) {
+  if (!slot)
+    return;
+  if (slot->buffer)
+    wl_buffer_destroy(slot->buffer);
+  if (slot->pixels && slot->size > 0)
+    munmap(slot->pixels, slot->size);
+  free(slot);
+}
+
+static void cleanup_retired_buffers(void) {
+  pthread_mutex_lock(&anim_lock);
+  buffer_slot_t **slot = &retired_buffers;
+  while (*slot) {
+    if (!atomic_load_explicit(&(*slot)->busy, memory_order_acquire)) {
+      buffer_slot_t *released = *slot;
+      *slot = released->next;
+      destroy_buffer_slot(released);
+    } else {
+      slot = &(*slot)->next;
+    }
+  }
+  pthread_mutex_unlock(&anim_lock);
+}
+
+static void retire_active_buffers(void) {
+  for (size_t i = 0; i < 2; i++) {
+    buffer_slot_t *slot = active_buffers[i];
+    active_buffers[i] = NULL;
+    if (!slot)
+      continue;
+    slot->retired = true;
+    slot->next = retired_buffers;
+    retired_buffers = slot;
+  }
+}
+
 void draw_bar(void) {
   if (!atomic_load(&configured)) {
     bongocat_log_debug("Surface not configured yet, skipping draw");
@@ -323,9 +398,20 @@ void draw_bar(void) {
 
   pthread_mutex_lock(&anim_lock);
 
-  // Critical null checks - prevent crash during buffer recreation
-  if (!current_config || !pixels || !surface || !buffer) {
-    bongocat_log_debug("Config or pixels not ready, skipping draw");
+  buffer_slot_t *slot = NULL;
+  for (size_t i = 0; i < 2; i++) {
+    if (active_buffers[i] &&
+        !atomic_exchange_explicit(&active_buffers[i]->busy, true,
+                                  memory_order_acq_rel)) {
+      slot = active_buffers[i];
+      break;
+    }
+  }
+
+  if (!current_config || !surface || !slot) {
+    if (slot)
+      atomic_store(&slot->busy, false);
+    atomic_store(&redraw_pending, true);
     pthread_mutex_unlock(&anim_lock);
     return;
   }
@@ -344,11 +430,11 @@ void draw_bar(void) {
   int phys_w = physical_buffer_w;
   int phys_h = physical_buffer_h;
   size_t buffer_size = (size_t)phys_w * (size_t)phys_h * 4U;
-  memset(pixels, 0, buffer_size);
+  memset(slot->pixels, 0, buffer_size);
 
   if (effective_opacity > 0) {
     uint32_t fill = (uint32_t)effective_opacity << 24;
-    uint32_t *px = (uint32_t *)pixels;
+    uint32_t *px = (uint32_t *)slot->pixels;
     size_t pixel_count = buffer_size / 4;
     for (size_t i = 0; i < pixel_count; i++) {
       px[i] = fill;
@@ -362,27 +448,31 @@ void draw_bar(void) {
     int cat_height_phys = phys_dim(current_config->cat_height);
     int cat_width_phys = (cat_height_phys * CAT_IMAGE_WIDTH) / CAT_IMAGE_HEIGHT;
     int cat_y_phys =
-        (phys_h - cat_height_phys) / 2 + phys_dim(current_config->cat_y_offset);
+        (phys_h - cat_height_phys) / 2 +
+        scale_offset_120(current_config->cat_y_offset, current_scale_120);
 
     int cat_x_phys = 0;
     switch (current_config->cat_align) {
     case ALIGN_CENTER:
-      cat_x_phys = (phys_w - cat_width_phys) / 2 +
-                   phys_dim(current_config->cat_x_offset);
+      cat_x_phys =
+          (phys_w - cat_width_phys) / 2 +
+          scale_offset_120(current_config->cat_x_offset, current_scale_120);
       break;
     case ALIGN_LEFT:
-      cat_x_phys = phys_dim(current_config->cat_x_offset);
+      cat_x_phys =
+          scale_offset_120(current_config->cat_x_offset, current_scale_120);
       break;
     case ALIGN_RIGHT:
       cat_x_phys =
-          phys_w - cat_width_phys - phys_dim(current_config->cat_x_offset);
+          phys_w - cat_width_phys -
+          scale_offset_120(current_config->cat_x_offset, current_scale_120);
       break;
     }
 
     cached_frame_t *frame = &anim_cached_frames[anim_index];
     if (frame->data && frame->width > 0 && frame->height > 0) {
       // Blit pre-scaled cached frame (already BGRA, no channel swap)
-      blit_cached_frame(pixels, phys_w, phys_h, frame->data, frame->width,
+      blit_cached_frame(slot->pixels, phys_w, phys_h, frame->data, frame->width,
                         frame->height, cat_x_phys, cat_y_phys);
     } else {
       bongocat_log_debug("Frame %d cache not ready, skipping draw", anim_index);
@@ -391,13 +481,17 @@ void draw_bar(void) {
     bongocat_log_debug("Cat hidden due to fullscreen detection");
   }
 
-  wl_surface_attach(surface, buffer, 0, 0);
+  wl_surface_attach(surface, slot->buffer, 0, 0);
   wl_surface_damage_buffer(surface, 0, 0, phys_w, phys_h);
   wl_surface_commit(surface);
   pthread_mutex_unlock(&anim_lock);
 
   // Flush outside the lock -- may block on write() syscall
   wl_display_flush(display);
+}
+
+void wayland_request_redraw(void) {
+  atomic_store(&redraw_pending, true);
 }
 
 // =============================================================================
@@ -410,7 +504,7 @@ static void layer_surface_configure([[maybe_unused]] void *data,
   bongocat_log_debug("Layer surface configured: %dx%d", w, h);
   zwlr_layer_surface_v1_ack_configure(ls, serial);
   atomic_store(&configured, true);
-  draw_bar();
+  atomic_store(&redraw_pending, true);
 }
 
 // Handle compositor-requested surface closure
@@ -424,15 +518,6 @@ layer_surface_closed([[maybe_unused]] void *data,
 static struct zwlr_layer_surface_v1_listener layer_listener = {
     .configure = layer_surface_configure,
     .closed = layer_surface_closed,
-};
-
-static void xdg_wm_base_ping([[maybe_unused]] void *data,
-                             struct xdg_wm_base *wm_base, uint32_t serial) {
-  xdg_wm_base_pong(wm_base, serial);
-}
-
-static struct xdg_wm_base_listener xdg_wm_base_listener = {
-    .ping = xdg_wm_base_ping,
 };
 
 static void
@@ -449,6 +534,7 @@ output_geometry([[maybe_unused]] void *data, struct wl_output *wl_output,
       outputs[i].geometry_received = true;
       bongocat_log_debug("Output transform: %d", transform);
       screen_calculate_dimensions(&outputs[i]);
+      atomic_store(&output_change_pending, true);
       break;
     }
   }
@@ -466,6 +552,7 @@ static void output_mode([[maybe_unused]] void *data,
         outputs[i].mode_received = true;
         bongocat_log_debug("Received raw screen mode: %dx%d", width, height);
         screen_calculate_dimensions(&outputs[i]);
+        atomic_store(&output_change_pending, true);
         break;
       }
     }
@@ -477,6 +564,7 @@ static void output_done([[maybe_unused]] void *data,
   for (size_t i = 0; i < MAX_OUTPUTS; i++) {
     if (outputs[i].wl_output == wl_output) {
       screen_calculate_dimensions(&outputs[i]);
+      atomic_store(&output_change_pending, true);
       bongocat_log_debug("Output configuration complete");
       break;
     }
@@ -487,9 +575,15 @@ static void output_scale([[maybe_unused]] void *data,
                          struct wl_output *wl_output, int32_t factor) {
   if (factor < 1)
     factor = 1;
-  for (size_t i = 0; i < output_count; ++i) {
+  for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
     if (outputs[i].wl_output == wl_output) {
       outputs[i].wl_scale = factor;
+      screen_calculate_dimensions(&outputs[i]);
+      atomic_store(&output_change_pending, true);
+      if (!fractional_scale_obj && outputs[i].wl_output == output) {
+        atomic_store(&pending_scale_120, (unsigned)factor * 120u);
+        atomic_store(&scale_change_pending, true);
+      }
       break;
     }
   }
@@ -516,17 +610,8 @@ static void fractional_scale_preferred_scale(
   if (scale == 0 || scale == current_scale_120) {
     return;
   }
-  bongocat_log_info("Compositor requested fractional scale %u/120 (%.3f)",
-                    scale, (double)scale / 120.0);
-  current_scale_120 = scale;
-  if (surface) {
-    if (wayland_recreate_buffer_for_scale() == BONGOCAT_SUCCESS) {
-      wayland_recache_frames_for_scale();
-      if (atomic_load(&configured)) {
-        draw_bar();
-      }
-    }
-  }
+  atomic_store(&pending_scale_120, scale);
+  atomic_store(&scale_change_pending, true);
 }
 
 static const struct wp_fractional_scale_v1_listener fractional_scale_listener =
@@ -559,14 +644,9 @@ static void registry_global([[maybe_unused]] void *data,
     shm = (struct wl_shm *)wl_registry_bind(reg, name, &wl_shm_interface,
                                             BIND_MIN_VER(ver, 1));
   } else if (strcmp(iface, zwlr_layer_shell_v1_interface.name) == 0) {
+    layer_shell_version = BIND_MIN_VER(ver, 4);
     layer_shell = (struct zwlr_layer_shell_v1 *)wl_registry_bind(
-        reg, name, &zwlr_layer_shell_v1_interface, BIND_MIN_VER(ver, 1));
-  } else if (strcmp(iface, xdg_wm_base_interface.name) == 0) {
-    xdg_wm_base = (struct xdg_wm_base *)wl_registry_bind(
-        reg, name, &xdg_wm_base_interface, BIND_MIN_VER(ver, 1));
-    if (xdg_wm_base) {
-      xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
-    }
+        reg, name, &zwlr_layer_shell_v1_interface, layer_shell_version);
   } else if (strcmp(iface, zxdg_output_manager_v1_interface.name) == 0) {
     xdg_output_manager = wl_registry_bind(
         reg, name, &zxdg_output_manager_v1_interface, BIND_MIN_VER(ver, 3));
@@ -581,22 +661,26 @@ static void registry_global([[maybe_unused]] void *data,
             BIND_MIN_VER(ver, 1));
   } else if (strcmp(iface, wl_output_interface.name) == 0) {
     if (output_count < MAX_OUTPUTS) {
-      outputs[output_count].name = name;
-      outputs[output_count].wl_output = wl_registry_bind(
+      size_t slot = 0;
+      while (slot < MAX_OUTPUTS && outputs[slot].wl_output)
+        slot++;
+      if (slot == MAX_OUTPUTS)
+        return;
+      outputs[slot].name = name;
+      outputs[slot].wl_scale = 1;
+      outputs[slot].hypr_id = -1;
+      outputs[slot].wl_output = wl_registry_bind(
           reg, name, &wl_output_interface, BIND_MIN_VER(ver, 2));
-      wl_output_add_listener(outputs[output_count].wl_output, &output_listener,
-                             NULL);
+      wl_output_add_listener(outputs[slot].wl_output, &output_listener, NULL);
 
       // If we lost our output, get xdg_output to check if this is the one
       // reconnecting
       if (atomic_load(&output_lost) && xdg_output_manager) {
-        outputs[output_count].xdg_output =
-            zxdg_output_manager_v1_get_xdg_output(
-                xdg_output_manager, outputs[output_count].wl_output);
-        outputs[output_count].name_received = false;
-        zxdg_output_v1_add_listener(outputs[output_count].xdg_output,
-                                    &xdg_output_listener,
-                                    &outputs[output_count]);
+        outputs[slot].xdg_output = zxdg_output_manager_v1_get_xdg_output(
+            xdg_output_manager, outputs[slot].wl_output);
+        outputs[slot].name_received = false;
+        zxdg_output_v1_add_listener(outputs[slot].xdg_output,
+                                    &xdg_output_listener, &outputs[slot]);
         bongocat_log_debug(
             "New output appeared while output_lost, checking name...");
       }
@@ -618,15 +702,15 @@ static void registry_global([[maybe_unused]] void *data,
 static void registry_remove([[maybe_unused]] void *data,
                             [[maybe_unused]] struct wl_registry *registry,
                             uint32_t name) {
-  size_t removed_index = output_count;
-  for (size_t i = 0; i < output_count; ++i) {
+  size_t removed_index = MAX_OUTPUTS;
+  for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
     if (outputs[i].name == name) {
       removed_index = i;
       break;
     }
   }
 
-  if (removed_index == output_count) {
+  if (removed_index == MAX_OUTPUTS) {
     return;
   }
 
@@ -650,20 +734,15 @@ static void registry_remove([[maybe_unused]] void *data,
     outputs[removed_index].wl_output = NULL;
   }
 
-  for (size_t j = removed_index; j + 1 < output_count; ++j) {
-    outputs[j] = outputs[j + 1];
-  }
-
-  if (output_count > 0) {
-    memset(&outputs[output_count - 1], 0, sizeof(output_ref_t));
+  memset(&outputs[removed_index], 0, sizeof(output_ref_t));
+  if (output_count > 0)
     output_count--;
-  }
 
   if (!removed_bound && output != NULL) {
     current_output_info = NULL;
     bound_screen_name = NULL;
 
-    for (size_t i = 0; i < output_count; ++i) {
+    for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
       if (outputs[i].wl_output == output) {
         bound_screen_name = outputs[i].name_str;
       }
@@ -689,7 +768,7 @@ static void wayland_update_output(void) {
   bound_screen_name = NULL;
 
   if (current_config->output_name) {
-    for (size_t i = 0; i < output_count; ++i) {
+    for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
       if (outputs[i].name_received &&
           strcmp(outputs[i].name_str, current_config->output_name) == 0) {
         output = outputs[i].wl_output;
@@ -714,12 +793,13 @@ static void wayland_update_output(void) {
 
   // Fallback
   if (!output && output_count > 0) {
-    output = outputs[0].wl_output;
-    bound_output_name = outputs[0].name;
-    bound_screen_name = outputs[0].name_str;
     for (size_t i = 0; i < MAX_OUTPUTS; i++) {
-      if (outputs[i].wl_output == output) {
+      if (outputs[i].wl_output) {
+        output = outputs[i].wl_output;
+        bound_output_name = outputs[i].name;
+        bound_screen_name = outputs[i].name_str;
         current_output_info = &outputs[i];
+        break;
       }
     }
     using_named_output = false;  // Using fallback, not a named output
@@ -739,7 +819,9 @@ static bongocat_error_t wayland_setup_protocols(void) {
   wl_display_roundtrip(display);
 
   if (xdg_output_manager) {
-    for (size_t i = 0; i < output_count; ++i) {
+    for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
+      if (!outputs[i].wl_output)
+        continue;
       outputs[i].xdg_output = zxdg_output_manager_v1_get_xdg_output(
           xdg_output_manager, outputs[i].wl_output);
       outputs[i].x = 0;
@@ -795,10 +877,7 @@ static bongocat_error_t wayland_setup_surface(void) {
     return BONGOCAT_ERROR_INVALID_PARAM;
   }
 
-  uint32_t wl_layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-  if (current_config && current_config->layer == LAYER_OVERLAY) {
-    wl_layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
-  }
+  uint32_t wl_layer = wayland_layer_value(current_config->layer);
 
   surface = wl_compositor_create_surface(compositor);
   if (!surface) {
@@ -875,42 +954,48 @@ static bongocat_error_t wayland_setup_buffer(void) {
     return BONGOCAT_ERROR_WAYLAND;
   }
 
-  int fd = create_shm((int)size);
-  if (fd < 0) {
-    return BONGOCAT_ERROR_WAYLAND;
-  }
+  buffer_slot_t *new_buffers[2] = {0};
+  for (size_t i = 0; i < 2; i++) {
+    int fd = create_shm((int)size);
+    if (fd < 0)
+      goto fail;
 
-  pixels =
-      (uint8_t *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (pixels == MAP_FAILED) {
-    bongocat_log_error("Failed to map shared memory: %s", strerror(errno));
-    close(fd);
-    return BONGOCAT_ERROR_MEMORY;
-  }
-  pixel_buffer_size = size;
+    buffer_slot_t *slot = calloc(1, sizeof(*slot));
+    if (!slot) {
+      close(fd);
+      goto fail;
+    }
+    slot->pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    slot->size = size;
+    if (slot->pixels == MAP_FAILED) {
+      slot->pixels = NULL;
+      close(fd);
+      destroy_buffer_slot(slot);
+      goto fail;
+    }
 
-  struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int)size);
-  if (!pool) {
-    bongocat_log_error("Failed to create shared memory pool");
-    munmap(pixels, size);
-    pixels = NULL;
-    close(fd);
-    return BONGOCAT_ERROR_WAYLAND;
-  }
-
-  buffer = wl_shm_pool_create_buffer(pool, 0, phys_w, phys_h, phys_w * 4,
-                                     WL_SHM_FORMAT_ARGB8888);
-  if (!buffer) {
-    bongocat_log_error("Failed to create buffer");
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int)size);
+    if (!pool) {
+      close(fd);
+      destroy_buffer_slot(slot);
+      goto fail;
+    }
+    slot->buffer = wl_shm_pool_create_buffer(
+        pool, 0, phys_w, phys_h, phys_w * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
-    munmap(pixels, size);
-    pixels = NULL;
     close(fd);
-    return BONGOCAT_ERROR_WAYLAND;
+    if (!slot->buffer) {
+      destroy_buffer_slot(slot);
+      goto fail;
+    }
+    atomic_init(&slot->busy, false);
+    wl_buffer_add_listener(slot->buffer, &buffer_listener, slot);
+    new_buffers[i] = slot;
   }
 
-  wl_shm_pool_destroy(pool);
-  close(fd);
+  retire_active_buffers();
+  active_buffers[0] = new_buffers[0];
+  active_buffers[1] = new_buffers[1];
 
   physical_buffer_w = phys_w;
   physical_buffer_h = phys_h;
@@ -933,6 +1018,11 @@ static bongocat_error_t wayland_setup_buffer(void) {
       "Buffer allocated: logical %dx%d, physical %dx%d, scale %u/120",
       logical_w, logical_h, phys_w, phys_h, current_scale_120);
   return BONGOCAT_SUCCESS;
+
+fail:
+  destroy_buffer_slot(new_buffers[0]);
+  destroy_buffer_slot(new_buffers[1]);
+  return BONGOCAT_ERROR_MEMORY;
 }
 
 // Tear down current buffer + shm and reallocate at the active scale. Caller
@@ -943,16 +1033,6 @@ static bongocat_error_t wayland_recreate_buffer_for_scale(void) {
   }
 
   pthread_mutex_lock(&anim_lock);
-  atomic_store(&configured, false);
-  if (buffer) {
-    wl_buffer_destroy(buffer);
-    buffer = NULL;
-  }
-  if (pixels && pixel_buffer_size > 0) {
-    munmap(pixels, pixel_buffer_size);
-    pixels = NULL;
-    pixel_buffer_size = 0;
-  }
   bongocat_error_t err = wayland_setup_buffer();
   pthread_mutex_unlock(&anim_lock);
 
@@ -963,7 +1043,6 @@ static bongocat_error_t wayland_recreate_buffer_for_scale(void) {
   // Surface needs a commit so the compositor picks up the new buffer_scale /
   // viewport destination before the next draw.
   wl_surface_commit(surface);
-  wl_display_roundtrip(display);
   return BONGOCAT_SUCCESS;
 }
 
@@ -979,6 +1058,34 @@ static void wayland_recache_frames_for_scale(void) {
                          current_config->mirror_y,
                          current_config->enable_antialiasing);
   pthread_mutex_unlock(&anim_lock);
+}
+
+static void wayland_process_pending_changes(void) {
+  cleanup_retired_buffers();
+
+  if (atomic_exchange(&output_change_pending, false) && current_config &&
+      output) {
+    int old_width = current_config->screen_width;
+    wayland_update_current_output_info();
+    if (applied_width > 0 && current_config->screen_width != old_width)
+      wayland_update_config(current_config);
+  }
+
+  if (atomic_exchange(&scale_change_pending, false)) {
+    uint32_t scale = atomic_load(&pending_scale_120);
+    if (scale > 0 && scale != current_scale_120) {
+      bongocat_log_info("Applying render scale %u/120 (%.3f)", scale,
+                        (double)scale / 120.0);
+      current_scale_120 = scale;
+      if (surface && wayland_recreate_buffer_for_scale() == BONGOCAT_SUCCESS) {
+        wayland_recache_frames_for_scale();
+        atomic_store(&redraw_pending, true);
+      }
+    }
+  }
+
+  if (atomic_exchange(&redraw_pending, false) && atomic_load(&configured))
+    draw_bar();
 }
 
 bongocat_error_t wayland_init(config_t *config) {
@@ -1005,6 +1112,7 @@ bongocat_error_t wayland_init(config_t *config) {
   // the compositor's preferred scale before main.c rasterizes the SVGs.
   // Without this, scale 2.0 displays would render the first frame at 1×.
   wl_display_roundtrip(display);
+  wayland_process_pending_changes();
 
   applied_width = current_config->screen_width;
   applied_height = current_config->overlay_height;
@@ -1065,6 +1173,8 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
       }
     }
 
+    wayland_process_pending_changes();
+
     wl_display_flush(display);
   }
 
@@ -1075,14 +1185,6 @@ bongocat_error_t wayland_run(volatile sig_atomic_t *running) {
 // =============================================================================
 // PUBLIC API IMPLEMENTATION
 // =============================================================================
-
-int wayland_get_screen_width(void) {
-  return current_output_info ? current_output_info->screen_width : 0;
-}
-
-const char *wayland_get_output_name(void) {
-  return bound_screen_name;
-}
 
 struct wl_output *wayland_get_current_screen_output(void) {
   return current_output_info ? current_output_info->wl_output : NULL;
@@ -1109,12 +1211,12 @@ static void apply_layer_properties(const config_t *config, bool do_position,
                                                                : "bottom");
   }
   if (do_layer) {
-    uint32_t wl_layer = (config->layer == LAYER_OVERLAY)
-                            ? ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY
-                            : ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-    zwlr_layer_surface_v1_set_layer(layer_surface, wl_layer);
-    bongocat_log_info("Layer changed to %s",
-                      config->layer == LAYER_OVERLAY ? "overlay" : "top");
+    if (layer_shell_version >= ZWLR_LAYER_SURFACE_V1_SET_LAYER_SINCE_VERSION) {
+      zwlr_layer_surface_v1_set_layer(layer_surface,
+                                      wayland_layer_value(config->layer));
+      bongocat_log_info("Layer changed to %s",
+                        wayland_layer_name(config->layer));
+    }
   }
 }
 
@@ -1132,12 +1234,11 @@ void wayland_update_config(config_t *config) {
   char *old_output_name =
       applied_output_name ? strdup(applied_output_name) : NULL;
   int new_width = wayland_get_new_screen_width();
+  if (new_width > 0)
+    config->screen_width = new_width;
 
   bool dimensions_changed = (old_height != config->overlay_height) ||
                             (old_width != config->screen_width);
-  if (new_width > 0 && new_width != config->screen_width) {
-    dimensions_changed = true;
-  }
 
   bool layer_changed = (old_layer != config->layer);
   bool position_changed = (applied_position != config->overlay_position);
@@ -1156,7 +1257,10 @@ void wayland_update_config(config_t *config) {
   // - Property update: for position/layer changes (double-buffered, no
   // recreate)
   // - Cache only: for cat_height, mirror, etc.
-  bool needs_full_recreate = screen_changed;
+  bool needs_full_recreate =
+      screen_changed ||
+      (layer_changed &&
+       layer_shell_version < ZWLR_LAYER_SURFACE_V1_SET_LAYER_SINCE_VERSION);
   bool needs_buffer_recreate =
       dimensions_changed && old_height > 0 && old_width > 0;
   bool needs_property_update = layer_changed || position_changed;
@@ -1168,15 +1272,6 @@ void wayland_update_config(config_t *config) {
     pthread_mutex_lock(&anim_lock);
     atomic_store(&configured, false);
 
-    if (buffer) {
-      wl_buffer_destroy(buffer);
-      buffer = NULL;
-    }
-    if (pixels && pixel_buffer_size > 0) {
-      munmap(pixels, pixel_buffer_size);
-      pixels = NULL;
-      pixel_buffer_size = 0;
-    }
     if (layer_surface) {
       zwlr_layer_surface_v1_destroy(layer_surface);
       layer_surface = NULL;
@@ -1243,16 +1338,6 @@ void wayland_update_config(config_t *config) {
     pthread_mutex_lock(&anim_lock);
     atomic_store(&configured, false);
 
-    if (buffer) {
-      wl_buffer_destroy(buffer);
-      buffer = NULL;
-    }
-    if (pixels && pixel_buffer_size > 0) {
-      munmap(pixels, pixel_buffer_size);
-      pixels = NULL;
-      pixel_buffer_size = 0;
-    }
-
     if (wayland_setup_buffer() != BONGOCAT_SUCCESS) {
       bongocat_log_error("Failed to recreate buffer after resize");
       pthread_mutex_unlock(&anim_lock);
@@ -1312,8 +1397,10 @@ void wayland_update_config(config_t *config) {
 void wayland_cleanup(void) {
   bongocat_log_info("Cleaning up Wayland resources");
 
+  fullscreen_cleanup();
+
   // First destroy xdg_output objects
-  for (size_t i = 0; i < output_count; ++i) {
+  for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
     if (outputs[i].xdg_output) {
       bongocat_log_debug("Destroying xdg_output %zu", i);
       zxdg_output_v1_destroy(outputs[i].xdg_output);
@@ -1329,7 +1416,7 @@ void wayland_cleanup(void) {
   }
 
   // Finally destroy wl_output objects
-  for (size_t i = 0; i < output_count; ++i) {
+  for (size_t i = 0; i < MAX_OUTPUTS; ++i) {
     if (outputs[i].wl_output) {
       bongocat_log_debug("Destroying wl_output %zu", i);
       wl_output_destroy(outputs[i].wl_output);
@@ -1339,15 +1426,11 @@ void wayland_cleanup(void) {
 
   output_count = 0;
 
-  if (buffer) {
-    wl_buffer_destroy(buffer);
-    buffer = NULL;
-  }
-
-  if (pixels && pixel_buffer_size > 0) {
-    munmap(pixels, pixel_buffer_size);
-    pixels = NULL;
-    pixel_buffer_size = 0;
+  retire_active_buffers();
+  while (retired_buffers) {
+    buffer_slot_t *slot = retired_buffers;
+    retired_buffers = slot->next;
+    destroy_buffer_slot(slot);
   }
 
   if (layer_surface) {
@@ -1385,16 +1468,13 @@ void wayland_cleanup(void) {
   output = NULL;
 
   if (layer_shell) {
-    zwlr_layer_shell_v1_destroy(layer_shell);
+    if (layer_shell_version >= ZWLR_LAYER_SHELL_V1_DESTROY_SINCE_VERSION)
+      zwlr_layer_shell_v1_destroy(layer_shell);
+    else
+      wl_proxy_destroy((struct wl_proxy *)layer_shell);
     layer_shell = NULL;
+    layer_shell_version = 0;
   }
-
-  if (xdg_wm_base) {
-    xdg_wm_base_destroy(xdg_wm_base);
-    xdg_wm_base = NULL;
-  }
-
-  fullscreen_cleanup();
 
   if (shm) {
     wl_shm_destroy(shm);
@@ -1404,6 +1484,11 @@ void wayland_cleanup(void) {
   if (compositor) {
     wl_compositor_destroy(compositor);
     compositor = NULL;
+  }
+
+  if (global_registry) {
+    wl_registry_destroy(global_registry);
+    global_registry = NULL;
   }
 
   if (display) {
@@ -1417,7 +1502,6 @@ void wayland_cleanup(void) {
   atomic_store(&output_lost, false);
   bound_output_name = 0;
   using_named_output = false;
-  global_registry = NULL;  // Destroyed when display disconnects
   bound_screen_name = NULL;
   current_output_info = NULL;
   free(applied_output_name);
@@ -1427,14 +1511,14 @@ void wayland_cleanup(void) {
   applied_layer = LAYER_TOP;
   applied_position = POSITION_BOTTOM;
   tick_callback_fn = NULL;
+  current_scale_120 = 120;
+  atomic_store(&pending_scale_120, 120);
+  atomic_store(&scale_change_pending, false);
+  atomic_store(&output_change_pending, false);
+  atomic_store(&redraw_pending, false);
+  physical_buffer_w = 0;
+  physical_buffer_h = 0;
   memset(&outputs, 0, sizeof(output_ref_t) * MAX_OUTPUTS);
 
   bongocat_log_debug("Wayland cleanup complete");
-}
-
-const char *wayland_get_current_layer_name(void) {
-  if (!current_config) {
-    return "TOP";
-  }
-  return current_config->layer == LAYER_OVERLAY ? "OVERLAY" : "TOP";
 }
