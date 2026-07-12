@@ -2,15 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0.1] - 2026-07-13
 
 ### Fixed
 
 - **Concurrent paw animation** - Pressing keys on both sides of the keyboard now
   moves both paws at once (the `both-down` frame). Previously only the
-  last-pressed key's paw animated. Keycodes now flow through a lock-free ring
-  buffer to per-paw timers, which also fixes a multi-monitor keypress race on the
-  old single shared flag. Fixes #78.
+  last-pressed key's paw animated. Per-paw deadlines preserve both input events.
+  Fixes #78.
+- **HiDPI output placement** - Logical output dimensions, fractional scales,
+  transformed outputs, and negative offsets now place overlays correctly. Fixes #75.
+- **Layer and hot reload safety** - All layer-shell layers can be configured and
+  reloaded safely. Fixes #76.
+- **Input and process lifecycle** - Input monitoring restarts after relevant
+  configuration changes; child process groups now stop reliably.
+
+### Changed
+
+- **Configuration validation** - Invalid time, boolean, and integer values are
+  rejected before they reach runtime.
 
 ## [2.0.0] - 2026-04-05
 
