@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2] - 2026-07-13
+
+### Fixed
+
+- **Fullscreen focus tracking** - The cat becomes visible again after leaving a
+  fullscreen window for another window or workspace.
+
 ## [2.0.1] - 2026-07-13
 
 ### Fixed
