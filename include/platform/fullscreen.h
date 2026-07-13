@@ -9,6 +9,12 @@
 struct zwlr_foreign_toplevel_manager_v1;
 struct zwlr_foreign_toplevel_manager_v1_listener;
 
+static inline bool fullscreen_toplevel_relevant(bool has_output_events,
+                                                bool is_on_output,
+                                                bool is_activated) {
+  return is_activated && (!has_output_events || is_on_output);
+}
+
 // =============================================================================
 // FULLSCREEN DETECTION PUBLIC API
 // =============================================================================

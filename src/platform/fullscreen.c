@@ -74,9 +74,9 @@ static void fs_update_state(bool new_state) {
 static void fs_recompute_state(void) {
   bool fullscreen = false;
   for (size_t i = 0; i < track_toplevels_count; i++) {
-    bool relevant = compositor_sends_output_events
-                        ? track_toplevels[i].output == output
-                        : track_toplevels[i].is_activated;
+    bool relevant = fullscreen_toplevel_relevant(
+        compositor_sends_output_events, track_toplevels[i].output == output,
+        track_toplevels[i].is_activated);
     if (relevant && track_toplevels[i].is_fullscreen) {
       fullscreen = true;
       break;
