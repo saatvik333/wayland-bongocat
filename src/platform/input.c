@@ -325,8 +325,9 @@ static void capture_input_hotplug(char **static_paths, int num_static,
                                        memory_order_release);
             }
             if (enable_debug) {
-              bongocat_log_debug("Key: %d from %s", ev[k].code,
-                                 active_devices[i].path);
+              // Never log which key: debug output ends up in terminals and
+              // system journals, where key codes amount to a keystroke log.
+              bongocat_log_debug("Key press from %s", active_devices[i].path);
             }
           }
         }
