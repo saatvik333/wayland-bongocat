@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
+#define _GNU_SOURCE  // getresgid, setresgid
 #include "platform/input.h"
 
 #include "graphics/paw_frame.h"
@@ -24,6 +25,53 @@
 
 atomic_uint *pending_paws = NULL;
 static pid_t input_child_pid = -1;
+
+// Group granted by a setgid install; (gid_t)-1 when not setgid or once the
+// group has been dropped for good.
+static gid_t privileged_gid = (gid_t)-1;
+
+void input_privilege_init(void) {
+  gid_t rgid;
+  gid_t egid;
+  gid_t sgid;
+  if (getresgid(&rgid, &egid, &sgid) != 0 || egid == rgid) {
+    return;
+  }
+  privileged_gid = egid;
+  if (setresgid((gid_t)-1, rgid, (gid_t)-1) != 0) {
+    _exit(1);
+  }
+}
+
+static void privilege_raise(void) {
+  if (privileged_gid != (gid_t)-1 &&
+      setresgid((gid_t)-1, privileged_gid, (gid_t)-1) != 0) {
+    // Not fatal: opening the devices simply fails and the cat stays idle.
+    bongocat_log_warning("Could not raise input group: %s", strerror(errno));
+  }
+}
+
+static void privilege_lower(void) {
+  if (privileged_gid != (gid_t)-1 &&
+      setresgid((gid_t)-1, getgid(), (gid_t)-1) != 0) {
+    _exit(1);
+  }
+}
+
+void input_privilege_drop(void) {
+  if (privileged_gid == (gid_t)-1) {
+    return;
+  }
+  gid_t gid = getgid();
+  gid_t rgid;
+  gid_t egid;
+  gid_t sgid;
+  if (setresgid(gid, gid, gid) != 0 || getresgid(&rgid, &egid, &sgid) != 0 ||
+      rgid != gid || egid != gid || sgid != gid) {
+    _exit(1);
+  }
+  privileged_gid = (gid_t)-1;
+}
 static int wake_fd = -1;
 
 static void wait_child_exit(pid_t pid, int max_attempts) {
@@ -157,6 +205,7 @@ static void capture_input_hotplug(char **static_paths, int num_static,
     if (scanning_enabled &&
         now.tv_sec - last_scan_time.tv_sec >= effective_interval) {
       last_scan_time = now;
+      privilege_raise();
       DIR *dir = opendir("/dev/input");
       if (dir) {
         struct dirent *entry;
@@ -235,8 +284,14 @@ static void capture_input_hotplug(char **static_paths, int num_static,
         closedir(dir);
       }
 
-      if (scan_interval == 0)
+      if (scan_interval == 0) {
         scanning_enabled = false;
+        // No rescans will ever happen, so the devices already open are all
+        // this process will read: give the group up for good.
+        input_privilege_drop();
+      } else {
+        privilege_lower();
+      }
 
       // Check if any devices are now open
       if (!initial_devices_found) {

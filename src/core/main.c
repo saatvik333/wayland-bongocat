@@ -508,6 +508,13 @@ static bongocat_error_t system_initialize_components(void) {
     return result;
   }
 
+  // The input child has been forked with the group still in its saved set.
+  // This process (Wayland, rendering, config reloads) never needs it again.
+  // Trade-off on setgid installs: an input child restarted later (after a
+  // crash or a config reload that changes the device list) cannot open
+  // devices, so the cat stops reacting until bongocat is restarted.
+  input_privilege_drop();
+
   // Start animation thread
   result = animation_start();
   if (result != BONGOCAT_SUCCESS) {
@@ -635,6 +642,9 @@ static int cli_parse_arguments(int argc, char *argv[], cli_args_t *args) {
 
 int main(int argc, char *argv[]) {
   bongocat_error_t result;
+
+  // Before anything parses user-controlled input (arguments, config file).
+  input_privilege_init();
 
   // Initialize error system early
   bongocat_error_init(1);  // Enable debug initially

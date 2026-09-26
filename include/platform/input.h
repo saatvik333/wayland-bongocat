@@ -30,6 +30,20 @@ input_restart_monitoring(char **device_paths, int num_devices, char **names,
 // Cleanup input monitoring resources
 void input_cleanup(void);
 
+// Privilege handling for setgid installs, where the binary is setgid to a
+// group that may read the keyboard devices (instead of adding the user to the
+// `input` group). Both are no-ops when the binary is not setgid.
+//
+// input_privilege_init() must be the first call in main(): it stops using the
+// group (effective gid -> real gid) but keeps it in the saved set, so config
+// parsing, Wayland setup and rendering run unprivileged. The input child
+// raises it again only while opening devices.
+//
+// input_privilege_drop() gives the group up irrevocably (real, effective and
+// saved gid), and exits if that fails rather than run on with it.
+void input_privilege_init(void);
+void input_privilege_drop(void);
+
 // Get child PID (async-signal-safe accessor for crash handler)
 pid_t input_get_child_pid(void);
 
