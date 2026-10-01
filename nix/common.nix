@@ -7,6 +7,33 @@
 let
   cfg = config.programs.wayland-bongocat;
   wayland-bongocat = pkgs.callPackage ./default.nix { };
+  appearanceOption = type: lib.mkOption {
+    type = lib.types.nullOr type;
+    default = null;
+    description = "Override the global appearance setting on this output.";
+  };
+  monitorAppearance = lib.types.submodule {
+    options = {
+      cat_height = appearanceOption (lib.types.ints.between 10 200);
+      overlay_height = appearanceOption (lib.types.ints.between 20 300);
+      overlay_opacity = appearanceOption (lib.types.ints.between 0 255);
+      cat_x_offset = appearanceOption lib.types.int;
+      cat_y_offset = appearanceOption lib.types.int;
+      layer = appearanceOption (lib.types.enum [ "background" "bottom" "top" "overlay" ]);
+      overlay_position = appearanceOption (lib.types.enum [ "top" "bottom" ]);
+      cat_align = appearanceOption (lib.types.enum [ "left" "center" "right" ]);
+      mirror_x = appearanceOption lib.types.bool;
+      mirror_y = appearanceOption lib.types.bool;
+      enable_antialiasing = appearanceOption lib.types.bool;
+      disable_fullscreen_hide = appearanceOption lib.types.bool;
+    };
+  };
+  renderSetting = value:
+    if builtins.isBool value then (if value then "1" else "0") else toString value;
+  monitorConfig = lib.concatStringsSep "\n" (lib.mapAttrsToList
+    (name: settings: "[monitor:${name}]\n" + lib.concatStringsSep "\n"
+      (lib.mapAttrsToList (key: value: "${key}=${renderSetting value}")
+        (lib.filterAttrs (_: value: value != null) settings))) cfg.monitorSettings);
   configFile = pkgs.writeTextFile {
     name = "bongocat.conf";
     text = ''
@@ -28,6 +55,7 @@ let
       overlay_height=${toString cfg.overlayHeight}
       overlay_opacity=${toString cfg.overlayOpacity}
       layer=${cfg.layer}
+      disable_fullscreen_hide=${if cfg.disableFullscreenHide then "1" else "0"}
 
       # Animation settings
       idle_frame=${toString cfg.idleFrame}
@@ -53,6 +81,9 @@ let
       ${lib.concatMapStringsSep "\n" (device: "keyboard_device=${device}") cfg.inputDevices}
       ${lib.concatMapStringsSep "\n" (name: "keyboard_name=${name}") cfg.inputDeviceNames}
       hotplug_scan_interval=${toString cfg.hotplugScanInterval}
+
+      ${monitorConfig}
+      [global]
     ''
     + lib.optionalString (cfg.extraConfig != "") ("\n# Extra Config\n" + cfg.extraConfig);
   };
@@ -186,7 +217,7 @@ in
       type = lib.types.ints.between 0 4;
       default = 0;
       example = 1;
-      description = "Frame to use when idle (0, 1, or 2)";
+      description = "Frame to use when idle (0 through 4)";
     };
     keypressDuration = lib.mkOption {
       type = lib.types.ints.between 10 5000;
@@ -223,8 +254,8 @@ in
     # Input devices
     inputDevices = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "/dev/input/event4" ];
-      description = "List of input devices to monitor, run `bongocat-find-devices` to see all devices to add to this list";
+      default = [ ];
+      description = "Explicit input devices (including by-id/by-path aliases). Empty paths and names select accessible keyboards automatically; run `bongocat-find-devices` to see all devices to add to this list";
       example = [
         "/dev/input/event4"
         "/dev/input/event20"
@@ -251,6 +282,18 @@ in
       default = "";
       description = "The monitor for the Cat";
       example = "eDP-1";
+    };
+
+    disableFullscreenHide = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Keep overlays visible over fullscreen windows.";
+    };
+    monitorSettings = lib.mkOption {
+      type = lib.types.attrsOf monitorAppearance;
+      default = { };
+      example = { "eDP-1" = { cat_height = 60; mirror_x = true; }; };
+      description = "Appearance overrides by monitor name; monitor selects the outputs.";
     };
 
     # Extra Config

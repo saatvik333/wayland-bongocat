@@ -525,7 +525,7 @@ static void nsvg__xformInverse(float* inv, float* t)
 {
 	double invdet, det = (double)t[0] * t[3] - (double)t[2] * t[1];
 	if (det > -1e-6 && det < 1e-6) {
-		nsvg__xformIdentity(t);
+		nsvg__xformIdentity(inv);
 		return;
 	}
 	invdet = 1.0 / det;
@@ -930,9 +930,11 @@ static void nsvg__getLocalBounds(float* bounds, NSVGshape *shape, float* xform)
 	NSVGpath* path;
 	float curve[4*2], curveBounds[4];
 	int i, first = 1;
+	memset(bounds, 0, sizeof(float) * 4);
 	for (path = shape->paths; path != NULL; path = path->next) {
+		if (path->pts == NULL || path->npts < 4) continue;
 		nsvg__xformPoint(&curve[0], &curve[1], path->pts[0], path->pts[1], xform);
-		for (i = 0; i < path->npts-1; i += 3) {
+		for (i = 0; i <= path->npts-4; i += 3) {
 			nsvg__xformPoint(&curve[2], &curve[3], path->pts[(i+1)*2], path->pts[(i+1)*2+1], xform);
 			nsvg__xformPoint(&curve[4], &curve[5], path->pts[(i+2)*2], path->pts[(i+2)*2+1], xform);
 			nsvg__xformPoint(&curve[6], &curve[7], path->pts[(i+3)*2], path->pts[(i+3)*2+1], xform);

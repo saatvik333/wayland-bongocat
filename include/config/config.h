@@ -38,6 +38,14 @@ typedef struct {
 } config_time_t;
 
 typedef struct {
+  char *monitor;
+  char *key;
+  char *value;
+} monitor_override_t;
+
+typedef struct {
+  monitor_override_t *overrides;
+  size_t num_overrides;
   // Display settings
   int screen_width;
   char *output_name;
@@ -92,9 +100,32 @@ typedef struct {
 // CONFIGURATION FUNCTIONS
 // =============================================================================
 
+typedef enum {
+  CONFIG_WARNING,
+  CONFIG_ERROR
+} config_severity_t;
+typedef struct {
+  const char *file;
+  int line;  // Zero for file-level failures.
+  const char *key;
+  config_severity_t severity;
+  const char *message;
+} config_diagnostic_t;
+typedef void (*config_diagnostic_callback_t)(const config_diagnostic_t *,
+                                             void *);
+// Diagnostic strings are borrowed for the duration of the callback.
+BONGOCAT_NODISCARD bongocat_error_t
+load_config_report(config_t *config, const char *path, bool strict,
+                   config_diagnostic_callback_t callback, void *data);
+
 // Load configuration - returns error code (must be checked)
 BONGOCAT_NODISCARD bongocat_error_t load_config(config_t *config,
                                                 const char *config_file_path);
+
+BONGOCAT_NODISCARD bongocat_error_t load_config_strict(config_t *config,
+                                                       const char *path);
+void config_for_monitor(const config_t *global, const char *name,
+                        config_t *effective);
 
 // Get screen width - returns 0 on failure (should be checked)
 BONGOCAT_NODISCARD int get_screen_width(void);

@@ -74,7 +74,7 @@ overlay_position=bottom
 # mirror_y=0
 
 # Input device (run bongocat-find-devices to find yours)
-keyboard_device=/dev/input/event4
+# Optional: keyboard_device=/dev/input/by-id/YOUR-KEYBOARD-event-kbd
 
 # Multi-monitor (comma-separated monitor names)
 # monitor=eDP-1,HDMI-A-1
@@ -119,10 +119,33 @@ keyboard_device=/dev/input/event4
 | `disable_fullscreen_hide`  | 0/1               | 0        | Keep overlay visible in fullscreen   |
 | `enable_debug`             | 0/1               | 0        | Enable debug logging                 |
 | `test_animation_duration`  | ms                | 200      | Test animation frame duration        |
-| `test_animation_interval`  | ms                | 0        | Test animation repeat interval       |
+| `test_animation_interval`  | seconds                | 0        | Test animation repeat interval       |
 
-Changing monitor count while running requires a restart; other settings are
-hot-reloadable with `--watch-config`.
+Monitor selection and appearance are reconciled during reload. Named outputs
+that are disconnected wait for reconnection; automatic selection uses the first
+available output. `--monitor NAME` remains a startup override.
+
+Use `[monitor:NAME]` for appearance overrides and `[global]` to return to global
+settings. Global defaults apply before overrides regardless of section order.
+Supported overrides: `cat_height`, `overlay_height`, `overlay_opacity`,
+`cat_x_offset`, `cat_y_offset`, `layer`, `overlay_position`, `cat_align`,
+`mirror_x`, `mirror_y`, `enable_antialiasing`, and `disable_fullscreen_hide`.
+Input selectors and animation timing remain global.
+
+```ini
+monitor=eDP-1,HDMI-A-1
+cat_height=40
+[monitor:HDMI-A-1]
+cat_height=60
+mirror_x=1
+[global]
+fps=60
+```
+
+Startup tolerates malformed entries with warnings. Reloads and `--check-config`
+are strict: invalid, missing, or unreadable files leave the running config
+active. Watching tracks the parent directory, including atomic replacements,
+and reloads 300 ms after the final relevant event.
 
 </details>
 
@@ -135,12 +158,28 @@ bongocat [OPTIONS]
   -m, --monitor NAME   Force specific monitor output
   -w, --watch-config   Auto-reload on config change
   -t, --toggle         Start/stop toggle
+  --check-config      Validate config without Wayland or input access
+  --list-devices      List devices, capabilities and access errors
+  --list-monitors     List monitor names, dimensions and scales
+  --doctor            Check config, protocols, outputs and input permissions
+  --hide / --show     Change visibility of every overlay
+  --pause / --resume  Show idle frame, discard input, or resume animation
+  --reload / --status Reload config or query the running instance
   -h, --help           Help
   -v, --version        Version
 ```
 
-> [!CAUTION]
-> **Privacy Notice**: `enable_debug=1` logs all keystrokes to stdout/stderr. Ensure this is disabled (default: 0) for normal usage.
+Controls use a user-owned Unix socket and require the same UID. Hide preserves
+animation state; pause displays the configured idle frame and discards input.
+Resume clears pending paw activity. Hidden and paused state reset on restart;
+controls never rewrite config files. Failed commands return nonzero.
+
+When both input paths and names are empty, accessible keyboard-capable evdev
+devices are selected automatically. Explicit selectors never fall back to an
+unrelated device. Stable `/dev/input/by-id/` and `/dev/input/by-path/` aliases
+are supported and devices are deduplicated by identity. No permission changes
+are made automatically. Keycodes are never transmitted or logged, including
+with `enable_debug=1`.
 
 ## Troubleshooting
 

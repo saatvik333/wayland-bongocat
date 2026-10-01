@@ -77,6 +77,8 @@ void nsvgDeleteRasterizer(NSVGrasterizer*);
 #ifdef NANOSVGRAST_IMPLEMENTATION
 
 #include <math.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -239,9 +241,28 @@ static int nsvg__ptEquals(float x1, float y1, float x2, float y2, float tol)
 	return dx*dx + dy*dy < tol*tol;
 }
 
+// Keep the existing allocation and capacity intact if growth fails.
+static int nsvg__reservePathPoint(NSVGrasterizer* r)
+{
+	int capacity;
+	NSVGpoint* points;
+	if (r->npoints < 0 || r->cpoints < 0 || r->npoints >= INT_MAX ||
+		r->npoints > r->cpoints || (r->npoints > 0 && r->points == NULL)) return 0;
+	if (r->npoints < r->cpoints) return r->points != NULL;
+	capacity = r->cpoints > 0 ?
+		(r->cpoints > INT_MAX / 2 ? INT_MAX : r->cpoints * 2) : 64;
+	if ((size_t)capacity > SIZE_MAX / sizeof(NSVGpoint)) return 0;
+	points = (NSVGpoint*)realloc(r->points, sizeof(NSVGpoint) * (size_t)capacity);
+	if (points == NULL) return 0;
+	r->points = points;
+	r->cpoints = capacity;
+	return 1;
+}
+
 static void nsvg__addPathPoint(NSVGrasterizer* r, float x, float y, int flags)
 {
 	NSVGpoint* pt;
+	if (!nsvg__reservePathPoint(r)) return;
 
 	if (r->npoints > 0) {
 		pt = &r->points[r->npoints-1];
@@ -251,11 +272,6 @@ static void nsvg__addPathPoint(NSVGrasterizer* r, float x, float y, int flags)
 		}
 	}
 
-	if (r->npoints+1 > r->cpoints) {
-		r->cpoints = r->cpoints > 0 ? r->cpoints * 2 : 64;
-		r->points = (NSVGpoint*)realloc(r->points, sizeof(NSVGpoint) * r->cpoints);
-		if (r->points == NULL) return;
-	}
 
 	pt = &r->points[r->npoints];
 	pt->x = x;
@@ -266,11 +282,7 @@ static void nsvg__addPathPoint(NSVGrasterizer* r, float x, float y, int flags)
 
 static void nsvg__appendPathPoint(NSVGrasterizer* r, NSVGpoint pt)
 {
-	if (r->npoints+1 > r->cpoints) {
-		r->cpoints = r->cpoints > 0 ? r->cpoints * 2 : 64;
-		r->points = (NSVGpoint*)realloc(r->points, sizeof(NSVGpoint) * r->cpoints);
-		if (r->points == NULL) return;
-	}
+	if (!nsvg__reservePathPoint(r)) return;
 	r->points[r->npoints] = pt;
 	r->npoints++;
 }

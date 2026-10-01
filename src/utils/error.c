@@ -3,7 +3,16 @@
 
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <time.h>
+
+// Clang's analyzer does not yet model __builtin_c23_va_start. The legacy
+// GCC/Clang builtin has the same contract for our named variadic functions.
+#ifdef __GNUC__
+#  define BONGOCAT_VA_START(args, last) __builtin_va_start(args, last)
+#else
+#  define BONGOCAT_VA_START(args, last) va_start(args, last)
+#endif
 
 static atomic_int debug_enabled = 1;
 
@@ -25,7 +34,7 @@ static void log_timestamp(FILE *stream) {
 void bongocat_log_error(const char *format, ...) {
   va_list args;
   char message[1024];
-  va_start(args, format);
+  BONGOCAT_VA_START(args, format);
   vsnprintf(message, sizeof(message), format, args);
   va_end(args);
   log_timestamp(stderr);
@@ -36,7 +45,7 @@ void bongocat_log_error(const char *format, ...) {
 void bongocat_log_warning(const char *format, ...) {
   va_list args;
   char message[1024];
-  va_start(args, format);
+  BONGOCAT_VA_START(args, format);
   vsnprintf(message, sizeof(message), format, args);
   va_end(args);
   log_timestamp(stderr);
@@ -47,7 +56,7 @@ void bongocat_log_warning(const char *format, ...) {
 void bongocat_log_info(const char *format, ...) {
   va_list args;
   char message[1024];
-  va_start(args, format);
+  BONGOCAT_VA_START(args, format);
   vsnprintf(message, sizeof(message), format, args);
   va_end(args);
   log_timestamp(stdout);
@@ -56,12 +65,13 @@ void bongocat_log_info(const char *format, ...) {
 }
 
 void bongocat_log_debug(const char *format, ...) {
-  if (!atomic_load(&debug_enabled))
+  if (!atomic_load(&debug_enabled)) {
     return;
+  }
 
   va_list args;
   char message[1024];
-  va_start(args, format);
+  BONGOCAT_VA_START(args, format);
   vsnprintf(message, sizeof(message), format, args);
   va_end(args);
   log_timestamp(stdout);

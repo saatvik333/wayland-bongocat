@@ -15,26 +15,30 @@ struct zxdg_output_v1;
 static int tests_passed = 0;
 static int tests_failed = 0;
 
-#define TEST_ASSERT(cond, msg)                                                 \
-  do {                                                                         \
-    if (cond) {                                                                \
-      tests_passed++;                                                          \
-    } else {                                                                   \
-      tests_failed++;                                                          \
-      fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, msg);        \
-    }                                                                          \
+#define TEST_ASSERT(cond, msg)                                         \
+  do {                                                                 \
+    if (cond) {                                                        \
+      tests_passed++;                                                  \
+    } else {                                                           \
+      tests_failed++;                                                  \
+      fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, msg); \
+    }                                                                  \
   } while (0)
 
 static void test_combinations(void) {
   printf("test_combinations...\n");
   int idle = BONGOCAT_FRAME_BOTH_UP;
-  TEST_ASSERT(frame_from_paw_state(false, false, idle) == BONGOCAT_FRAME_BOTH_UP,
+  TEST_ASSERT(frame_from_paw_state(false, false, idle) ==
+                  BONGOCAT_FRAME_BOTH_UP,
               "neither -> idle (both up)");
-  TEST_ASSERT(frame_from_paw_state(true, false, idle) == BONGOCAT_FRAME_LEFT_DOWN,
+  TEST_ASSERT(frame_from_paw_state(true, false, idle) ==
+                  BONGOCAT_FRAME_LEFT_DOWN,
               "left only -> left down");
-  TEST_ASSERT(frame_from_paw_state(false, true, idle) == BONGOCAT_FRAME_RIGHT_DOWN,
+  TEST_ASSERT(frame_from_paw_state(false, true, idle) ==
+                  BONGOCAT_FRAME_RIGHT_DOWN,
               "right only -> right down");
-  TEST_ASSERT(frame_from_paw_state(true, true, idle) == BONGOCAT_FRAME_BOTH_DOWN,
+  TEST_ASSERT(frame_from_paw_state(true, true, idle) ==
+                  BONGOCAT_FRAME_BOTH_DOWN,
               "both -> both down");
 }
 

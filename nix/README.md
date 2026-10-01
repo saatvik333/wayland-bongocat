@@ -23,3 +23,9 @@ nix run ./#default
 ```
 
 See [NIXOS.md](NIXOS.md) for further information.
+
+Input selectors default to automatic keyboard discovery. Use `monitorSettings`
+for per-output appearance overrides (snake_case configuration keys), for example
+`monitorSettings."HDMI-A-1".cat_height = 60;`. Set `monitor` to select outputs;
+override sections alone do not create overlays. See [NIXOS.md](NIXOS.md) for an
+example and diagnostic commands.

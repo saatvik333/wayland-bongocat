@@ -2,6 +2,7 @@
 #define FULLSCREEN_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <wayland-client.h>
 
 // Forward-declare the protocol type so callers don't need to include
@@ -21,11 +22,13 @@ static inline bool fullscreen_toplevel_relevant(bool has_output_events,
 
 /// Set up the foreign-toplevel manager listener after binding the manager
 /// during registry_global.  Call this once the manager proxy is valid.
-void fullscreen_init(struct zwlr_foreign_toplevel_manager_v1 *manager);
+void fullscreen_init(struct zwlr_foreign_toplevel_manager_v1 *object);
 
 /// Clean up tracked toplevels and manager.  Safe to call even if
 /// fullscreen_init was never called.
 void fullscreen_cleanup(void);
+void fullscreen_recompute(void);
+void fullscreen_output_removed(uint32_t id);
 
 /// Returns true if the foreign-toplevel manager protocol was bound
 /// (fullscreen detection is available).

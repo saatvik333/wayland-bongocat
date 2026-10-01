@@ -5,16 +5,14 @@
 #include "core/bongocat.h"
 #include "utils/error.h"
 
-#include <pthread.h>
 #include <stdint.h>
 
 // =============================================================================
 // ANIMATION STATE
 // =============================================================================
 
-// Current frame and synchronization
+// Active overlay frame
 extern int anim_index;
-extern pthread_mutex_t anim_lock;
 
 // Pre-scaled frame cache (avoids repeated scaling of constant source images)
 typedef struct {
@@ -36,7 +34,14 @@ void animation_invalidate_cache(void);
 // Initialize animation system - must be checked
 BONGOCAT_NODISCARD bongocat_error_t animation_init(config_t *config);
 
-// Start animation thread - must be checked
+void *animation_overlay_create(config_t *config);
+void animation_overlay_activate(void *opaque, config_t *config);
+void animation_overlay_cache(int width, int height);
+void animation_overlay_destroy(void *opaque);
+int animation_tick(unsigned paws);
+void animation_set_paused(bool value);
+
+// Compatibility lifecycle entrypoint - must be checked
 BONGOCAT_NODISCARD bongocat_error_t animation_start(void);
 
 // Cleanup animation resources

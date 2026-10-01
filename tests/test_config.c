@@ -10,8 +10,8 @@ struct zxdg_output_v1;
 #define _WAYLAND_CLIENT_H
 #define _XDG_OUTPUT_UNSTABLE_V1_CLIENT_PROTOCOL_H
 
-#include "../include/core/bongocat.h"
 #include "../include/config/config.h"
+#include "../include/core/bongocat.h"
 #include "../include/utils/error.h"
 
 #include <assert.h>
@@ -24,25 +24,25 @@ struct zxdg_output_v1;
 static int tests_passed = 0;
 static int tests_failed = 0;
 
-#define TEST_ASSERT(cond, msg)                                                 \
-  do {                                                                         \
-    if (cond) {                                                                \
-      tests_passed++;                                                          \
-    } else {                                                                   \
-      tests_failed++;                                                          \
-      fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, msg);        \
-    }                                                                          \
+#define TEST_ASSERT(cond, msg)                                         \
+  do {                                                                 \
+    if (cond) {                                                        \
+      tests_passed++;                                                  \
+    } else {                                                           \
+      tests_failed++;                                                  \
+      fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, msg); \
+    }                                                                  \
   } while (0)
 
-#define TEST_ASSERT_EQ(a, b, msg)                                              \
-  do {                                                                         \
-    if ((a) == (b)) {                                                          \
-      tests_passed++;                                                          \
-    } else {                                                                   \
-      tests_failed++;                                                          \
-      fprintf(stderr, "  FAIL: %s:%d: %s (expected %d, got %d)\n", __FILE__,  \
-              __LINE__, msg, (int)(b), (int)(a));                              \
-    }                                                                          \
+#define TEST_ASSERT_EQ(a, b, msg)                                            \
+  do {                                                                       \
+    if ((a) == (b)) {                                                        \
+      tests_passed++;                                                        \
+    } else {                                                                 \
+      tests_failed++;                                                        \
+      fprintf(stderr, "  FAIL: %s:%d: %s (expected %d, got %d)\n", __FILE__, \
+              __LINE__, msg, (int)(b), (int)(a));                            \
+    }                                                                        \
   } while (0)
 
 static void write_temp_config(const char *path, const char *content) {
@@ -58,7 +58,8 @@ static void write_temp_config(const char *path, const char *content) {
 static void test_defaults(void) {
   printf("test_defaults...\n");
   config_t config = {0};
-  bongocat_error_t err = load_config(&config, "/nonexistent/path/bongocat.conf");
+  bongocat_error_t err =
+      load_config(&config, "/nonexistent/path/bongocat.conf");
   // load_config should succeed even with missing file (uses defaults)
   TEST_ASSERT(err == BONGOCAT_SUCCESS || err != BONGOCAT_SUCCESS,
               "load_config returns");
@@ -82,8 +83,7 @@ static void test_defaults(void) {
                  "default position is top");
   TEST_ASSERT_EQ(config.layer, LAYER_TOP, "default layer is top");
   TEST_ASSERT_EQ(config.enable_antialiasing, 1, "default antialiasing is on");
-  TEST_ASSERT_EQ(config.enable_hand_mapping, 1,
-                 "default hand_mapping is on");
+  TEST_ASSERT_EQ(config.enable_hand_mapping, 1, "default hand_mapping is on");
   TEST_ASSERT_EQ(config.cat_x_offset, 100, "default cat_x_offset is 100");
   TEST_ASSERT_EQ(config.cat_y_offset, 10, "default cat_y_offset is 10");
   TEST_ASSERT_EQ(config.keypress_duration, 100,
@@ -103,9 +103,8 @@ static void test_integer_clamping(void) {
   assert(fd >= 0);
   close(fd);
 
-  write_temp_config(path,
-                    "fps=999\ncat_height=0\noverlay_opacity=-50\n"
-                    "overlay_height=1\n");
+  write_temp_config(path, "fps=999\ncat_height=0\noverlay_opacity=-50\n"
+                          "overlay_height=1\n");
 
   config_t config = {0};
   bongocat_error_t err = load_config(&config, path);
@@ -113,8 +112,7 @@ static void test_integer_clamping(void) {
   TEST_ASSERT_EQ(config.fps, 120, "fps clamped to MAX_FPS=120");
   TEST_ASSERT_EQ(config.cat_height, 10, "cat_height clamped to MIN=10");
   TEST_ASSERT_EQ(config.overlay_opacity, 0, "overlay_opacity clamped to 0");
-  TEST_ASSERT_EQ(config.overlay_height, 20,
-                 "overlay_height clamped to MIN=20");
+  TEST_ASSERT_EQ(config.overlay_height, 20, "overlay_height clamped to MIN=20");
 
   config_cleanup_full(&config);
   unlink(path);
@@ -131,8 +129,7 @@ static void test_time_parsing(void) {
   close(fd);
 
   write_temp_config(
-      path,
-      "enable_scheduled_sleep=1\nsleep_begin=22:30\nsleep_end=06:15\n");
+      path, "enable_scheduled_sleep=1\nsleep_begin=22:30\nsleep_end=06:15\n");
 
   config_t config = {0};
   bongocat_error_t err = load_config(&config, path);
@@ -167,14 +164,15 @@ static void test_malformed_integers(void) {
   TEST_ASSERT_EQ(config.fps, 60, "fps stays at default on invalid input");
 
   config_cleanup_full(&config);
-  write_temp_config(
-      path, "fps=60junk\nsleep_begin=22:30junk\nenable_debug=2\n");
+  write_temp_config(path,
+                    "fps=60junk\nsleep_begin=22:30junk\nenable_debug=2\n");
   memset(&config, 0, sizeof(config));
   err = load_config(&config, path);
   TEST_ASSERT_EQ(err, BONGOCAT_SUCCESS, "trailing junk is rejected safely");
   TEST_ASSERT_EQ(config.fps, 60, "invalid integer leaves default");
   TEST_ASSERT_EQ(config.sleep_begin.hour, 0, "invalid time leaves default");
-  TEST_ASSERT_EQ(config.sleep_begin.min, 0, "invalid time leaves default minute");
+  TEST_ASSERT_EQ(config.sleep_begin.min, 0,
+                 "invalid time leaves default minute");
   TEST_ASSERT_EQ(config.enable_debug, 0, "invalid boolean leaves default");
 
   config_cleanup_full(&config);
@@ -264,8 +262,7 @@ static void test_enum_parsing(void) {
 
   config_cleanup_full(&config);
 
-  static const char *layer_names[] = {"background", "bottom", "top",
-                                      "overlay"};
+  static const char *layer_names[] = {"background", "bottom", "top", "overlay"};
   for (int i = LAYER_BACKGROUND; i <= LAYER_OVERLAY; i++) {
     char line[32];
     snprintf(line, sizeof(line), "layer=%s\n", layer_names[i]);

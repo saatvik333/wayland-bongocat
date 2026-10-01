@@ -1,217 +1,93 @@
 # Architecture
 
-## Overview
+The renderer owns one Wayland connection and one event loop for every overlay.
+One input helper is executed with `posix_spawn()` through `/proc/self/exe`.
+There are no animation or configuration-watcher threads and no per-monitor
+processes. Runtime dependencies remain C23, Linux evdev and Wayland client.
 
-Bongo Cat Wayland Overlay is a lightweight C23 application (~5,300 lines of hand-written code, ~750 lines of headers) that renders an animated cat overlay on Wayland compositors, reacting to keyboard input in real-time.
+## Ownership and event flow
 
-```
-                    +-----------------------+
-                    |    Parent Process     |
-                    |  (multi_monitor.c)    |
-                    +----------+------------+
-                               |
-               fork + execvp per monitor
-                               |
-          +--------------------+---------------------+
-          |                                          |
-  +-------v---------+                       +--------v--------+
-  | Monitor Child 1 |                       | Monitor Child N |
-  |                 |                       |                 |
-  |  +-----------+  |                       |  +-----------+  |
-  |  | Wayland   |  |  Main thread          |  | Wayland   |  |
-  |  | Event     |<-+- (poll loop)          |  | Event     |  |
-  |  | Loop      |  |                       |  | Loop      |  |
-  |  +-----------+  |                       |  +-----------+  |
-  |                 |                       |                 |
-  |  +-----------+  |                       |  +-----------+  |
-  |  | Animation |  |  pthread              |  | Animation |  |
-  |  | Thread    |<-+- (eventfd wake)       |  | Thread    |  |
-  |  +-----------+  |                       |  +-----------+  |
-  |                 |                       |                 |
-  |  +-----------+  |                       |  +-----------+  |
-  |  | Config    |  |  pthread              |  | Config    |  |
-  |  | Watcher   |<-+- (inotify)            |  | Watcher   |  |
-  |  +-----------+  |                       |  +-----------+  |
-  |                 |                       |                 |
-  |  +-----------+  |                       |  +-----------+  |
-  |  | Input     |  |  fork                 |  | Input     |  |
-  |  | Child     |<-+- (shared mmap)        |  | Child     |  |
-  |  +-----------+  |                       |  +-----------+  |
-  +-----------------+                       +-----------------+
-```
+The renderer polls Wayland, the private input socket, directory inotify,
+authenticated control connections and a signal eventfd. Timeouts are the
+nearest animation, debounce, helper-recovery, control or Hyprland deadline.
+Idle overlays have no animation timeout; sleeping overlays wait for meaningful
+deadlines. Animation redraws respect live FPS changes, including `fps=1`.
+Wayland read preparation is cancelled whenever a poll wakeup has no display
+input. Flush backpressure adds POLLOUT interest.
 
-## Process Model
+Each overlay owns a layer surface, optional viewport/fractional-scale object,
+two release-aware SHM buffers, effective monitor configuration, animation
+state and frame cache. Surface reconstruction and teardown share one path.
+Busy retired buffers remain mapped until release. Frame caches rebuild only
+when dimensions, scale, mirroring or antialiasing parameters change. Buffer,
+stride, scaling, placement and clipping arithmetic uses checked wide values.
 
-### Multi-Monitor Mode
+`platform/outputs.c` owns stable output slots and protocol metadata.
+`platform/wayland.c` reconciles selections, creates and tears down overlays,
+and renders them. `platform/shm_buffer.c` owns buffer allocations and release
+lifetime. Automatic selection uses one available output; explicit missing
+outputs wait while other overlays continue. Configuration reload reconciles
+selection without restarting the process. Configure events determine actual
+surface dimensions.
 
-The parent process (`multi_monitor.c`) forks one child per configured monitor via `fork()` + `execvp()` with `--monitor NAME`. Each child is a fully independent instance with its own Wayland connection, animation thread, and input monitor. Re-executing (not just forking) avoids inheriting the parent's Wayland state.
+`graphics/animation.c` shares parsed embedded SVGs and the rasterizer, while
+holding paw deadlines and caches separately for each overlay. Input packets
+contain only paw bits, monotonic timestamps and device counts. Configured
+mirroring and hand mapping are applied independently for each overlay.
+Pause clears activity, displays the idle frame and discards input; resume
+resets deadlines. Hide suppresses visibility without stopping animation.
 
-### Single-Monitor Mode
+Fullscreen tracking stores every output occupied by a toplevel. State and
+output changes are staged until `done`. Output removal and overlay selection
+recompute visibility. The optional Hyprland fallback uses asynchronous,
+bounded `posix_spawnp()` jobs: one-second deadline, bounded output, checked
+exit status and termination/reaping on failure. It does not block Wayland.
 
-A single process handles everything. No `execvp()`.
+## Configuration and control
 
-### Per-Instance Architecture
+`config/config.c` parses and validates without input access. Flat files remain
+supported. `[monitor:NAME]` overrides appearance; `[global]` returns to global
+settings. Overrides are applied after all global settings, independent of
+section order. Input and timing stay global. Startup remains tolerant;
+strict checking and reload reject malformed, unreadable and missing files.
+Reload creates a temporary configuration before swapping the active one.
 
-Each instance runs 3 threads + 1 child process:
+`config/config_watcher.c` watches the parent directory, filters the basename,
+and reloads 300 ms after the last relevant event. Atomic replacement,
+deletion/recreation, overflow and invalidated directory watches are handled.
 
-| Component | Type | Purpose |
-|-----------|------|---------|
+`core/control.c` locks a user-owned regular PID file before truncation, rejects
+symlinks and unsafe metadata, and retains its inode between runs. The lock is
+held until all cleanup finishes. Controls use a mode-0600 Unix sequenced-packet
+socket, SO_PEERCRED same-UID authentication, bounded messages and deadlines.
+Toggle requests a stop through the socket; it never trusts a stale PID to
+signal an unrelated process group.
 
-| **Main thread** | Wayland event loop | `poll()` on `wl_display` fd, dispatches protocol events, handles config reload ticks |
-| **Animation thread** | pthread | Runs frame state machine, calls `draw_bar()` when frame changes, sleeps via `eventfd` when idle |
-| **Config watcher** | pthread | `inotify` on config file, debounces (300ms), triggers hot-reload |
-| **Input child** | fork | Reads `/dev/input/eventX` via `poll()`, ORs paw bits into shared state + eventfd wake signal |
+## Input and privilege boundaries
 
-## Data Flow
+The renderer drops real, effective and saved setgid privilege before loading
+configuration. Executing the installed binary reacquires its setgid group
+only inside helper mode. The helper lowers the effective group while reading
+and raises it only for discovery/opening; this also works after helper restart.
+No setgid installation or permission grant is performed automatically.
 
-```
-/dev/input/eventX
-       |
-       v
-  Input Child Process
-  (poll on evdev fds)
-       |
-       | atomic_fetch_or(pending_paws, paw)
-       | write(eventfd)  -- wake animation thread
-       |
-       v
-  Animation Thread
-  (poll on eventfd, nanosleep at FPS rate)
-       |
-       | anim_update_state() under anim_lock
-       | exchanges pending paw bits -> per-paw deadlines -> frame 0-4
-       |   (both-down when both paws live; sleep takes priority)
-       |
-       v
-  draw_bar() under anim_lock
-       |
-       | memset pixels buffer (alpha fill)
-       | blit_cached_frame() -- pre-scaled BGRA copy
-       | wl_surface_commit()
-       |
-       v
-  wl_display_flush()  -- outside anim_lock
-       |
-       v
-  Wayland Compositor renders overlay
-```
+The helper authenticates its inherited socketpair and arms PR_SET_PDEATHSIG
+with a parent-race check. `posix_spawn` closes unrelated descriptors. Explicit
+paths/names select devices without unrelated fallback. Empty selectors use
+EVIOCGBIT keyboard capability queries. Stable aliases are compared by device
+identity to avoid duplicates. HUP/ERR/NVAL remove disconnected descriptors;
+normal periodic scanning retries connections. Debug never logs keycodes.
 
-## Module Layout
+SIGTERM, SIGINT, SIGQUIT and SIGHUP wake and stop the renderer. Cleanup stops
+input, waits a bounded grace period, escalates to SIGKILL if necessary, reaps
+the helper, tears down overlays and finally releases the singleton lock.
 
-```
-src/
-  core/
-    main.c              (810 lines)  Entry point, PID file, signal handling, cleanup
-    multi_monitor.c     (164 lines)  Fork/exec per monitor, child management
-  config/
-    config.c            (839 lines)  INI parser, validation, defaults, XDG path resolution
-    config_watcher.c    (237 lines)  inotify thread with debounce and re-watch
-  platform/
-    wayland.c          (1230 lines)  Core Wayland: registry, surface, buffer, draw_bar, hot-reload
-    fullscreen.c        (434 lines)  Foreign-toplevel fullscreen detection + KDE fallback
-    hyprland.c          (135 lines)  Hyprland IPC fallback (fork/execvp, not popen)
-    input.c             (513 lines)  evdev reading, shared memory IPC, eventfd, fast retry
-  graphics/
-    animation.c         (588 lines)  Frame state machine, SVG rasterization, caching, thread
-    embedded_assets.c                Auto-generated SVG byte arrays (do not edit)
-  utils/
-    error.c              Logging with timestamps, atomic debug flag
+## Build and validation
 
-include/                (754 lines)  Public headers for each module
-tests/                  Unit tests for config, paw state, and output scaling
-protocols/                           Wayland protocol XML specs + committed C bindings
-lib/                                 Vendored nanosvg.h + nanosvgrast.h for SVG rendering
-```
-
-## Wayland Protocol Stack
-
-Four protocols with C bindings committed to git (regenerated from XML via `wayland-scanner` with `make protocols`):
-
-| Protocol | Purpose |
-|----------|---------|
-
-| **wlr-layer-shell** | Positions the overlay on a specific layer (top/overlay) with anchoring |
-| **xdg-output** | Enumerates monitors by name for multi-monitor targeting |
-| **wlr-foreign-toplevel-management** | Detects fullscreen windows to auto-hide the overlay |
-
-Version negotiation uses `MIN(advertised, desired)` to handle compositors with older protocol versions.
-
-## Synchronization
-
-| Mechanism | Protects | Scope |
-|-----------|----------|-------|
-
-| `anim_lock` (pthread_mutex) | animation state, release-aware SHM buffers, surface, config pointer, cached frames | Animation thread + Wayland main thread |
-| `atomic_uint pending_paws` | Pending left/right paw bits | Input child -> animation thread via `MAP_SHARED` mmap |
-| `atomic_bool configured` | Surface ready flag | Wayland callbacks -> Animation thread |
-| `atomic_bool fullscreen_detected` | Fullscreen state | Fullscreen module -> draw_bar() |
-| `atomic_bool g_reload_pending` | Config change flag | Config watcher -> Main thread tick |
-| `eventfd` (EFD_NONBLOCK) | Animation wake-up | Input child writes -> Animation thread polls |
-
-### Lock ordering
-
-`anim_lock` is the only mutex. It is acquired in:
-
-- `draw_bar()` (animation thread + Wayland callbacks)
-- `anim_update_state()` (animation thread)
-- `wayland_update_config()` (main thread during config reload)
-
-`wl_display_flush()` is called outside the lock to avoid blocking the mutex on a write() syscall.
-
-## Performance Characteristics
-
-| Metric | Value |
-|--------|-------|
-| **Memory** | ~8MB RSS |
-| **Idle CPU** | ~0% (1 wake/sec via eventfd timeout) |
-| **Active CPU** | Minimal (pre-scaled frame cache, ~15KB memcpy per frame) |
-| **Startup** | ~20ms (SVG parse + rasterization of 5 embedded SVGs at target size) |
-| **Frame latency** | <1ms (cached blit + Wayland commit) |
-| **Binary size** | ~300KB (with embedded SVG assets + nanosvg rasterizer) |
-| **Per-monitor overhead** | Separate process (~8MB each) |
-
-### Frame Caching
-
-SVGs (500x277 viewBox) are rasterized by nanosvg directly at target display dimensions at startup and on config reload. The 5 cached frames (including sleep) are stored in BGRA format (Wayland-native). `draw_bar()` performs a direct BGRA-to-BGRA blit without channel conversion or scaling math. Since SVGs are vector graphics, rendering is pixel-perfect at any size with built-in anti-aliasing.
-
-### Hot-Reload
-
-`wayland_update_config()` uses three paths depending on what changed:
-
-1. **Property-only** (position, layer) — updates double-buffered wlr-layer-shell properties and commits. No surface/buffer destruction.
-2. **Buffer recreate** (overlay_height, screen_width) — updates the layer surface size property, then recreates only the SHM buffer under `anim_lock`.
-3. **Full recreate** (output/monitor change) — destroys and recreates the entire surface + buffer.
-
-This avoids the crash-prone full teardown+rebuild for property changes that the protocol handles natively.
-
-### Input Fast Retry
-
-The input child uses a 5-second fast retry interval until at least one device is found, then switches to the configured `hotplug_scan_interval` (default 30s). This prevents the multi-minute input delay on systems where devices aren't ready at startup.
-
-### Idle Power
-
-The animation thread uses `poll()` on an `eventfd` with a 1-second timeout when idle. The input child writes to the eventfd on keypress for immediate wake-up. This replaces the previous 30Hz polling loop.
-
-## Security Model
-
-- The application requires `input` group membership to read `/dev/input/eventX` devices directly (no Wayland protocol exists for passive keyboard monitoring)
-- `keyboard_device` config paths are validated to require `/dev/input/` prefix with path traversal rejection
-- PID file stored in `$XDG_RUNTIME_DIR` with `O_NOFOLLOW` and mode 0600
-- Hyprland IPC uses `fork()/execvp()` instead of `popen()` to avoid shell injection
-- Integer config values validated with `strtol()` + endptr/errno checking
-- Buffer size calculations use `size_t` with overflow protection
-- Release builds include PIE, full RELRO, and non-executable stack
-- `enable_debug=1` logs keycodes to stdout -- this is a keylogger; documented in config with WARNING
-
-## Build Hardening
-
-Release builds (`make release`) include:
-
-- `-O3 -flto` -- Link-time optimization
-- `-fPIE` / `-pie` -- Position-independent executable (ASLR)
-- `-Wl,-z,relro,-z,now` -- Full RELRO (GOT protection)
-- `-Wl,-z,noexecstack` -- Non-executable stack
-- `-fstack-protector-strong` -- Stack canaries
-- `-D_FORTIFY_SOURCE=2` -- Buffer overflow detection
-
-Debug builds (`make debug`) include ASan + UBSan. TSan available via `make tsan`.
+Objects and binaries live under `build/debug` and `build/release`, with
+compiler-generated header dependencies. `build/bongocat` selects the build.
+`make test` runs deterministic regression suites; `make test-runtime` uses a
+small Wayland server fixture (test-only libwayland-server) for multiple outputs,
+scale/resolution changes, disconnect/reconnect, release and queue pressure.
+`make test-sanitize` checks unit suites with ASan/UBSan; `make debug` also
+instruments the real runtime. Release retains PIE, RELRO and stack hardening.

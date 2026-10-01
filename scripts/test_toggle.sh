@@ -1,72 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! -x ./build/bongocat ]]; then
-  echo "Error: ./build/bongocat not found. Build first with: make"
-  exit 1
-fi
-
-if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
-  echo "Skipping toggle test: WAYLAND_DISPLAY is not set."
+binary=$(realpath ./build/bongocat)
+if [[ ! -x "$binary" || -z "${WAYLAND_DISPLAY:-}" || -z "${XDG_RUNTIME_DIR:-}" ]]; then
+  echo "Skipping: build the application and provide a Wayland session."
   exit 0
 fi
-
-if [[ -z "${XDG_RUNTIME_DIR:-}" || ! -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ]]; then
-  echo "Skipping toggle test: Wayland socket is not available."
+socket=$WAYLAND_DISPLAY
+[[ "$socket" = /* ]] || socket="$XDG_RUNTIME_DIR/$socket"
+if [[ ! -S "$socket" ]]; then
+  echo "Skipping: Wayland socket unavailable."
   exit 0
 fi
-
-show_processes() {
-  if ! pgrep -x -a bongocat; then
-    echo "No bongocat processes found"
+runtime=$(mktemp -d)
+child=
+cleanup() {
+  if [[ -n "$child" ]]; then
+    kill -TERM "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
   fi
+  rm -rf "$runtime"
 }
-
-is_running() {
-  pgrep -x bongocat >/dev/null 2>&1
-}
-
-echo "Testing bongocat toggle functionality..."
-echo
-
-if is_running; then
-  echo "Pre-clean: existing bongocat instance detected, toggling it off first."
-  ./build/bongocat --toggle || true
-  sleep 1
-fi
-
-echo "1. Starting bongocat with --toggle (should start since not running):"
-if ! ./build/bongocat --toggle; then
-  echo "Skipping toggle test: bongocat could not start (Wayland unavailable)."
-  exit 0
-fi
-sleep 2
-
-echo
-echo "2. Checking if bongocat is running:"
-show_processes
-
-echo
-echo "3. Toggling bongocat off (should stop the running instance):"
-./build/bongocat --toggle
-sleep 1
-
-echo
-echo "4. Checking if bongocat is still running:"
-show_processes
-
-echo
-echo "5. Toggling bongocat on again (should start since not running):"
-./build/bongocat --toggle
-sleep 2
-
-echo
-echo "6. Final check - bongocat should be running:"
-show_processes
-
-echo
-echo "7. Cleaning up - stopping bongocat:"
-./build/bongocat --toggle || true
-
-echo
-echo "Toggle functionality test completed!"
+trap cleanup EXIT
+ln -s "$socket" "$runtime/wayland-test"
+export XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=wayland-test
+printf 'overlay_opacity=0\n' > "$runtime/test.conf"
+for cycle in 1 2; do
+  "$binary" --toggle -c "$runtime/test.conf" > "$runtime/log" 2>&1 &
+  child=$!
+  ready=0
+  for _attempt in {1..50}; do
+    if "$binary" --status >/dev/null 2>&1; then ready=1; break; fi
+    kill -0 "$child" 2>/dev/null || break
+    sleep 0.05
+  done
+  if [[ "$ready" != 1 ]]; then cat "$runtime/log"; exit 1; fi
+  "$binary" --toggle
+  wait "$child"
+  child=
+  echo "Toggle cycle $cycle passed."
+done

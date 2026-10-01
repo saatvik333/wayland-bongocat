@@ -3,12 +3,12 @@
 #include <stdio.h>
 
 static int failed;
-#define CHECK(condition)                                                        \
-  do {                                                                          \
-    if (!(condition)) {                                                          \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition);     \
-      failed++;                                                                  \
-    }                                                                            \
+#define CHECK(condition)                                                   \
+  do {                                                                     \
+    if (!(condition)) {                                                    \
+      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+      failed++;                                                            \
+    }                                                                      \
   } while (0)
 
 int main(void) {

@@ -37,7 +37,8 @@ extern atomic_bool fullscreen_detected;
 BONGOCAT_NODISCARD bongocat_error_t wayland_init(config_t *config);
 
 // Run Wayland event loop - must be checked
-BONGOCAT_NODISCARD bongocat_error_t wayland_run(volatile sig_atomic_t *running);
+BONGOCAT_NODISCARD bongocat_error_t
+wayland_run(const volatile sig_atomic_t *running);
 
 // Cleanup Wayland resources
 void wayland_cleanup(void);
@@ -47,8 +48,7 @@ void wayland_cleanup(void);
 // =============================================================================
 
 // Output reference array and count (defined in wayland.c)
-extern output_ref_t outputs[];
-extern size_t output_count;
+#include "platform/outputs.h"
 
 // =============================================================================
 // WAYLAND UTILITY FUNCTIONS
@@ -57,9 +57,15 @@ extern size_t output_count;
 // Update configuration (hot-reload support)
 void wayland_update_config(config_t *config);
 
+int wayland_list_monitors(bool doctor);
+void wayland_set_hidden(bool value);
+void wayland_set_runtime_timeout(int (*callback)(void));
+void wayland_set_runtime_fds(int (*callback)(int *, size_t));
+
 // Draw the overlay bar
 void draw_bar(void);
 void wayland_request_redraw(void);
+void wayland_request_current_redraw(void);
 
 // Get the wl_output associated with the current screen info (may be NULL)
 BONGOCAT_NODISCARD struct wl_output *wayland_get_current_screen_output(void);

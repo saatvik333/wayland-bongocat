@@ -1,13 +1,21 @@
 #define _POSIX_C_SOURCE 199309L
+#include "config/config.h"
+#include "core/bongocat.h"
+#include "utils/error.h"
+
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #define NANOSVG_IMPLEMENTATION
 #define NANOSVGRAST_IMPLEMENTATION
 #include "graphics/animation.h"
-
 #include "graphics/embedded_assets.h"
 #include "graphics/paw_frame.h"
 #include "platform/input.h"
 #include "platform/wayland.h"
-#if defined(__GNUC__)
+#ifdef __GNUC__
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wshadow"
 #  pragma GCC diagnostic ignored "-Wdouble-promotion"
@@ -17,11 +25,9 @@
 #endif
 #include <nanosvg.h>
 #include <nanosvgrast.h>
-#if defined(__GNUC__)
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
-#include <poll.h>
-#include <time.h>
 #include <unistd.h>
 
 // =============================================================================
@@ -29,7 +35,6 @@
 // =============================================================================
 
 int anim_index = 0;
-pthread_mutex_t anim_lock = PTHREAD_MUTEX_INITIALIZER;
 cached_frame_t anim_cached_frames[NUM_FRAMES] = {0};
 
 // SVG parsed data and rasterizer
@@ -38,9 +43,16 @@ static NSVGrasterizer *anim_rasterizer;
 
 // Animation system state
 static config_t *current_config;
-static pthread_t anim_thread;
-static atomic_bool animation_running = false;
-static bool animation_thread_started = false;
+static bool paused;
+static unsigned reset_generation;
+static uint32_t random_state = 1;
+// Cosmetic paw selection uses a local PRNG, never security-sensitive rand().
+static unsigned random_paw(void) {
+  random_state ^= random_state << 13;
+  random_state ^= random_state >> 17;
+  random_state ^= random_state << 5;
+  return random_state & 1U;
+}
 static bool animation_initialized = false;
 
 // =============================================================================
@@ -48,17 +60,16 @@ static bool animation_initialized = false;
 // =============================================================================
 
 typedef struct {
-  long left_hold_until;  // paw down while now_us < left_hold_until
-  long right_hold_until;
-  long next_test_timestamp;
-  long frame_time_ns;
-  long last_key_pressed_timestamp;
+  int64_t left_hold_until;  // paw down while now_us < left_hold_until
+  int64_t right_hold_until;
+  int64_t next_test_timestamp;
+  int64_t last_key_pressed_timestamp;
 } animation_state_t;
 
-static long anim_get_current_time_us(void) {
+static int64_t anim_get_current_time_us(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
+  return ((int64_t)ts.tv_sec * 1000000L) + (ts.tv_nsec / 1000L);
 }
 
 static bool anim_is_sleep_time(const config_t *config) {
@@ -67,21 +78,21 @@ static bool anim_is_sleep_time(const config_t *config) {
   time(&raw_time);
   localtime_r(&raw_time, &time_info);
 
-  const int now_minutes = time_info.tm_hour * 60 + time_info.tm_min;
-  const int begin = config->sleep_begin.hour * 60 + config->sleep_begin.min;
-  const int end = config->sleep_end.hour * 60 + config->sleep_end.min;
+  const int now_minutes = (time_info.tm_hour * 60) + time_info.tm_min;
+  const int begin = (config->sleep_begin.hour * 60) + config->sleep_begin.min;
+  const int end = (config->sleep_end.hour * 60) + config->sleep_end.min;
 
   // Normal range (e.g., 10:00–22:00): begin < end && (now_minutes >= begin &&
   // now_minutes < end) Overnight range (e.g., 22:00–06:00): begin > end &&
   // (now_minutes >= begin || now_minutes < end)
-  return (begin == end) ||
-         (begin < end ? (now_minutes >= begin && now_minutes < end)
-                      : (now_minutes >= begin || now_minutes < end));
+  return ((begin == end) ||
+          (begin < end ? (now_minutes >= begin && now_minutes < end)
+                       : (now_minutes >= begin || now_minutes < end))) != 0;
 }
 
 // Extend the given paw's deadline to now + keypress_duration.
 static void anim_press_paw(animation_state_t *state, int paw_frame,
-                           long current_time_us, long duration_us) {
+                           int64_t current_time_us, int64_t duration_us) {
   if (paw_frame == BONGOCAT_FRAME_LEFT_DOWN) {
     state->left_hold_until = current_time_us + duration_us;
   } else {
@@ -90,7 +101,7 @@ static void anim_press_paw(animation_state_t *state, int paw_frame,
 }
 
 static void anim_handle_test_animation(animation_state_t *state,
-                                       long current_time_us) {
+                                       int64_t current_time_us) {
   if (current_config->test_animation_interval <= 0) {
     return;
   }
@@ -98,20 +109,20 @@ static void anim_handle_test_animation(animation_state_t *state,
   if (current_time_us >= state->next_test_timestamp) {
     bongocat_log_debug("Test animation trigger");
     int paw =
-        (rand() & 1) ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
+        random_paw() ? BONGOCAT_FRAME_LEFT_DOWN : BONGOCAT_FRAME_RIGHT_DOWN;
     anim_press_paw(state, paw, current_time_us,
                    current_config->test_animation_duration * 1000L);
     state->next_test_timestamp =
-        current_time_us + current_config->test_animation_interval * 1000000L;
+        current_time_us + (current_config->test_animation_interval * 1000000L);
   }
 }
 
 static void anim_take_pending_paws(animation_state_t *state,
-                                   long current_time_us) {
-  unsigned paws = pending_paws ? atomic_exchange_explicit(pending_paws, 0u,
+                                   int64_t current_time_us) {
+  unsigned paws = pending_paws ? atomic_exchange_explicit(pending_paws, 0U,
                                                           memory_order_acquire)
-                               : 0u;
-  if (paws == 0u) {
+                               : 0U;
+  if (paws == 0U) {
     return;
   }
   // Exchange first: events received while sleeping are discarded, not replayed.
@@ -120,11 +131,15 @@ static void anim_take_pending_paws(animation_state_t *state,
     return;
   }
   if (!current_config->enable_hand_mapping) {
-    paws = (rand() & 1) ? PAW_LEFT : PAW_RIGHT;
+    paws = random_paw() ? PAW_LEFT : PAW_RIGHT;
   } else {
     paws = paw_apply_mirror(paws, current_config->mirror_x != 0);
   }
-  long duration_us = current_config->keypress_duration * 1000L;
+  int64_t stamp = input_timestamp();
+  if (stamp > 0 && stamp <= current_time_us) {
+    current_time_us = stamp;
+  }
+  int64_t duration_us = current_config->keypress_duration * 1000L;
   if (paws & PAW_LEFT) {
     anim_press_paw(state, BONGOCAT_FRAME_LEFT_DOWN, current_time_us,
                    duration_us);
@@ -135,11 +150,12 @@ static void anim_take_pending_paws(animation_state_t *state,
   }
   state->last_key_pressed_timestamp = current_time_us;
   state->next_test_timestamp =
-      current_time_us + current_config->test_animation_interval * 1000000L;
+      current_time_us + (current_config->test_animation_interval * 1000000L);
 }
 
 // Derive anim_index from sleep state, then per-paw deadlines.
-static void anim_select_frame(animation_state_t *state, long current_time_us) {
+static void anim_select_frame(animation_state_t *state,
+                              int64_t current_time_us) {
   int show_sleep_frame = 0;
   if (current_config->enable_scheduled_sleep &&
       anim_is_sleep_time(current_config)) {
@@ -172,15 +188,11 @@ static void anim_select_frame(animation_state_t *state, long current_time_us) {
 }
 
 static void anim_update_state(animation_state_t *state) {
-  long current_time_us = anim_get_current_time_us();
-
-  pthread_mutex_lock(&anim_lock);
+  int64_t current_time_us = anim_get_current_time_us();
 
   anim_handle_test_animation(state, current_time_us);
   anim_take_pending_paws(state, current_time_us);
   anim_select_frame(state, current_time_us);
-
-  pthread_mutex_unlock(&anim_lock);
 }
 
 // =============================================================================
@@ -192,66 +204,147 @@ static void anim_init_state(animation_state_t *state) {
   state->right_hold_until = 0;
   state->next_test_timestamp =
       anim_get_current_time_us() +
-      current_config->test_animation_interval * 1000000L;
-  state->frame_time_ns = 1000000000L / current_config->fps;
+      (current_config->test_animation_interval * 1000000L);
   state->last_key_pressed_timestamp = anim_get_current_time_us();
 }
 
-static void *anim_thread_main([[maybe_unused]] void *arg) {
+typedef struct animation_overlay {
   animation_state_t state;
-  anim_init_state(&state);
+  cached_frame_t frames[NUM_FRAMES];
+  int index;
+  int width, height, mirror_x, mirror_y, aa;
+  int last_drawn;
+  int64_t next_draw_us;
+  int fps;
+  unsigned generation;
+} animation_overlay_t;
+static animation_overlay_t *active_animation;
 
-  struct timespec frame_delay = {0, state.frame_time_ns};
+void *animation_overlay_create(config_t *config) {
+  current_config = config;
+  animation_overlay_t *ctx = calloc(1, sizeof(*ctx));
+  if (ctx) {
+    anim_init_state(&ctx->state);
+    ctx->last_drawn = -1;
+  }
+  return ctx;
+}
 
-  bongocat_log_debug("Animation thread main loop started");
+void animation_overlay_activate(void *opaque, config_t *config) {
+  animation_overlay_t *ctx = opaque;
+  current_config = config;
+  active_animation = ctx;
+  anim_index = ctx->index;
+  memcpy(anim_cached_frames, ctx->frames, sizeof(ctx->frames));
+}
 
-  // Track last drawn state to skip redundant redraws
-  int last_drawn_frame = -1;
-  bool force_redraw = true;  // Force first draw
+void animation_overlay_cache(int width, int height) {
+  animation_overlay_t *ctx = active_animation;
+  if (!ctx) {
+    return;
+  }
+  if (ctx->width == width && ctx->height == height &&
+      ctx->mirror_x == current_config->mirror_x &&
+      ctx->mirror_y == current_config->mirror_y &&
+      ctx->aa == current_config->enable_antialiasing) {
+    return;
+  }
+  animation_cache_frames(width, height, current_config->mirror_x,
+                         current_config->mirror_y,
+                         current_config->enable_antialiasing);
+  memcpy(ctx->frames, anim_cached_frames, sizeof(ctx->frames));
+  ctx->width = width;
+  ctx->height = height;
+  ctx->mirror_x = current_config->mirror_x;
+  ctx->mirror_y = current_config->mirror_y;
+  ctx->aa = current_config->enable_antialiasing;
+  ctx->last_drawn = -1;
+}
 
-  while (animation_running) {
-    int prev_frame = anim_index;
-    anim_update_state(&state);
+void animation_overlay_destroy(void *opaque) {
+  animation_overlay_t *ctx = opaque;
+  if (!ctx) {
+    return;
+  }
+  for (int i = 0; i < NUM_FRAMES; i++) {
+    free(ctx->frames[i].data);
+  }
+  if (ctx == active_animation) {
+    memset(anim_cached_frames, 0, sizeof(anim_cached_frames));
+    active_animation = NULL;
+  }
+  free(ctx);
+}
 
-    // Check if frame actually changed
-    bool frame_changed = (anim_index != last_drawn_frame);
-    bool state_changed = (anim_index != prev_frame);
-
-    // Only redraw if something changed
-    if (frame_changed || force_redraw) {
-      draw_bar();
-      last_drawn_frame = anim_index;
-      force_redraw = false;
-    }
-
-    // Stay at FPS-rate while animating (non-idle frame or state just changed).
-    // Drop to eventfd-driven idle sleep only when truly idle.
-    bool animating = state_changed || anim_index != current_config->idle_frame;
-    if (animating) {
-      nanosleep(&frame_delay, NULL);
+int animation_tick(unsigned paws) {
+  animation_overlay_t *ctx = active_animation;
+  if (!ctx) {
+    return -1;
+  }
+  if (ctx->generation != reset_generation) {
+    anim_init_state(&ctx->state);
+    ctx->generation = reset_generation;
+    ctx->last_drawn = -1;
+    ctx->next_draw_us = 0;
+  }
+  int64_t now = anim_get_current_time_us();
+  if (ctx->fps != current_config->fps) {
+    ctx->fps = current_config->fps;
+    ctx->next_draw_us = now;
+  }
+  atomic_uint local;
+  atomic_init(&local, (int)paused ? 0 : paws);
+  atomic_uint *saved = pending_paws;
+  pending_paws = &local;
+  if (paused) {
+    ctx->state.left_hold_until = ctx->state.right_hold_until = 0;
+    anim_index = current_config->idle_frame;
+  } else {
+    anim_update_state(&ctx->state);
+  }
+  pending_paws = saved;
+  ctx->index = anim_index;
+  int64_t deadline = 0;
+  if (ctx->last_drawn != anim_index) {
+    if (now >= ctx->next_draw_us || paused) {
+      wayland_request_current_redraw();
+      ctx->last_drawn = anim_index;
+      ctx->next_draw_us = now + (1000000L / current_config->fps);
     } else {
-      int wfd = input_get_wake_fd();
-      if (wfd >= 0) {
-        struct pollfd pfd = {.fd = wfd, .events = POLLIN};
-        poll(&pfd, 1, 1000);
-        if (pfd.revents & POLLIN) {
-          uint64_t val;
-          if (read(wfd, &val, sizeof(val)) < 0) {
-            // Best-effort drain; ignore errors
-          }
-        }
-      } else {
-        long idle_ns = state.frame_time_ns * 2;
-        if (idle_ns > 999999999L)
-          idle_ns = 999999999L;
-        struct timespec idle_delay = {0, idle_ns};
-        nanosleep(&idle_delay, NULL);
+      { deadline = ctx->next_draw_us; }
+    }
+  }
+  int64_t candidates[] = {
+      ctx->state.left_hold_until, ctx->state.right_hold_until,
+      current_config->test_animation_interval > 0
+          ? ctx->state.next_test_timestamp
+          : 0,
+      current_config->idle_sleep_timeout_sec > 0
+          ? ctx->state.last_key_pressed_timestamp +
+                (current_config->idle_sleep_timeout_sec * 1000000L)
+          : 0};
+  if (!paused) {
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+      if (candidates[i] > now && (!deadline || candidates[i] < deadline)) {
+        deadline = candidates[i];
       }
     }
   }
+  if (!paused && current_config->enable_scheduled_sleep) {
+    struct timespec wall;
+    clock_gettime(CLOCK_REALTIME, &wall);
+    int64_t next_minute =
+        now + ((60 - (wall.tv_sec % 60)) * 1000000L) - (wall.tv_nsec / 1000);
+    if (!deadline || next_minute < deadline) {
+      deadline = next_minute;
+    }
+  }
+  return deadline ? (int)((deadline - now + 999) / 1000) : -1;
+}
 
-  bongocat_log_debug("Animation thread main loop exited");
-  return NULL;
+void animation_set_paused(bool value) {
+  paused = value;
+  reset_generation++;
 }
 
 // =============================================================================
@@ -308,7 +401,7 @@ static bongocat_error_t anim_parse_embedded_svgs(void) {
     memcpy(svg_copy, svg->data, svg->size);
     svg_copy[svg->size] = '\0';
 
-    anim_svgs[i] = nsvgParse(svg_copy, "px", 96.0f);
+    anim_svgs[i] = nsvgParse(svg_copy, "px", 96.0F);
     free(svg_copy);
 
     if (!anim_svgs[i]) {
@@ -349,7 +442,9 @@ void animation_cache_frames(int target_w, int target_h, int mirror_x,
                             int mirror_y, [[maybe_unused]] int enable_aa) {
   animation_invalidate_cache();
 
-  if (!anim_rasterizer || target_w <= 0 || target_h <= 0) {
+  if (!anim_rasterizer || target_w <= 0 || target_h <= 0 ||
+      target_w > INT32_MAX / 4 ||
+      (uint64_t)target_w * target_h * 4 > UINT64_C(256) * 1024 * 1024) {
     return;
   }
 
@@ -381,8 +476,8 @@ void animation_cache_frames(int target_w, int target_h, int mirror_x,
       for (int y = 0; y < target_h; y++) {
         for (int left = 0, right = target_w - 1; left < right;
              left++, right--) {
-          int li = (y * target_w + left) * 4;
-          int ri = (y * target_w + right) * 4;
+          int li = ((y * target_w) + left) * 4;
+          int ri = ((y * target_w) + right) * 4;
           uint8_t tmp[4];
           memcpy(tmp, &rgba_buf[li], 4);
           memcpy(&rgba_buf[li], &rgba_buf[ri], 4);
@@ -433,18 +528,21 @@ void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
                        const uint8_t *src, int src_w, int src_h, int offset_x,
                        int offset_y) {
   for (int y = 0; y < src_h; y++) {
-    int dy = y + offset_y;
-    if (dy < 0 || dy >= dest_h)
+    int64_t dy = (int64_t)y + offset_y;
+    if (dy < 0 || dy >= dest_h) {
       continue;
+    }
     for (int x = 0; x < src_w; x++) {
-      int dx = x + offset_x;
-      if (dx < 0 || dx >= dest_w)
+      int64_t dx = (int64_t)x + offset_x;
+      if (dx < 0 || dx >= dest_w) {
         continue;
-      int si = (y * src_w + x) * 4;
-      int di = (dy * dest_w + dx) * 4;
+      }
+      size_t si = (((size_t)y * src_w) + x) * 4;
+      size_t di = (((size_t)dy * dest_w) + (size_t)dx) * 4;
       uint8_t sa = src[si + 3];
-      if (sa == 0)
+      if (sa == 0) {
         continue;
+      }
       if (sa == 255) {
         memcpy(&dest[di], &src[si], 4);
       } else {
@@ -480,7 +578,12 @@ bongocat_error_t animation_init(config_t *config) {
   animation_initialized = true;
 
   // Seed the random number generator so frame selection varies between runs
-  srand((unsigned)time(NULL));
+  struct timespec seed;
+  clock_gettime(CLOCK_MONOTONIC, &seed);
+  random_state = (uint32_t)seed.tv_sec ^ (uint32_t)seed.tv_nsec;
+  if (random_state == 0) {
+    random_state = 1;
+  }
 
   bongocat_log_info(
       "Animation system initialized successfully with embedded SVG assets");
@@ -488,38 +591,10 @@ bongocat_error_t animation_init(config_t *config) {
 }
 
 bongocat_error_t animation_start(void) {
-  if (animation_thread_started) {
-    bongocat_log_warning("Animation thread already running");
-    return BONGOCAT_SUCCESS;
-  }
-
-  bongocat_log_info("Starting animation thread");
-
-  animation_running = true;
-  int result = pthread_create(&anim_thread, NULL, anim_thread_main, NULL);
-  if (result != 0) {
-    bongocat_log_error("Failed to create animation thread: %s",
-                       strerror(result));
-    animation_running = false;
-    return BONGOCAT_ERROR_THREAD;
-  }
-
-  animation_thread_started = true;
-  bongocat_log_debug("Animation thread started successfully");
   return BONGOCAT_SUCCESS;
 }
 
 void animation_cleanup(void) {
-  if (animation_thread_started) {
-    bongocat_log_debug("Stopping animation thread");
-    animation_running = false;
-
-    // Wait for thread to finish gracefully
-    pthread_join(anim_thread, NULL);
-    animation_thread_started = false;
-    bongocat_log_debug("Animation thread stopped");
-  }
-
   // Cleanup cached frames
   animation_invalidate_cache();
 

@@ -155,7 +155,7 @@ Create a `bongocat.conf` file wherever you desire:
 
 ```ini
 # Multiple input devices
-keyboard_device=/dev/input/event4   # Built-in keyboard
+# Optional explicit selector: keyboard_device=/dev/input/by-id/YOUR-KEYBOARD-event-kbd
 keyboard_device=/dev/input/event20  # External keyboard
 
 # Position and size
@@ -317,3 +317,28 @@ For NixOS-specific issues:
 1. Read through `nixos-module.nix`
 1. Test with the development shell
 1. Open an issue with your NixOS version and configuration
+
+## Automatic selection and monitor overrides
+
+`inputDevices` now defaults to `[]`. With no input paths or names, accessible
+keyboard-capable devices are selected automatically. Explicit selectors never
+fall back to unrelated devices. Stable `by-id` and `by-path` aliases work.
+
+```nix
+programs.wayland-bongocat = {
+  monitor = "eDP-1,HDMI-A-1";
+  inputDevices = [ ];
+  monitorSettings."HDMI-A-1" = {
+    cat_height = 60;
+    cat_align = "right";
+    mirror_x = true;
+    disable_fullscreen_hide = true;
+  };
+};
+```
+
+Monitor settings use the configuration's snake_case appearance keys. Unset
+values inherit global defaults. Input and timing stay global. `--check-config`
+validates generated configuration without a Wayland session; `--doctor`
+checks protocols and input access. Runtime hide/show, pause/resume, reload and
+status commands do not modify generated config files.

@@ -59,7 +59,9 @@
 typedef struct {
   int inotify_fd;
   int watch_fd;
-  pthread_t watcher_thread;
+  char *directory;
+  char *filename;
+  int64_t reload_at_ms;
   atomic_bool watching;
   char *config_path;
   void (*reload_callback)(const char *config_path);
@@ -100,6 +102,9 @@ void config_watcher_start(ConfigWatcher *watcher);
 
 // Stop watching for config changes
 void config_watcher_stop(ConfigWatcher *watcher);
+
+void config_watcher_process(ConfigWatcher *watcher);
+int config_watcher_timeout(ConfigWatcher *watcher);
 
 // Cleanup config watcher resources
 void config_watcher_cleanup(ConfigWatcher *watcher);

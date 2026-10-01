@@ -42,13 +42,13 @@ The default configuration file location is \fB~/.config/bongocat/bongocat.conf\f
 .B Key Configuration Options:
 .TP
 .B monitor
-Set to one or more output names (e.g., \fBeDP-1\fR or \fBeDP-1,HDMI-A-1\fR). A comma-separated list launches one instance per listed monitor.
+Set to one or more output names (e.g., \fBeDP-1\fR or \fBeDP-1,HDMI-A-1\fR). A comma-separated list creates one overlay per available listed monitor in a single rendering process. Missing named monitors wait for reconnection.
 .TP
 .B keyboard_device
-Path to the input device (e.g., \fB/dev/input/event4\fR). Use \fBbongocat-find-devices\fR to locate yours.
+Path to an evdev device, including stable /dev/input/by-id/ and /dev/input/by-path/ aliases. With no paths or names, accessible keyboard-capable devices are selected automatically. Explicit selectors never fall back to unrelated devices. Use \fBbongocat-find-devices\fR to locate yours.
 .TP
 .B enable_debug
-Set to \fB1\fR to enable debug logging. \fBWARNING: This logs all keystrokes to stdout/stderr. Keep disabled (0) for privacy.\fR
+Set to \fB1\fR to enable debug logging. Keycodes are never logged or transmitted.
 
 .SH PRIVACY NOTICE
 By default, debug logging is disabled (\fBenable_debug=0\fR). Taking care not to enable this in production environments is crucial as it logs raw input events.
@@ -57,3 +57,32 @@ By default, debug logging is disabled (\fBenable_debug=0\fR). Taking care not to
 Maintained by Saatvik Sharma.
 .SH SEE ALSO
 .BR bongocat-find-devices (1)
+
+.SH DIAGNOSTICS AND CONTROLS
+.TP
+.B --check-config
+Validate the configuration strictly without Wayland or input access. Exit nonzero on invalid or unreadable configuration.
+.TP
+.B --list-devices
+List evdev devices, keyboard capabilities and access errors.
+.TP
+.B --list-monitors
+List Wayland output names, dimensions and scales.
+.TP
+.B --doctor
+Check configuration, protocols, outputs, devices and permissions.
+.TP
+.B --hide, --show
+Suppress or restore all overlays without resetting animation state.
+.TP
+.B --pause, --resume
+Show the configured idle frame and discard input, or resume with pending paw activity cleared. Hidden and fullscreen visibility still apply.
+.TP
+.B --reload, --status
+Reload configuration or query the running application through a same-UID authenticated Unix socket. Failures return nonzero. Controls never rewrite configuration files; visibility and pause state reset on restart.
+.SH MONITOR SECTIONS AND RELOAD
+Use [monitor:NAME] for appearance overrides and [global] to return to global settings. Global settings apply before monitor overrides regardless of section order. Overrides support cat_height, overlay_height, overlay_opacity, cat_x_offset, cat_y_offset, layer, overlay_position, cat_align, mirror_x, mirror_y, enable_antialiasing and disable_fullscreen_hide. Input and timing remain global.
+.PP
+Startup tolerates invalid entries with warnings. Reloads are transactional: invalid, missing or unreadable files preserve the working configuration. The parent directory is watched to survive atomic replacement and deletion/recreation; reload happens 300 ms after the final relevant event. Monitor selection is reconciled without restarting.
+.PP
+Animation deadlines are monotonic; fps ranges from 1 to 120 and test_animation_interval is in seconds.

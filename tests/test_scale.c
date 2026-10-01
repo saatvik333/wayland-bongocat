@@ -1,17 +1,22 @@
 #include "../include/platform/scale.h"
 
+#include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 
 static int failed;
-#define CHECK(condition)                                                        \
-  do {                                                                          \
-    if (!(condition)) {                                                          \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition);     \
-      failed++;                                                                  \
-    }                                                                            \
+#define CHECK(condition)                                                   \
+  do {                                                                     \
+    if (!(condition)) {                                                    \
+      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+      failed++;                                                            \
+    }                                                                      \
   } while (0)
 
 int main(void) {
+  assert(scale_offset_120(INT_MIN, 120) == INT_MIN);
+  assert(scale_offset_120(INT_MAX, 240) == INT_MAX);
+  assert(scale_size_120(INT_MAX, UINT32_MAX) == 0);
   CHECK(scale_size_120(100, 120) == 100);
   CHECK(scale_size_120(100, 144) == 120);
   CHECK(scale_size_120(100, 180) == 150);

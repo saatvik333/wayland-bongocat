@@ -44,7 +44,8 @@ layer=top
 
 # Find your device with: bongocat-find-devices
 # Add multiple lines for multiple keyboards
-keyboard_device=/dev/input/event4
+# Leave selectors unset to select accessible keyboard-capable devices.
+# keyboard_device=/dev/input/by-id/YOUR-KEYBOARD-event-kbd
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ MULTI-MONITOR (optional)                                                    │
@@ -99,14 +100,23 @@ sleep_end=06:00
 
 # Duration of each test animation frame in milliseconds
 # test_animation_duration=200
-# Interval between test animation cycles in milliseconds (0=disabled)
+# Interval between test animation cycles in seconds (0=disabled)
 # test_animation_interval=0
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ DEBUG                                                                       │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
-# WARNING: Enabling debug mode will log keystrokes!!
+# Debug mode reports runtime activity; keycodes are never logged.
 #
 # Enable debug logging (0=disabled, 1=enabled)
 enable_debug=0
+
+# Per-monitor appearance (input and timing remain global).
+# Sections do not select monitors; set monitor=NAME1,NAME2 above.
+# [monitor:HDMI-A-1]
+# cat_height=60
+# cat_align=right
+# mirror_x=1
+# disable_fullscreen_hide=1
+# [global]
