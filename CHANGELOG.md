@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-10-17
+
+### Fixed
+
+- **Disconnected input CPU loop** - Remove devices reporting poll hangup,
+  error, or invalid-descriptor events instead of repeatedly polling them.
+  This fixes a full-core CPU spike when input devices disappear, including
+  across sleep/resume or device reconnection. Regression tests cover all
+  three terminal events and verify that the next poll can wait normally.
+- **Input privacy and privileges** - Stop logging keycodes, restrict input
+  access to the helper, and drop inherited setgid privilege in the renderer.
+- **Display lifecycle** - Handle output disconnect/reconnect, scale and
+  resolution changes, delayed buffer releases, and Wayland queue pressure.
+- **Reload reliability** - Watch atomic config replacements and preserve the
+  working configuration when a reload is invalid, missing, or unreadable.
+- **Rendering and fullscreen** - Correct buffer lifetime, checked geometry,
+  multi-output fullscreen tracking, and NanoSVG allocation/geometry errors.
+
+### Added
+
+- Runtime `--hide`, `--show`, `--pause`, `--resume`, `--reload`, and `--status`
+  controls over a same-user authenticated Unix socket.
+- `--check-config`, `--list-devices`, `--list-monitors`, and `--doctor`
+  diagnostics.
+- Per-monitor appearance sections with `[monitor:NAME]` and `[global]`,
+  including Nix `monitorSettings` and `disableFullscreenHide` options.
+- Unit, sanitizer, and isolated Wayland compositor regression coverage.
+
+### Changed
+
+- All overlays share one Wayland event loop and one supervised input helper.
+  Idle rendering waits for meaningful events instead of periodic redraws.
+- Monitor selection can change on reload without restarting the process;
+  missing named outputs wait for reconnection.
+- Empty input selectors automatically discover accessible keyboards. Stable
+  by-id/by-path aliases are supported and deduplicated; explicit selectors
+  never fall back to unrelated devices. No permissions are granted automatically.
+- Existing flat configs remain supported. Reloads and `--check-config` are
+  strict; startup remains tolerant with warnings. Nix's default input device
+  list is now empty instead of a hard-coded event path.
+
 ## [2.0.2] - 2026-07-13
 
 ### Fixed

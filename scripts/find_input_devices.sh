@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'exit 0' PIPE
 
-VERSION="2.0.2"
+VERSION="2.1.0"
 SCRIPT_NAME="bongocat-find-devices"
 cleanup_dir=""
 

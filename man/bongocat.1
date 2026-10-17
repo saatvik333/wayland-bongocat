@@ -1,4 +1,4 @@
-.TH BONGOCAT 1 "July 2026" "v2.0.2" "User Commands"
+.TH BONGOCAT 1 "October 2026" "v2.1.0" "User Commands"
 .SH NAME
 bongocat \- Bongo Cat Wayland Overlay
 .SH SYNOPSIS
@@ -51,7 +51,7 @@ Path to an evdev device, including stable /dev/input/by-id/ and /dev/input/by-pa
 Set to \fB1\fR to enable debug logging. Keycodes are never logged or transmitted.
 
 .SH PRIVACY NOTICE
-By default, debug logging is disabled (\fBenable_debug=0\fR). Taking care not to enable this in production environments is crucial as it logs raw input events.
+Debug logging is disabled by default (\fBenable_debug=0\fR). Keycodes are never logged or transmitted, including in debug mode.
 
 .SH AUTHOR
 Maintained by Saatvik Sharma.
