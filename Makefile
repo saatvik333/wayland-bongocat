@@ -217,7 +217,10 @@ $(BUILDDIR)/test_fullscreen_state: $(TESTDIR)/test_fullscreen_state.c | $(OBJDIR
 $(BUILDDIR)/test_runtime: $(TESTDIR)/test_runtime.c src/core/control.c src/config/config_watcher.c $(CONFIG_TEST_DEPS) | $(OBJDIR)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
 
-TEST_BINARIES = $(BUILDDIR)/test_nanosvg $(BUILDDIR)/test_input $(BUILDDIR)/test_animation $(BUILDDIR)/test_hyprland $(BUILDDIR)/test_runtime $(BUILDDIR)/test_config $(BUILDDIR)/test_paw_frame $(BUILDDIR)/test_scale $(BUILDDIR)/test_fullscreen_state
+TEST_BINARIES = $(BUILDDIR)/test_input_disconnect $(BUILDDIR)/test_nanosvg $(BUILDDIR)/test_input $(BUILDDIR)/test_animation $(BUILDDIR)/test_hyprland $(BUILDDIR)/test_runtime $(BUILDDIR)/test_config $(BUILDDIR)/test_paw_frame $(BUILDDIR)/test_scale $(BUILDDIR)/test_fullscreen_state
+
+$(BUILDDIR)/test_input_disconnect: tests/test_input_disconnect.c src/platform/input.c src/utils/error.c | $(OBJDIR)
+	$(CC) $(TEST_CFLAGS) tests/test_input_disconnect.c src/utils/error.c -o $@ $(TEST_LDFLAGS)
 
 $(TEST_BINARIES): $(PROJECT_HEADERS) tests/test_helpers.h
 
