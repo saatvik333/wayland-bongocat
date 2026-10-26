@@ -1,15 +1,15 @@
 #ifndef BONGOCAT_PAW_FRAME_H
 #define BONGOCAT_PAW_FRAME_H
 
-// Shared pending-paw bits. Input child ORs bits; animation thread atomically
-// consumes them. Sleep handling is caller responsibility.
+// Keyboard halves map to paws; paw state maps to animation frames.
 
 #include "core/bongocat.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
-#define PAW_LEFT  1u
-#define PAW_RIGHT 2u
+#define PAW_LEFT  1U
+#define PAW_RIGHT 2U
 #define PAW_BOTH  (PAW_LEFT | PAW_RIGHT)
 
 static inline unsigned paw_for_keycode(int keycode) {
@@ -29,8 +29,8 @@ static inline unsigned paw_apply_mirror(unsigned paws, bool mirror) {
   if (!mirror) {
     return paws;
   }
-  return ((paws & PAW_LEFT) ? PAW_RIGHT : 0u) |
-         ((paws & PAW_RIGHT) ? PAW_LEFT : 0u);
+  return ((paws & PAW_LEFT) ? PAW_RIGHT : 0U) |
+         ((paws & PAW_RIGHT) ? PAW_LEFT : 0U);
 }
 
 static inline int frame_from_paw_state(bool left_live, bool right_live,

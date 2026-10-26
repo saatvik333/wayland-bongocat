@@ -1,88 +1,191 @@
-.TH BONGOCAT 1 "October 2026" "v2.1.0" "User Commands"
+.TH BONGOCAT 1 "October 2026" "bongocat 2.1.1" "User Commands"
 .SH NAME
-bongocat \- Bongo Cat Wayland Overlay
+bongocat \- bongo cat overlay for Wayland that plays along with the keyboard
 .SH SYNOPSIS
 .B bongocat
-[OPTIONS]
+.RI [ OPTIONS ]
 .SH DESCRIPTION
 .B bongocat
-is a lightweight, highly customizable Bongo Cat overlay for Wayland compositors. It displays an SVG-rendered animated cat that reacts to your keyboard input in real-time. Features include multi-monitor support, hot-reloadable configuration (all properties), idle sleep animation, and fullscreen auto-hiding.
-
+shows an animated cat in a bar on wlr-layer-shell compositors. Its paws follow
+key presses on every keyboard, including keyboards connected later. Only one
+instance runs per user.
+.PP
+Keyboards are read by a helper process that reports only which paw to move,
+never which key was pressed. Reading
+.I /dev/input
+requires membership in the
+.B input
+group, a device ACL, or a setgid installation.
 .SH OPTIONS
 .TP
-.BR \-c ", " \-\-config " \fIFILE\fR"
-Specify the configuration file path. If not provided, \fBbongocat\fR searches for \fBbongocat.conf\fR in:
-.RS
-.IP 1. 3
-\fIXDG_CONFIG_HOME\fR/bongocat/bongocat.conf
-.IP 2. 3
-$HOME/.config/bongocat/bongocat.conf
-.IP 3. 3
-./bongocat.conf
-.RE
+.BR \-c ", " \-\-config " " \fIFILE\fR
+Configuration file. Otherwise the first readable of
+.IR $XDG_CONFIG_HOME/bongocat/bongocat.conf ,
+.I ~/.config/bongocat/bongocat.conf
+and
+.I ./bongocat.conf
+is used; without one, defaults apply.
 .TP
-.BR \-m ", " \-\-monitor " \fINAME\fR"
-Force the overlay to display on a specific monitor output (e.g., HDMI-A-1). Overrides the \fBmonitor\fR setting in the configuration file.
+.BR \-w ", " \-\-watch\-config
+Reload the configuration 300 ms after it changes, including atomic
+replacement and symlink changes.
 .TP
-.BR \-w ", " \-\-watch-config
-Watch the configuration file for changes and automatically reload without restarting (uses inotify).
+.BR \-m ", " \-\-monitor " " \fINAME\fR
+Show the cat only on monitor
+.IR NAME ,
+overriding
+.BR monitor .
 .TP
 .BR \-t ", " \-\-toggle
-Send SIGTERM to a running bongocat instance to stop it. If no instance is running, this starts a new one.
+Stop the running instance; if none runs, start one.
 .TP
-.BR \-h ", " \-\-help
-Display this help message and exit.
+.BR \-\-hide ", " \-\-show
+Hide or show every overlay of the running instance.
 .TP
-.BR \-v ", " \-\-version
-Display version information and exit.
-
-.SH CONFIGURATION
-The default configuration file location is \fB~/.config/bongocat/bongocat.conf\fR.
+.BR \-\-pause ", " \-\-resume
+Show the idle frame and ignore input, or resume.
+.TP
+.B \-\-reload
+Reload the configuration of the running instance. An invalid file keeps the
+running configuration and fails.
+.TP
+.B \-\-status
+Describe the running instance.
+.TP
+.B \-\-check\-config
+Strictly validate the configuration. A missing file is valid when no
+.B \-c
+was given.
+.TP
+.B \-\-list\-devices
+List input devices, mark keyboards, and print matching
+.B keyboard_name
+and
+.B keyboard_device
+lines.
+.TP
+.B \-\-list\-monitors
+List monitor names, sizes and scales.
+.TP
+.B \-\-doctor
+Combine the three checks above with compositor protocol support.
+.TP
+.BR \-h ", " \-\-help ", " \-v ", " \-\-version
+Show help or the version.
 .PP
-.B Key Configuration Options:
+Control options reach the running instance through a socket in
+.I $XDG_RUNTIME_DIR
+that only the same user may use. They exit nonzero on failure.
+.SH CONFIGURATION
+Lines are
+.IB key = value\fR;
+lines starting with
+.B #
+or
+.B ;
+and text after whitespace followed by
+.B #
+are comments.
+.B [monitor:\fINAME\fB]
+starts a section overriding the appearance settings for one monitor, and
+.B [global]
+returns to global settings. At startup invalid lines are skipped with a
+warning; reloads and
+.B \-\-check\-config
+reject the whole file instead.
+.SS Appearance (allowed in monitor sections)
+.TP
+.BR cat_height " (10\(en200, default 40)"
+Cat height in pixels.
+.TP
+.BR cat_align " (left, center, right; default center)"
+Horizontal alignment.
+.TP
+.BR cat_x_offset ", " cat_y_offset " (default 100, 10)"
+Offset from the alignment and from the bar's vertical center.
+.TP
+.BR overlay_height " (20\(en300, default 50)"
+Bar height in pixels.
+.TP
+.BR overlay_opacity " (0\(en255, default 150)"
+Bar background opacity.
+.TP
+.BR overlay_position " (top, bottom; default top)"
+Screen edge.
+.TP
+.BR layer " (background, bottom, top, overlay; default top)"
+Layer-shell layer.
+.TP
+.BR mirror_x ", " mirror_y " (0, 1; default 0)"
+Flip the cat horizontally or vertically.
+.TP
+.BR disable_fullscreen_hide " (0, 1; default 0)"
+By default a cat hides while the window most recently focused on its monitor
+is fullscreen, and reappears when an empty workspace gains focus there. 1 keeps
+it visible, as does
+.BR layer=overlay .
+.SS Monitors
 .TP
 .B monitor
-Set to one or more output names (e.g., \fBeDP-1\fR or \fBeDP-1,HDMI-A-1\fR). A comma-separated list creates one overlay per available listed monitor in a single rendering process. Missing named monitors wait for reconnection.
+Comma-separated monitor names, each showing a cat; disconnected monitors are
+waited for. Empty (default) shows one cat on an automatically chosen monitor.
+.TP
+.BR follow_active_monitor " (0, 1; default 1)"
+In automatic mode, follow the monitor of the focused window, from
+wlr-foreign-toplevel-management. Under niri
+.RB ( NIRI_SOCKET )
+the focused monitor comes from niri's event stream and includes empty
+workspaces. Without focus information the cat stays where it is. 0 uses the
+first monitor.
+.SS Keyboards
 .TP
 .B keyboard_device
-Path to an evdev device, including stable /dev/input/by-id/ and /dev/input/by-path/ aliases. With no paths or names, accessible keyboard-capable devices are selected automatically. Explicit selectors never fall back to unrelated devices. Use \fBbongocat-find-devices\fR to locate yours.
+Device path inside
+.IR /dev/input/ ,
+such as a stable
+.I by-id
+link. Repeatable.
 .TP
-.B enable_debug
-Set to \fB1\fR to enable debug logging. Keycodes are never logged or transmitted.
-
-.SH PRIVACY NOTICE
-Debug logging is disabled by default (\fBenable_debug=0\fR). Keycodes are never logged or transmitted, including in debug mode.
-
-.SH AUTHOR
-Maintained by Saatvik Sharma.
+.B keyboard_name
+Read devices whose name contains this text. Repeatable.
+.PP
+Without either, every keyboard is read.
+.SS Animation and sleep
+.TP
+.BR fps " (1\(en120, default 60)"
+Maximum frame changes per second.
+.TP
+.BR keypress_duration " (10\(en5000 ms, default 100)"
+How long a paw stays down.
+.TP
+.BR enable_hand_mapping " (0, 1; default 1)"
+Keys on the left half of the keyboard play the left paw; 0 picks a random
+paw.
+.TP
+.BR idle_frame " (0\(en4, default 0)"
+Frame shown while idle.
+.TP
+.BR test_animation_interval ", " test_animation_duration " (default 0 s, 200 ms)"
+Tap a paw every interval without input; 0 disables.
+.TP
+.BR idle_sleep_timeout " (0\(en3600 s, default 0)"
+Show the sleeping cat after this long without input; 0 disables.
+.TP
+.BR enable_scheduled_sleep ", " sleep_begin ", " sleep_end " (default 0, 00:00, 00:00)"
+Sleep daily between two HH:MM times, ignoring key presses.
+.TP
+.BR enable_debug " (0, 1; default 0)"
+Debug logging. Key presses are never logged.
+.SH FILES
+.TP
+.I $XDG_RUNTIME_DIR/bongocat.pid
+Single-instance lock.
+.TP
+.I $XDG_RUNTIME_DIR/bongocat.sock
+Control socket.
 .SH SEE ALSO
-.BR bongocat-find-devices (1)
-
-.SH DIAGNOSTICS AND CONTROLS
-.TP
-.B --check-config
-Validate the configuration strictly without Wayland or input access. Exit nonzero on invalid or unreadable configuration.
-.TP
-.B --list-devices
-List evdev devices, keyboard capabilities and access errors.
-.TP
-.B --list-monitors
-List Wayland output names, dimensions and scales.
-.TP
-.B --doctor
-Check configuration, protocols, outputs, devices and permissions.
-.TP
-.B --hide, --show
-Suppress or restore all overlays without resetting animation state.
-.TP
-.B --pause, --resume
-Show the configured idle frame and discard input, or resume with pending paw activity cleared. Hidden and fullscreen visibility still apply.
-.TP
-.B --reload, --status
-Reload configuration or query the running application through a same-UID authenticated Unix socket. Failures return nonzero. Controls never rewrite configuration files; visibility and pause state reset on restart.
-.SH MONITOR SECTIONS AND RELOAD
-Use [monitor:NAME] for appearance overrides and [global] to return to global settings. Global settings apply before monitor overrides regardless of section order. Overrides support cat_height, overlay_height, overlay_opacity, cat_x_offset, cat_y_offset, layer, overlay_position, cat_align, mirror_x, mirror_y, enable_antialiasing and disable_fullscreen_hide. Input and timing remain global.
-.PP
-Startup tolerates invalid entries with warnings. Reloads are transactional: invalid, missing or unreadable files preserve the working configuration. The parent directory is watched to survive atomic replacement and deletion/recreation; reload happens 300 ms after the final relevant event. Monitor selection is reconciled without restarting.
-.PP
-Animation deadlines are monotonic; fps ranges from 1 to 120 and test_animation_interval is in seconds.
+Example configuration:
+.I /usr/share/bongocat/bongocat.conf.example
+or the
+.I share/bongocat
+directory of the installation prefix.

@@ -5,55 +5,65 @@
 #include "core/bongocat.h"
 #include "utils/error.h"
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
-// =============================================================================
-// ANIMATION STATE
-// =============================================================================
-
-// Active overlay frame
-extern int anim_index;
-
-// Pre-scaled frame cache (avoids repeated scaling of constant source images)
 typedef struct {
-  uint8_t *data;  // Pre-scaled BGRA pixel data (NULL if not cached)
+  uint8_t *data;  // Premultiplied BGRA, width * height pixels
   int width;
   int height;
 } cached_frame_t;
 
-extern cached_frame_t anim_cached_frames[NUM_FRAMES];
+// Every frame rasterized at one size and orientation.
+typedef struct {
+  cached_frame_t frames[NUM_FRAMES];
+  int width;
+  int height;
+  bool mirror_x;
+  bool mirror_y;
+} frame_cache_t;
 
-void animation_cache_frames(int target_w, int target_h, int mirror_x,
-                            int mirror_y, int enable_aa);
-void animation_invalidate_cache(void);
+// Paw and sleep timers of one overlay. Times are monotonic microseconds.
+typedef struct {
+  int64_t left_until;
+  int64_t right_until;
+  int64_t next_test;
+  int64_t last_input;
+  int frame;
+} anim_state_t;
 
-// =============================================================================
-// ANIMATION LIFECYCLE
-// =============================================================================
+// Inputs shared by every overlay for one animation step.
+typedef struct {
+  int64_t now;
+  int64_t input_time;  // When the newest paws were pressed; 0 if unknown
+  bool paused;         // Show the idle frame and ignore input
+  bool sleeping;       // Scheduled sleep is active
+} anim_step_t;
 
-// Initialize animation system - must be checked
-BONGOCAT_NODISCARD bongocat_error_t animation_init(config_t *config);
-
-void *animation_overlay_create(config_t *config);
-void animation_overlay_activate(void *opaque, config_t *config);
-void animation_overlay_cache(int width, int height);
-void animation_overlay_destroy(void *opaque);
-int animation_tick(unsigned paws);
-void animation_set_paused(bool value);
-
-// Compatibility lifecycle entrypoint - must be checked
-BONGOCAT_NODISCARD bongocat_error_t animation_start(void);
-
-// Cleanup animation resources
+// Parses the embedded artwork shared by every overlay.
+[[nodiscard]] bongocat_error_t animation_init(void);
 void animation_cleanup(void);
 
-// =============================================================================
-// RENDERING UTILITIES
-// =============================================================================
+void anim_reset(anim_state_t *state, const config_t *config, int64_t now);
+// Applies paws (PAW_* bits, already mapped for this overlay) and selects
+// state->frame. Returns the next monotonic time the frame may change, or 0.
+int64_t anim_step(anim_state_t *state, const config_t *config, unsigned paws,
+                  const anim_step_t *step);
+// A random paw, for enable_hand_mapping=0.
+unsigned anim_random_paw(void);
 
-// Blit pre-converted cached frame (BGRA to BGRA, no channel swap)
-void blit_cached_frame(uint8_t *dest, int dest_w, int dest_h,
-                       const uint8_t *src, int src_w, int src_h, int offset_x,
-                       int offset_y);
+// Whether scheduled sleep is active at wall time now; *next_change receives
+// the next wall time this can change.
+bool sleep_schedule(const config_t *config, time_t now, time_t *next_change);
+
+// Rasterizes the frames unless already cached with these parameters.
+[[nodiscard]] bool frame_cache_update(frame_cache_t *cache, int width,
+                                      int height, bool mirror_x, bool mirror_y);
+void frame_cache_free(frame_cache_t *cache);
+
+// Composites a frame over dest with its top-left corner at (x, y), clipped.
+void blit_frame(uint8_t *dest, int dest_width, int dest_height,
+                const cached_frame_t *frame, int x, int y);
 
 #endif  // ANIMATION_H

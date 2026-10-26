@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" xmlns:bx="https://boxy-svg.com">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 101 500 277" xmlns:bx="https://boxy-svg.com">
   <defs>
     <bx:export>
       <bx:file format="png" href="#object-0"/>
@@ -14,7 +14,6 @@
       <bx:file format="png" href="#object-6" path="Untitled 7.png"/>
     </bx:export>
   </defs>
-  <rect width="500" height="276.496" style="stroke: rgb(0, 0, 0); fill: rgba(216, 216, 216, 0); stroke-width: 0px;" id="object-6" y="101.069"/>
   <path style="stroke: rgb(0, 0, 0); stroke-linejoin: round; fill: rgb(255, 255, 255); stroke-width: 4px; stroke-linecap: round;" d="M 170.811 289.814 L 423.668 291.335 C 425.392 292.47 411.149 254.245 383.876 236.285 C 383.453 213.382 391.415 192.775 377.892 169.565 C 369.739 170.835 353.549 181.415 347.375 189.312 C 320.799 179.406 270.707 168.45 235.179 169.266 C 230.139 162.522 216.085 150.145 208.335 147.132 C 204.549 150.942 197.618 159.218 192.007 174.026 C 93.111 228.92 57.447 372.245 170.811 289.814 Z" id="object-0"/>
   <path style="fill: none; stroke: rgb(0, 0, 0); stroke-linecap: round; stroke-width: 5px; stroke-linejoin: round;" d="M 359.342 247.654 C 321.873 200.429 292.785 252.989 319.381 289.964" id="object-1"/>
   <path style="fill: none; stroke: rgb(0, 0, 0); stroke-width: 4px; stroke-linecap: round; stroke-linejoin: round;" d="M 209.618 247.779 C 211.423 258.852 225.933 254.639 229.552 246.378 C 230.772 256.95 244.89 257.389 249.046 250.902" id="object-2"/>
@@ -27,7 +26,6 @@
   <line style="fill: none; stroke-linecap: round; stroke: rgb(219, 54, 54); stroke-width: 5px;" x1="80.483" y1="324.805" x2="94.813" y2="315.76"/>
   <line style="fill: none; stroke-linecap: round; stroke: rgb(219, 54, 54); stroke-width: 5px;" x1="99.202" y1="328.745" x2="93.111" y2="336.717"/>
   <line style="fill: none; stroke-linecap: round; stroke: rgb(219, 54, 54); stroke-width: 5px;" x1="127.324" y1="327.671" x2="130.548" y2="341.732"/>
-  <rect width="500" height="276.496" style="stroke: rgb(0, 0, 0); fill: rgba(216, 216, 216, 0); stroke-linecap: round; stroke-width: 0px;" id="rect-1" y="101.069"/>
   <path style="stroke: rgb(0, 0, 0); fill: rgb(255, 255, 255); stroke-width: 4px; stroke-linecap: round; stroke-linejoin: round;" d="M 294.724 290.623 C 285.717 338.725 344.919 309.19 364.233 291.007 L 423.668 291.335 C 425.392 292.47 411.149 254.245 383.876 236.285 C 383.453 213.382 391.415 192.775 377.892 169.565 C 369.739 170.835 353.549 181.415 347.375 189.312 C 320.799 179.406 270.707 168.45 235.179 169.266 C 230.139 162.522 216.085 150.145 208.335 147.132" id="path-1"/>
   <path style="fill: none; stroke: rgb(0, 0, 0); stroke-linecap: round; stroke-width: 5px; stroke-linejoin: round;" d="" id="path-2"/>
   <path style="fill: none; stroke: rgb(0, 0, 0); stroke-width: 4px; stroke-linecap: round; stroke-linejoin: round;" d="M 209.618 247.779 C 211.423 258.852 225.933 254.639 229.552 246.378 C 230.772 256.95 244.89 257.389 249.046 250.902" id="path-3"/>

@@ -2,36 +2,31 @@
 #define FULLSCREEN_H
 
 #include <stdbool.h>
-#include <stdint.h>
-#include <wayland-client.h>
 
-// Forward-declare the protocol type so callers don't need to include
-// the generated header just for the listener pointer.
+struct wl_output;
 struct zwlr_foreign_toplevel_manager_v1;
-struct zwlr_foreign_toplevel_manager_v1_listener;
 
-static inline bool fullscreen_toplevel_relevant(bool has_output_events,
-                                                bool is_on_output,
-                                                bool is_activated) {
-  return is_activated && (!has_output_events || is_on_output);
-}
+// Tracks toplevel focus and fullscreen state with
+// wlr-foreign-toplevel-management. Each output remembers the window focused
+// on it most recently, so a fullscreen window keeps its output covered while
+// focus is on another output.
 
-// =============================================================================
-// FULLSCREEN DETECTION PUBLIC API
-// =============================================================================
-
-/// Set up the foreign-toplevel manager listener after binding the manager
-/// during registry_global.  Call this once the manager proxy is valid.
 void fullscreen_init(struct zwlr_foreign_toplevel_manager_v1 *object);
-
-/// Clean up tracked toplevels and manager.  Safe to call even if
-/// fullscreen_init was never called.
 void fullscreen_cleanup(void);
-void fullscreen_recompute(void);
-void fullscreen_output_removed(uint32_t id);
+bool fullscreen_available(void);
 
-/// Returns true if the foreign-toplevel manager protocol was bound
-/// (fullscreen detection is available).
-bool fs_detector_available(void);
+// Whether the window most recently focused on output is fullscreen.
+bool fullscreen_on(struct wl_output *output);
+// Output of the focused window, preferring current for a window spanning
+// outputs. NULL while no window is focused or its output is unknown.
+struct wl_output *fullscreen_focused_output(struct wl_output *current);
+// Forgets the windows focused on output so far, after an empty workspace
+// gained focus there.
+void fullscreen_forget(struct wl_output *output);
+void fullscreen_output_removed(struct wl_output *output);
+// Applies focus changes once a batch of events has been dispatched.
+void fullscreen_settle(void);
+// True once after focus, placement or fullscreen state changed.
+bool fullscreen_take_changed(void);
 
 #endif  // FULLSCREEN_H

@@ -1,81 +1,37 @@
 #ifndef WAYLAND_H
 #define WAYLAND_H
 
-#include "../protocols/zwlr-layer-shell-v1-client-protocol.h"
 #include "config/config.h"
-#include "core/bongocat.h"
 #include "utils/error.h"
 
-#include <signal.h>
-#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/poll.h>
 
-// =============================================================================
-// WAYLAND GLOBAL STATE
-// =============================================================================
-
-// Core Wayland objects
-extern struct wl_display *display;
-extern struct wl_compositor *compositor;
-extern struct wl_shm *shm;
-extern struct wl_output *output;
-
-// Layer shell objects
-extern struct zwlr_layer_shell_v1 *layer_shell;
-extern struct zwlr_layer_surface_v1 *layer_surface;
-// Surface
-extern struct wl_surface *surface;
-
-// Thread-safe state flags
-extern atomic_bool configured;
-extern atomic_bool fullscreen_detected;
-
-// =============================================================================
-// WAYLAND LIFECYCLE FUNCTIONS
-// =============================================================================
-
-// Initialize Wayland connection - must be checked
-BONGOCAT_NODISCARD bongocat_error_t wayland_init(config_t *config);
-
-// Run Wayland event loop - must be checked
-BONGOCAT_NODISCARD bongocat_error_t
-wayland_run(const volatile sig_atomic_t *running);
-
-// Cleanup Wayland resources
+// Connects and binds globals. settings must stay valid until the next
+// wayland_update_config() or wayland_cleanup().
+[[nodiscard]] bongocat_error_t wayland_init(const config_t *settings);
+void wayland_update_config(const config_t *settings);
 void wayland_cleanup(void);
 
-// =============================================================================
-// WAYLAND OUTPUT STATE (shared with fullscreen / hyprland modules)
-// =============================================================================
-
-// Output reference array and count (defined in wayland.c)
-#include "platform/outputs.h"
-
-// =============================================================================
-// WAYLAND UTILITY FUNCTIONS
-// =============================================================================
-
-// Update configuration (hot-reload support)
-void wayland_update_config(config_t *config);
-
-int wayland_list_monitors(bool doctor);
 void wayland_set_hidden(bool value);
-void wayland_set_runtime_timeout(int (*callback)(void));
-void wayland_set_runtime_fds(int (*callback)(int *, size_t));
+// Paused overlays show the idle frame; pausing and resuming reset timers.
+void wayland_set_paused(bool value);
+// Scheduled sleep shows the sleeping frame.
+void wayland_set_sleeping(bool value);
+// Queues PAW_* bits pressed at monotonic time (microseconds; 0 if unknown).
+void wayland_add_paws(unsigned paws, int64_t time);
 
-// Draw the overlay bar
-void draw_bar(void);
-void wayland_request_redraw(void);
-void wayland_request_current_redraw(void);
+// One event-loop turn: wayland_prepare() dispatches queued events, updates and
+// renders overlays, flushes, and fills pfd. *deadline receives the next
+// monotonic microsecond time overlays need attention, or 0. After poll(),
+// wayland_dispatch() must be called with the same pfd.
+[[nodiscard]] bongocat_error_t wayland_prepare(struct pollfd *pfd,
+                                               int64_t *deadline);
+[[nodiscard]] bongocat_error_t wayland_dispatch(const struct pollfd *pfd);
 
-// Get the wl_output associated with the current screen info (may be NULL)
-BONGOCAT_NODISCARD struct wl_output *wayland_get_current_screen_output(void);
-
-// Register a per-loop callback executed on Wayland main thread.
-void wayland_set_tick_callback(void (*callback)(void));
-
-// HiDPI: convert a logical-pixel dimension to physical (buffer-coordinate)
-// pixels using the active render scale. Defaults to identity (scale 1.0×) if
-// the compositor has not announced a scale yet.
-BONGOCAT_NODISCARD int wayland_phys_dim(int logical);
+// Prints outputs (and protocol support with doctor). Returns nonzero when
+// overlays cannot be shown.
+int wayland_list_monitors(bool doctor);
 
 #endif  // WAYLAND_H

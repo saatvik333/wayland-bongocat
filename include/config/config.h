@@ -1,142 +1,91 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "core/bongocat.h"
 #include "utils/error.h"
 
 #include <stdbool.h>
-
-// =============================================================================
-// CONFIGURATION ENUMS
-// =============================================================================
+#include <stddef.h>
 
 typedef enum {
-  POSITION_TOP = 0,
-  POSITION_BOTTOM = 1
+  POSITION_TOP,
+  POSITION_BOTTOM
 } overlay_position_t;
-
 typedef enum {
-  LAYER_BACKGROUND = 0,
+  LAYER_BACKGROUND,
   LAYER_BOTTOM,
   LAYER_TOP,
   LAYER_OVERLAY
 } layer_type_t;
-
 typedef enum {
   ALIGN_LEFT = -1,
-  ALIGN_CENTER = 0,
-  ALIGN_RIGHT = 1,
+  ALIGN_CENTER,
+  ALIGN_RIGHT
 } align_type_t;
 
-// =============================================================================
-// CONFIGURATION TYPES
-// =============================================================================
-
+// Settings a [monitor:NAME] section may override. Every field is an int so
+// overrides can be applied field by field.
 typedef struct {
-  int hour;
-  int min;
-} config_time_t;
+  int cat_height;
+  int overlay_height;
+  int overlay_opacity;
+  int cat_x_offset;
+  int cat_y_offset;
+  int layer;             // layer_type_t
+  int overlay_position;  // overlay_position_t
+  int cat_align;         // align_type_t
+  int mirror_x;          // Reflect across the vertical axis
+  int mirror_y;          // Reflect across the horizontal axis
+  int disable_fullscreen_hide;
+} appearance_t;
 
 typedef struct {
   char *monitor;
-  char *key;
-  char *value;
+  appearance_t values;
+  unsigned set;  // Bit i: the i-th appearance_t field is overridden
 } monitor_override_t;
 
 typedef struct {
+  appearance_t look;
   monitor_override_t *overrides;
   size_t num_overrides;
-  // Display settings
-  int screen_width;
-  char *output_name;
-  char **output_names;
-  int num_output_names;
-  int overlay_height;
-  int overlay_opacity;
-  layer_type_t layer;
-  overlay_position_t overlay_position;
 
-  // Cat appearance
-  const char *asset_paths[NUM_FRAMES];
-  int cat_x_offset;
-  int cat_y_offset;
-  int cat_height;
-  int mirror_x;             // Reflect across Y axis (horizontal flip)
-  int mirror_y;             // Reflect across X axis (vertical flip)
-  int enable_antialiasing;  // Enable bilinear interpolation
-  align_type_t cat_align;
+  char **monitors;  // Explicit output names; empty means automatic
+  int num_monitors;
+  int follow_active_monitor;
 
-  // Animation timing
-  int idle_frame;
-  int keypress_duration;
-  int test_animation_duration;
-  int test_animation_interval;
-  int fps;
-  int enable_hand_mapping;  // 0=random hands, 1=based on key position
-
-  // Input devices
   char **keyboard_devices;
   int num_keyboard_devices;
-  int hotplug_scan_interval;
-
-  // Device matching by name (for hotplug/auto-detection)
   char **keyboard_names;
-  int num_names;
+  int num_keyboard_names;
 
-  // Sleep schedule
+  int fps;
+  int keypress_duration;        // ms
+  int idle_frame;               // Frame index shown while idle
+  int test_animation_duration;  // ms
+  int test_animation_interval;  // s, 0 disables
+  int enable_hand_mapping;      // 0 picks a random paw per keypress
+
   int enable_scheduled_sleep;
-  config_time_t sleep_begin;
-  config_time_t sleep_end;
-  int idle_sleep_timeout_sec;
+  int sleep_begin;         // Minutes after midnight
+  int sleep_end;           // Minutes after midnight
+  int idle_sleep_timeout;  // s, 0 disables
 
-  // Fullscreen behavior
-  int disable_fullscreen_hide;
-
-  // Debug
   int enable_debug;
 } config_t;
 
-// =============================================================================
-// CONFIGURATION FUNCTIONS
-// =============================================================================
+// Loads defaults, then path if non-NULL. Strict loading fails on any invalid
+// line or missing file; otherwise problems are logged and the line ignored.
+// On failure the config is left empty and owns no memory.
+[[nodiscard]] bongocat_error_t config_load(config_t *config, const char *path,
+                                           bool strict);
+void config_free(config_t *config);
 
-typedef enum {
-  CONFIG_WARNING,
-  CONFIG_ERROR
-} config_severity_t;
-typedef struct {
-  const char *file;
-  int line;  // Zero for file-level failures.
-  const char *key;
-  config_severity_t severity;
-  const char *message;
-} config_diagnostic_t;
-typedef void (*config_diagnostic_callback_t)(const config_diagnostic_t *,
-                                             void *);
-// Diagnostic strings are borrowed for the duration of the callback.
-BONGOCAT_NODISCARD bongocat_error_t
-load_config_report(config_t *config, const char *path, bool strict,
-                   config_diagnostic_callback_t callback, void *data);
+// Global appearance with the overrides for monitor applied.
+appearance_t config_appearance(const config_t *config, const char *monitor);
 
-// Load configuration - returns error code (must be checked)
-BONGOCAT_NODISCARD bongocat_error_t load_config(config_t *config,
-                                                const char *config_file_path);
-
-BONGOCAT_NODISCARD bongocat_error_t load_config_strict(config_t *config,
-                                                       const char *path);
-void config_for_monitor(const config_t *global, const char *name,
-                        config_t *effective);
-
-// Get screen width - returns 0 on failure (should be checked)
-BONGOCAT_NODISCARD int get_screen_width(void);
-
-// Resolve config file path with XDG fallback
-// Returns a static/allocated path, or NULL if none found.
-// Caller must free the returned string.
+// Explicit path, else $XDG_CONFIG_HOME/bongocat/bongocat.conf,
+// ~/.config/bongocat/bongocat.conf or ./bongocat.conf. NULL when none exists.
+// The caller frees the result.
 char *config_resolve_path(const char *explicit_path);
-
-// Cleanup functions
-void config_cleanup(void);
-void config_cleanup_full(config_t *config);
 
 #endif  // CONFIG_H

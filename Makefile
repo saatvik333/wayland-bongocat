@@ -1,270 +1,174 @@
-# Compiler
-.DEFAULT_GOAL := all
-CC = gcc
+# wayland-bongocat
+#
+# CC, CPPFLAGS, CFLAGS and LDFLAGS from the environment are honored and come
+# after the project flags, so packagers can override them.
 
-# Build type (debug or release)
 BUILD_TYPE ?= release
+PREFIX ?= /usr/local
 
-# Base flags (using c2x for C23 compatibility on GCC 9+)
-BASE_CFLAGS = -std=c2x -Iinclude -Ilib -Iprotocols
-BASE_CFLAGS += -Wall -Wextra -Wpedantic -Wformat=2 -Wstrict-prototypes
-BASE_CFLAGS += -Wmissing-prototypes -Wold-style-definition -Wredundant-decls
-BASE_CFLAGS += -Wnested-externs -Wmissing-include-dirs -Wlogical-op
-BASE_CFLAGS += -Wjump-misses-init -Wdouble-promotion -Wshadow
-BASE_CFLAGS += -fstack-protector-strong
+BUILDDIR := build
+OUT := $(BUILDDIR)/$(BUILD_TYPE)
+TARGET := $(OUT)/bongocat
 
-# Debug flags
-DEBUG_CFLAGS = $(BASE_CFLAGS) -g3 -O0 -DDEBUG -fsanitize=address -fsanitize=undefined
-DEBUG_LDFLAGS = -fsanitize=address -fsanitize=undefined
-
-# Release flags
-RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -DNDEBUG -flto -fPIE -D_FORTIFY_SOURCE=2
-
-# Set flags based on build type
-ifeq ($(BUILD_TYPE),debug)
-    CFLAGS = $(DEBUG_CFLAGS)
-    LDFLAGS = -lwayland-client -lm -lpthread $(DEBUG_LDFLAGS)
-else
-    CFLAGS = $(RELEASE_CFLAGS)
-    LDFLAGS = -lwayland-client -lm -lpthread -flto -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
+WARNINGS := -Wall -Wextra -Wpedantic -Wformat=2 -Wstrict-prototypes \
+	-Wmissing-prototypes -Wold-style-definition -Wredundant-decls \
+	-Wnested-externs -Wmissing-include-dirs -Wdouble-promotion -Wshadow
+ifeq ($(shell $(CC) -dM -E -x c /dev/null 2>/dev/null | grep -c __clang__),0)
+WARNINGS += -Wlogical-op -Wjump-misses-init
 endif
 
-# Directories
-SRCDIR = src
-INCDIR = include
-BUILDDIR = build
-OBJDIR = $(BUILDDIR)/$(BUILD_TYPE)/obj
-PROTOCOLDIR = protocols
+PROJECT_CPPFLAGS := -Iinclude -Ilib -Iprotocols
+PROJECT_CFLAGS := -std=c2x $(WARNINGS) -fstack-protector-strong
 
-# Source files (including embedded assets which are now committed)
-SOURCES = $(shell find $(SRCDIR) -name "*.c")
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+ifeq ($(BUILD_TYPE),debug)
+TYPE_CFLAGS := -g3 -O0 -fsanitize=address,undefined
+TYPE_LDFLAGS := -fsanitize=address,undefined
+TEST_TYPE_CFLAGS := $(TYPE_CFLAGS)
+TEST_TYPE_LDFLAGS := $(TYPE_LDFLAGS)
+else ifeq ($(BUILD_TYPE),release)
+TYPE_CFLAGS := -O3 -flto -fPIE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -DNDEBUG
+TYPE_LDFLAGS := -flto -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
+TEST_TYPE_CFLAGS := -g -O0
+else
+$(error BUILD_TYPE must be release or debug)
+endif
 
-# Embedded assets (now committed to git, use embed_assets.sh manually when assets change)
-EMBED_SCRIPT = scripts/embed_assets.sh
-EMBEDDED_ASSETS_H = $(INCDIR)/graphics/embedded_assets.h
-EMBEDDED_ASSETS_C = $(SRCDIR)/graphics/embedded_assets.c
+ALL_CPPFLAGS = $(PROJECT_CPPFLAGS) $(CPPFLAGS)
+ALL_CFLAGS = $(PROJECT_CFLAGS) $(TYPE_CFLAGS) $(CFLAGS)
+LDLIBS := -lwayland-client -lm
 
-# Protocol files
-C_PROTOCOL_SRC = $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c $(PROTOCOLDIR)/xdg-shell-protocol.c $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-protocol.c $(PROTOCOLDIR)/xdg-output-unstable-v1-protocol.c $(PROTOCOLDIR)/fractional-scale-v1-protocol.c $(PROTOCOLDIR)/viewporter-protocol.c
-H_PROTOCOL_HDR = $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-client-protocol.h $(PROTOCOLDIR)/xdg-output-unstable-v1-client-protocol.h $(PROTOCOLDIR)/fractional-scale-v1-client-protocol.h $(PROTOCOLDIR)/viewporter-client-protocol.h
-PROTOCOL_OBJECTS = $(C_PROTOCOL_SRC:$(PROTOCOLDIR)/%.c=$(OBJDIR)/%.o)
+SOURCES := $(wildcard src/*/*.c)
+HEADERS := $(wildcard include/*/*.h)
+PROTOCOL_SOURCES := $(wildcard protocols/*.c)
+ASSETS := $(wildcard assets/svg/*.svg)
+OBJECTS := $(SOURCES:src/%.c=$(OUT)/obj/%.o) $(OUT)/obj/graphics/assets.o \
+	$(PROTOCOL_SOURCES:protocols/%.c=$(OUT)/obj/protocols/%.o)
 
-# Target executable
-TARGET = $(BUILDDIR)/bongocat
-BUILD_TARGET = $(BUILDDIR)/$(BUILD_TYPE)/bongocat
-DEPS = $(OBJECTS:.o=.d) $(PROTOCOL_OBJECTS:.o=.d)
--include $(DEPS)
+.DEFAULT_GOAL := all
+.PHONY: all debug release test test-sanitize test-runtime install uninstall \
+	clean protocols format format-check lint
 
-.PHONY: all clean distclean protocols embed-assets format format-check lint
-
+# build/bongocat always points at the most recently built variant.
 all: $(TARGET)
+	@ln -sfn $(BUILD_TYPE)/bongocat $(BUILDDIR)/bongocat
 
-# Generate embedded assets (manual target - run when assets change)
-embed-assets: 
-	./$(EMBED_SCRIPT)
+debug release:
+	$(MAKE) BUILD_TYPE=$@ all
 
-# Create build directories
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
-	mkdir -p $(OBJDIR)/core
-	mkdir -p $(OBJDIR)/graphics
-	mkdir -p $(OBJDIR)/platform
-	mkdir -p $(OBJDIR)/config
-	mkdir -p $(OBJDIR)/utils
-	mkdir -p $(BUILDDIR)
+$(TARGET): $(OBJECTS)
+	$(CC) $(ALL_CFLAGS) $(TYPE_LDFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-# Compile source files (protocol headers are committed to git)
-$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+$(OUT)/obj/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -MMD -MP -c $< -o $@
 
-# Compile protocol files
-$(OBJDIR)/%.o: $(PROTOCOLDIR)/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+$(OUT)/obj/protocols/%.o: protocols/%.c
+	@mkdir -p $(@D)
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD_TARGET): $(OBJECTS) $(PROTOCOL_OBJECTS)
-	$(CC) $(OBJECTS) $(PROTOCOL_OBJECTS) -o $@ $(LDFLAGS)
+# The artwork is embedded with .incbin, relative to the repository root.
+$(OUT)/obj/graphics/assets.o: src/graphics/assets.S $(ASSETS)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-.PHONY: $(TARGET)
-$(TARGET): $(BUILD_TARGET)
-	ln -sfn $(BUILD_TYPE)/bongocat $@
+-include $(OBJECTS:.o=.d)
 
-# Regenerate Wayland protocol bindings from XML sources (requires wayland-scanner).
-# The generated files are committed to git, so this target only needs to be run
-# manually when the protocol XML sources are updated.
-protocols:
-	@command -v wayland-scanner >/dev/null 2>&1 || { \
-		echo "ERROR: wayland-scanner not found."; \
-		echo "Install it with your package manager (e.g. 'pacman -S wayland', 'apt install libwayland-bin')."; \
-		exit 1; \
-	}
-	wayland-scanner private-code $(PROTOCOLDIR)/xdg-shell.xml $(PROTOCOLDIR)/xdg-shell-protocol.c
-	wayland-scanner private-code $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-protocol.c
-	wayland-scanner client-header $(PROTOCOLDIR)/wlr-layer-shell-unstable-v1.xml $(PROTOCOLDIR)/zwlr-layer-shell-v1-client-protocol.h
-	wayland-scanner private-code $(PROTOCOLDIR)/wlr-foreign-toplevel-management-unstable-v1.xml $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-protocol.c
-	wayland-scanner client-header $(PROTOCOLDIR)/wlr-foreign-toplevel-management-unstable-v1.xml $(PROTOCOLDIR)/wlr-foreign-toplevel-management-v1-client-protocol.h
-	wayland-scanner client-header $(PROTOCOLDIR)/xdg-output-unstable-v1.xml $(PROTOCOLDIR)/xdg-output-unstable-v1-client-protocol.h
-	wayland-scanner private-code $(PROTOCOLDIR)/xdg-output-unstable-v1.xml $(PROTOCOLDIR)/xdg-output-unstable-v1-protocol.c
-	wayland-scanner client-header $(PROTOCOLDIR)/fractional-scale-v1.xml $(PROTOCOLDIR)/fractional-scale-v1-client-protocol.h
-	wayland-scanner private-code $(PROTOCOLDIR)/fractional-scale-v1.xml $(PROTOCOLDIR)/fractional-scale-v1-protocol.c
-	wayland-scanner client-header $(PROTOCOLDIR)/viewporter.xml $(PROTOCOLDIR)/viewporter-client-protocol.h
-	wayland-scanner private-code $(PROTOCOLDIR)/viewporter.xml $(PROTOCOLDIR)/viewporter-protocol.c
+# =============================================================================
+# TESTS
+# =============================================================================
+
+TESTS := animation config control fullscreen input nanosvg paw_frame scale
+TEST_BINARIES := $(TESTS:%=$(OUT)/tests/test_%)
+TEST_CFLAGS = $(PROJECT_CFLAGS) $(TEST_TYPE_CFLAGS) $(CFLAGS)
+
+# Extra sources and libraries per test. Tests of static functions include
+# the implementation instead.
+test_animation_SOURCES := src/graphics/animation.c src/graphics/assets.S \
+	src/utils/error.c
+test_config_SOURCES := src/config/config.c src/utils/error.c
+test_control_SOURCES := src/core/control.c src/config/config_watcher.c
+test_fullscreen_SOURCES := \
+	protocols/wlr-foreign-toplevel-management-v1-protocol.c src/utils/error.c
+test_fullscreen_LIBS := -lwayland-client \
+	-Wl,--wrap=wl_proxy_get_version,--wrap=wl_proxy_marshal_flags
+test_input_SOURCES := src/utils/error.c
+test_input_LIBS := -Wl,--wrap=ioctl,--wrap=stat
+
+.SECONDEXPANSION:
+$(OUT)/tests/test_%: tests/test_%.c $$(test_$$*_SOURCES) $(SOURCES) \
+		$(HEADERS) $(ASSETS) tests/test_helpers.h
+	@mkdir -p $(@D)
+	$(CC) $(ALL_CPPFLAGS) -Itests $(TEST_CFLAGS) $< $(test_$*_SOURCES) \
+		-o $@ $(TEST_TYPE_LDFLAGS) $(LDFLAGS) $(test_$*_LIBS) -lm
+
+test: $(TEST_BINARIES)
+	@failed=0; for test in $^; do \
+		echo "--- $${test##*/}"; $$test || failed=$$((failed + 1)); \
+	done; \
+	[ $$failed -eq 0 ] || { echo "$$failed test(s) failed"; exit 1; }; \
+	echo "All tests passed."
+
+test-sanitize:
+	$(MAKE) BUILD_TYPE=debug test
+
+# Isolated compositor-fixture tests; need wayland-server and wayland-scanner.
+FIXTURE := $(BUILDDIR)/compositor/server
+FIXTURE_PROTOCOLS := wlr-layer-shell-unstable-v1 viewporter \
+	fractional-scale-v1 wlr-foreign-toplevel-management-unstable-v1
+
+$(BUILDDIR)/compositor/%-server.h: protocols/%.xml
+	@mkdir -p $(@D)
+	wayland-scanner server-header $< $@
+
+$(FIXTURE): tests/test_compositor.c $(PROTOCOL_SOURCES) \
+		$(FIXTURE_PROTOCOLS:%=$(BUILDDIR)/compositor/%-server.h)
+	$(CC) -std=c2x -g -Wall -Wextra -I$(BUILDDIR)/compositor $< \
+		$(PROTOCOL_SOURCES) -o $@ -lwayland-server
+
+test-runtime: all $(FIXTURE)
+	python3 scripts/test_runtime.py
+	python3 scripts/test_focus.py
+
+# =============================================================================
+# MAINTENANCE
+# =============================================================================
+
+install: all
+	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/bongocat
+	install -Dm644 man/bongocat.1 $(DESTDIR)$(PREFIX)/share/man/man1/bongocat.1
+	install -Dm644 bongocat.conf.example \
+		$(DESTDIR)$(PREFIX)/share/bongocat/bongocat.conf.example
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/bongocat
+	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/bongocat.1
+	rm -rf $(DESTDIR)$(PREFIX)/share/bongocat
 
 clean:
 	rm -rf $(BUILDDIR)
 
-# Full clean including generated protocol files (requires wayland-scanner to rebuild)
-distclean: clean
-	rm -f $(C_PROTOCOL_SRC) $(H_PROTOCOL_HDR)
+# Generated bindings are committed; run after changing protocols/*.xml.
+protocols:
+	for xml in protocols/*.xml; do \
+		name=$$(basename $$xml .xml); \
+		case $$name in \
+		wlr-layer-shell-unstable-v1) name=zwlr-layer-shell-v1 ;; \
+		wlr-foreign-toplevel-management-unstable-v1) \
+			name=wlr-foreign-toplevel-management-v1 ;; \
+		esac; \
+		wayland-scanner private-code $$xml protocols/$$name-protocol.c; \
+		[ $$name = xdg-shell ] || \
+			wayland-scanner client-header $$xml \
+				protocols/$$name-client-protocol.h; \
+	done
 
-# Development targets
-debug:
-	$(MAKE) BUILD_TYPE=debug
+FORMAT_FILES := $(SOURCES) $(HEADERS) $(wildcard tests/*.c tests/*.h)
 
-release:
-	$(MAKE) BUILD_TYPE=release
-
-install: $(TARGET)
-	install -D $(TARGET) $(DESTDIR)/usr/local/bin/bongocat
-	install -D bongocat.conf.example $(DESTDIR)/usr/local/share/bongocat/bongocat.conf.example
-	install -D scripts/find_input_devices.sh $(DESTDIR)/usr/local/bin/bongocat-find-devices
-	install -D man/bongocat.1 $(DESTDIR)/usr/local/share/man/man1/bongocat.1
-
-uninstall:
-	rm -f $(DESTDIR)/usr/local/bin/bongocat
-	rm -f $(DESTDIR)/usr/local/bin/bongocat-find-devices
-	rm -rf $(DESTDIR)/usr/local/share/bongocat
-
-# Memory check (requires valgrind)
-memcheck: debug
-	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(TARGET)
-
-# Release with -march=native (local builds only, not for distribution)
-release-local:
-	$(MAKE) BUILD_TYPE=release RELEASE_CFLAGS="$(RELEASE_CFLAGS) -march=native"
-
-# ThreadSanitizer build for detecting data races
-tsan:
-	$(MAKE) BUILD_TYPE=debug DEBUG_CFLAGS="$(BASE_CFLAGS) -g3 -O1 -DDEBUG -fsanitize=thread" DEBUG_LDFLAGS="-fsanitize=thread"
-
-# Performance profiling
-profile: release
-	perf record -g ./$(TARGET)
-	perf report
-
-.PHONY: debug release release-local tsan install uninstall analyze memcheck profile format format-check lint test
-
-# =============================================================================
-# CODE QUALITY TARGETS
-# =============================================================================
-
-# Find all project source files (exclude lib/ and protocols/)
-PROJECT_SOURCES = $(shell find $(SRCDIR) -name '*.c' ! -path '*/embedded_assets.c')
-PROJECT_HEADERS = $(shell find $(INCDIR) -name '*.h')
-ALL_PROJECT_FILES = $(PROJECT_SOURCES) $(PROJECT_HEADERS) $(wildcard tests/*.c tests/*.h)
-
-# Format all project source files
 format:
-	@echo "Formatting source files..."
-	@clang-format -i $(ALL_PROJECT_FILES)
-	@echo "Done! Formatted $(words $(ALL_PROJECT_FILES)) files."
+	clang-format -i $(FORMAT_FILES)
 
-# Check if formatting is correct (for CI)
 format-check:
-	@echo "Checking code formatting..."
-	@clang-format --dry-run --Werror $(ALL_PROJECT_FILES)
-	@echo "All files are properly formatted."
+	clang-format --dry-run --Werror $(FORMAT_FILES)
 
-# Static analysis with clang-tidy (uses .clang-tidy config)
 lint:
-	@echo "Running static analysis..."
-	@clang-tidy $(PROJECT_SOURCES) -- $(CFLAGS)
-	@echo "Static analysis complete."
-
-# Alias for lint
-analyze: lint
-
-# Generate compile_commands.json for IDE support (requires bear)
-# Run: make compiledb
-compiledb: clean
-	@echo "Generating compile_commands.json..."
-	@bear -- $(MAKE) all 2>/dev/null || (echo "Note: 'bear' not installed. Install with: sudo pacman -S bear" && false)
-	@echo "compile_commands.json generated!"
-
-# =============================================================================
-# TEST TARGETS
-# =============================================================================
-
-TESTDIR = tests
-TEST_CFLAGS = $(BASE_CFLAGS) -g3 -O0 -DDEBUG -DTEST_BUILD
-TEST_LDFLAGS = -lm -lpthread
-
-# Source files needed by test_config
-CONFIG_TEST_DEPS = src/config/config.c src/utils/error.c
-
-$(BUILDDIR)/test_config: $(TESTDIR)/test_config.c $(CONFIG_TEST_DEPS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_paw_frame: $(TESTDIR)/test_paw_frame.c | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_scale: $(TESTDIR)/test_scale.c | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_fullscreen_state: $(TESTDIR)/test_fullscreen_state.c | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_runtime: $(TESTDIR)/test_runtime.c src/core/control.c src/config/config_watcher.c $(CONFIG_TEST_DEPS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-TEST_BINARIES = $(BUILDDIR)/test_input_disconnect $(BUILDDIR)/test_nanosvg $(BUILDDIR)/test_input $(BUILDDIR)/test_animation $(BUILDDIR)/test_hyprland $(BUILDDIR)/test_runtime $(BUILDDIR)/test_config $(BUILDDIR)/test_paw_frame $(BUILDDIR)/test_scale $(BUILDDIR)/test_fullscreen_state
-
-$(BUILDDIR)/test_input_disconnect: tests/test_input_disconnect.c src/platform/input.c src/utils/error.c | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) tests/test_input_disconnect.c src/utils/error.c -o $@ $(TEST_LDFLAGS)
-
-$(TEST_BINARIES): $(PROJECT_HEADERS) tests/test_helpers.h
-
-test: $(TEST_BINARIES)
-	@echo "Running tests..."
-	@failures=0; \
-	for t in $(TEST_BINARIES); do \
-		echo "--- $$(basename $$t) ---"; \
-		$$t || failures=$$((failures + 1)); \
-	done; \
-	if [ $$failures -gt 0 ]; then \
-		echo "$$failures test suite(s) failed"; \
-		exit 1; \
-	fi; \
-	echo "All tests passed."
-
-.PHONY: compiledb test test-sanitize
-
-test-sanitize:
-	$(MAKE) clean
-	$(MAKE) TEST_CFLAGS="$(TEST_CFLAGS) -fsanitize=address,undefined" TEST_LDFLAGS="$(TEST_LDFLAGS) -fsanitize=address,undefined" test
-
-# Optional protocol fixture; wayland-server is a test-only dependency.
-.PHONY: compositor-test-build
-compositor-test-build:
-	mkdir -p $(BUILDDIR)/compositor
-	wayland-scanner server-header protocols/wlr-layer-shell-unstable-v1.xml $(BUILDDIR)/compositor/layer-server.h
-	wayland-scanner server-header protocols/viewporter.xml $(BUILDDIR)/compositor/viewport-server.h
-	wayland-scanner server-header protocols/fractional-scale-v1.xml $(BUILDDIR)/compositor/scale-server.h
-	wayland-scanner server-header protocols/wlr-foreign-toplevel-management-unstable-v1.xml $(BUILDDIR)/compositor/fullscreen-server.h
-	$(CC) -std=c2x -g -Wall -Wextra -I$(BUILDDIR)/compositor tests/test_compositor.c protocols/zwlr-layer-shell-v1-protocol.c protocols/xdg-shell-protocol.c protocols/viewporter-protocol.c protocols/fractional-scale-v1-protocol.c protocols/wlr-foreign-toplevel-management-v1-protocol.c -o $(BUILDDIR)/compositor/server -lwayland-server
-
-$(BUILDDIR)/test_animation: tests/test_animation.c src/graphics/animation.c src/graphics/embedded_assets.c src/utils/error.c $(PROJECT_HEADERS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-$(BUILDDIR)/test_hyprland: tests/test_hyprland.c src/platform/hyprland.c src/utils/error.c $(PROJECT_HEADERS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS)
-
-.PHONY: test-runtime
-test-runtime: all compositor-test-build
-	python3 scripts/test_runtime.py
-
-$(BUILDDIR)/test_input: tests/test_input.c src/platform/input.c src/utils/error.c $(PROJECT_HEADERS) | $(OBJDIR)
-	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) -o $@ $(TEST_LDFLAGS) -Wl,--wrap=ioctl,--wrap=stat
-
-$(BUILDDIR)/test_nanosvg: tests/test_nanosvg.c lib/nanosvg.h lib/nanosvgrast.h tests/test_helpers.h | $(OBJDIR)
-	$(CC) -std=c2x -Ilib -Itests $(filter -fsanitize=%,$(TEST_CFLAGS)) $< -o $@ $(TEST_LDFLAGS)
+	clang-tidy --quiet $(SOURCES) -- -std=c2x $(PROJECT_CPPFLAGS)

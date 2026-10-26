@@ -1,66 +1,49 @@
 #ifndef INPUT_H
 #define INPUT_H
 
-#include "core/bongocat.h"
+#include "config/config.h"
 #include "utils/error.h"
 
-#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 // =============================================================================
-// INPUT STATE
+// RENDERER SIDE
 // =============================================================================
+//
+// Keyboards are read by a helper process (`bongocat --input-helper`) that
+// reports only paw bits, timestamps and device counts over a socket. The
+// socket reaches end-of-file when the helper exits.
 
-// Renderer-local paw bits received from the private helper socket.
-extern atomic_uint *pending_paws;
-
-// =============================================================================
-// INPUT MONITORING FUNCTIONS
-// =============================================================================
-
-// Start input monitoring with hotplug support - must be checked
-BONGOCAT_NODISCARD bongocat_error_t
-input_start_monitoring(char **paths, int num_paths, char **names, int num_names,
-                       int interval, int debug);
-
-// Restart input monitoring with new devices - must be checked
-BONGOCAT_NODISCARD bongocat_error_t
-input_restart_monitoring(char **paths, int num_paths, char **names,
-                         int num_names, int interval, int debug);
-
-int input_helper_main(int argc, char **argv);
-int input_list_devices(void);
-bool input_device_is_keyboard(int fd);
-bool input_device_selected(int fd, dev_t identity, char **paths, int num_paths,
-                           char **names, int num_names);
-void input_process_events(void);
+[[nodiscard]] bongocat_error_t input_start(const config_t *config);
+// Kills and reaps the helper.
+void input_stop(void);
+bool input_running(void);
+// Socket to poll for helper messages; -1 while no helper runs.
+int input_fd(void);
+// Drains helper messages and returns the PAW_* bits pressed since the last
+// call. *time receives the newest press time (monotonic microseconds) when
+// any paw was pressed. Reaps the helper when it has exited.
+unsigned input_read(int64_t *time);
 uint32_t input_device_count(void);
-int64_t input_timestamp(void);
 
-// Cleanup input monitoring resources
-void input_cleanup(void);
+// Prints every evdev device and suggested settings for keyboards.
+int input_list_devices(void);
 
-// Privilege handling for setgid installs, where the binary is setgid to a
-// group that may read the keyboard devices (instead of adding the user to the
-// `input` group). Both are no-ops when the binary is not setgid.
+// Entry point of the helper process.
+int input_helper_main(int argc, char **argv);
+
+// =============================================================================
+// SETGID PRIVILEGES
+// =============================================================================
 //
-// input_privilege_init() must be the first call in main(): it stops using the
-// group (effective gid -> real gid) but keeps it in the saved set, so config
-// parsing, Wayland setup and rendering run unprivileged. Rendering calls
-// input_privilege_drop() before parsing; the executed helper raises its
-// installed group only during device discovery/opening.
-//
-// input_privilege_drop() gives the group up irrevocably (real, effective and
-// saved gid), and exits if that fails rather than run on with it.
+// For installs where the binary is setgid to a group that may read keyboards.
+// No-ops otherwise. input_privilege_init() must be the first call in main():
+// it stops using the group but keeps it in the saved set. The renderer calls
+// input_privilege_drop() before touching configuration, which gives the group
+// up irrevocably (or exits). Only the helper and device listing raise it,
+// and only while opening devices.
 void input_privilege_init(void);
 void input_privilege_drop(void);
-
-// Get child PID (async-signal-safe accessor for crash handler)
-pid_t input_get_child_pid(void);
-
-// Reap child if it exited; true while monitoring process is alive.
-bool input_child_is_alive(void);
-
-// Get the helper socket for event-loop polling (-1 if unavailable)
-int input_get_wake_fd(void);
 
 #endif  // INPUT_H

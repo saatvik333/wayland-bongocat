@@ -1,122 +1,88 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# BONGO CAT CONFIG - Default Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
-# Save this file to: ~/.config/bongocat/bongocat.conf
-# Run with: bongocat --watch-config
-# ═══════════════════════════════════════════════════════════════════════════════
+# Bongo Cat configuration
+#
+# Save as ~/.config/bongocat/bongocat.conf and run `bongocat --watch-config`.
+# Every setting is optional; the values below are the defaults.
+# Check this file with `bongocat --check-config`.
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ APPEARANCE                                                                  │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Cat ----------------------------------------------------------------------
 
-# Cat size and position
-cat_height=110
+# Height in pixels, 10-200.
+cat_height=40
+# left, center or right; the offsets move the cat from there. y is measured
+# from the bar's vertical center.
 cat_align=center
-cat_x_offset=0
-cat_y_offset=0
-
-# Deprecated: no-op with SVG rendering (antialiasing is always enabled)
-# enable_antialiasing=1
-
-# Flip the cat
+cat_x_offset=100
+cat_y_offset=10
+# Flip horizontally or vertically.
 mirror_x=0
 mirror_y=0
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ OVERLAY BAR                                                                 │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Bar ----------------------------------------------------------------------
 
-# Bar dimensions
-overlay_height=120
-
-# Background: 0=transparent, 255=opaque
-overlay_opacity=0
-
-# Position: top, bottom
-overlay_position=bottom
-
-# Layer: background, bottom, top, or overlay (always visible)
+# Height in pixels, 20-300.
+overlay_height=50
+# Background opacity, 0 (transparent) to 255.
+overlay_opacity=150
+# top or bottom.
+overlay_position=top
+# background, bottom, top or overlay. overlay stays above fullscreen windows.
 layer=top
+# 1 keeps the cat visible over fullscreen windows on its monitor.
+disable_fullscreen_hide=0
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ INPUT DEVICES                                                               │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Monitors -----------------------------------------------------------------
 
-# Find your device with: bongocat-find-devices
-# Add multiple lines for multiple keyboards
-# Leave selectors unset to select accessible keyboard-capable devices.
-# keyboard_device=/dev/input/by-id/YOUR-KEYBOARD-event-kbd
-
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ MULTI-MONITOR (optional)                                                    │
-# └─────────────────────────────────────────────────────────────────────────────┘
-
-# Leave commented to auto-detect
-# Find monitor names with: wlr-randr or hyprctl monitors
-# monitor=eDP-1
+# Without monitor=, one cat follows the focused monitor; 0 keeps it on the
+# first monitor instead.
+follow_active_monitor=1
+# Comma-separated monitors to show a cat on. See `bongocat --list-monitors`.
 # monitor=eDP-1,HDMI-A-1
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ ANIMATION                                                                   │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Keyboards ----------------------------------------------------------------
 
+# Every keyboard is read unless devices are selected below. Both settings can
+# be repeated. `bongocat --list-devices` prints lines to paste.
+# keyboard_device=/dev/input/by-id/usb-Vendor_Keyboard-event-kbd
+# keyboard_name=AT Translated Set 2 keyboard
+
+# --- Animation ----------------------------------------------------------------
+
+# Maximum frame changes per second, 1-120.
 fps=60
-idle_frame=0
+# Milliseconds a paw stays down after a key press, 10-5000.
 keypress_duration=100
-
-# Hand mapping: 0=random hands, 1=left keys→left hand, right keys→right hand
+# 1: keys on the left half of the keyboard play the left paw.
+# 0: each key press plays a random paw.
 enable_hand_mapping=1
+# Frame shown while idle: 0 both paws up, 1 left down, 2 right down,
+# 3 both down, 4 sleeping.
+idle_frame=0
+# Tap a random paw every N seconds without input (0 disables), holding it for
+# test_animation_duration milliseconds.
+test_animation_interval=0
+test_animation_duration=200
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ SLEEP MODE (optional)                                                       │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Sleep --------------------------------------------------------------------
 
-# Hide after N seconds of no keyboard activity (0=disabled)
-# When triggered, displays a dedicated sleeping animation frame
+# Show the sleeping cat after N seconds without input, 0-3600 (0 disables).
 idle_sleep_timeout=0
-
-# Scheduled sleep (requires enable_scheduled_sleep=1)
+# Sleep daily from sleep_begin to sleep_end (HH:MM, may cross midnight; both
+# default to 00:00). Key presses are ignored while asleep.
 enable_scheduled_sleep=0
-sleep_begin=22:00
-sleep_end=06:00
+# sleep_begin=22:00
+# sleep_end=06:00
 
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ FULLSCREEN                                                                  │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# --- Debug --------------------------------------------------------------------
 
-# Keep overlay visible even when a fullscreen window is detected (0=hide, 1=show)
-# disable_fullscreen_hide=0
-
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ HOTPLUG                                                                     │
-# └─────────────────────────────────────────────────────────────────────────────┘
-
-# How often to rescan for new input devices, in seconds (0=scan once at startup)
-# hotplug_scan_interval=30
-
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ TEST ANIMATION                                                              │
-# └─────────────────────────────────────────────────────────────────────────────┘
-
-# Duration of each test animation frame in milliseconds
-# test_animation_duration=200
-# Interval between test animation cycles in seconds (0=disabled)
-# test_animation_interval=0
-
-# ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ DEBUG                                                                       │
-# └─────────────────────────────────────────────────────────────────────────────┘
-#
-# Debug mode reports runtime activity; keycodes are never logged.
-#
-# Enable debug logging (0=disabled, 1=enabled)
+# Log runtime activity. Key presses are never logged.
 enable_debug=0
 
-# Per-monitor appearance (input and timing remain global).
-# Sections do not select monitors; set monitor=NAME1,NAME2 above.
+# --- Per-monitor appearance ---------------------------------------------------
+
+# Sections override the Cat and Bar settings above for one monitor; they do
+# not select monitors. [global] returns to global settings.
 # [monitor:HDMI-A-1]
 # cat_height=60
 # cat_align=right
 # mirror_x=1
-# disable_fullscreen_hide=1
 # [global]

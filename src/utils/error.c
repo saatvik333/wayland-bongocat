@@ -2,82 +2,48 @@
 #include "utils/error.h"
 
 #include <stdarg.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <time.h>
 
-// Clang's analyzer does not yet model __builtin_c23_va_start. The legacy
-// GCC/Clang builtin has the same contract for our named variadic functions.
-#ifdef __GNUC__
-#  define BONGOCAT_VA_START(args, last) __builtin_va_start(args, last)
-#else
-#  define BONGOCAT_VA_START(args, last) va_start(args, last)
-#endif
+static bool debug_enabled;
 
-static atomic_int debug_enabled = 1;
-
-void bongocat_error_init(int enable_debug) {
-  atomic_store(&debug_enabled, enable_debug);
+void bongocat_log_set_debug(bool enabled) {
+  debug_enabled = enabled;
 }
 
-static void log_timestamp(FILE *stream) {
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  time_t sec = ts.tv_sec;
-  struct tm tm_info = {0};
-  char time_str[32];
-  localtime_r(&sec, &tm_info);
-  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &tm_info);
-  fprintf(stream, "[%s.%03ld] ", time_str, ts.tv_nsec / 1000000L);
+static void write_line(FILE *stream, const char *level, const char *message) {
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME, &now);
+  struct tm local = {0};
+  localtime_r(&now.tv_sec, &local);
+  char stamp[32];
+  strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &local);
+  fprintf(stream, "[%s.%03ld] %s: %s\n", stamp, now.tv_nsec / 1000000L, level,
+          message);
+  fflush(stream);
 }
 
-void bongocat_log_error(const char *format, ...) {
-  va_list args;
-  char message[1024];
-  BONGOCAT_VA_START(args, format);
-  vsnprintf(message, sizeof(message), format, args);
-  va_end(args);
-  log_timestamp(stderr);
-  fprintf(stderr, "ERROR: %s\n", message);
-  fflush(stderr);
-}
-
-void bongocat_log_warning(const char *format, ...) {
-  va_list args;
-  char message[1024];
-  BONGOCAT_VA_START(args, format);
-  vsnprintf(message, sizeof(message), format, args);
-  va_end(args);
-  log_timestamp(stderr);
-  fprintf(stderr, "WARNING: %s\n", message);
-  fflush(stderr);
-}
-
-void bongocat_log_info(const char *format, ...) {
-  va_list args;
-  char message[1024];
-  BONGOCAT_VA_START(args, format);
-  vsnprintf(message, sizeof(message), format, args);
-  va_end(args);
-  log_timestamp(stdout);
-  fprintf(stdout, "INFO: %s\n", message);
-  fflush(stdout);
-}
-
-void bongocat_log_debug(const char *format, ...) {
-  if (!atomic_load(&debug_enabled)) {
-    return;
+// Formatting stays inside each variadic function: static analyzers lose
+// va_list initialization across calls. Clang's analyzer also does not model
+// __builtin_c23_va_start, which C23 va_start expands to; the legacy builtin
+// has the same contract here.
+#define LOG_FUNCTION(name, stream, level, condition)   \
+  void name(const char *format, ...) {                 \
+    if (!(condition)) {                                \
+      return;                                          \
+    }                                                  \
+    char message[1024];                                \
+    va_list args;                                      \
+    __builtin_va_start(args, format);                  \
+    vsnprintf(message, sizeof(message), format, args); \
+    va_end(args);                                      \
+    write_line(stream, level, message);                \
   }
 
-  va_list args;
-  char message[1024];
-  BONGOCAT_VA_START(args, format);
-  vsnprintf(message, sizeof(message), format, args);
-  va_end(args);
-  log_timestamp(stdout);
-  fprintf(stdout, "DEBUG: %s\n", message);
-  fflush(stdout);
-}
+LOG_FUNCTION(bongocat_log_error, stderr, "ERROR", true)
+LOG_FUNCTION(bongocat_log_warning, stderr, "WARNING", true)
+LOG_FUNCTION(bongocat_log_info, stdout, "INFO", true)
+LOG_FUNCTION(bongocat_log_debug, stdout, "DEBUG", debug_enabled)
 
 const char *bongocat_error_string(bongocat_error_t error) {
   switch (error) {
@@ -93,13 +59,6 @@ const char *bongocat_error_string(bongocat_error_t error) {
     return "Configuration error";
   case BONGOCAT_ERROR_INPUT:
     return "Input error";
-  case BONGOCAT_ERROR_ANIMATION:
-    return "Animation error";
-  case BONGOCAT_ERROR_THREAD:
-    return "Thread error";
-  case BONGOCAT_ERROR_INVALID_PARAM:
-    return "Invalid parameter";
-  default:
-    return "Unknown error";
   }
+  return "Unknown error";
 }

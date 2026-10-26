@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [2.1.1] - 2026-10-26
+
+### Added
+
+- **Follow the focused monitor** - Without `monitor=`, the cat moves to the
+  monitor of the focused window (`follow_active_monitor=1`, the new default).
+  On Niri it also follows focus to monitors showing an empty workspace.
+- **Instant keyboard hotplug** - The input helper watches `/dev/input` and
+  attaches keyboards as soon as they appear, instead of rescanning on a timer.
+- `--list-devices` prints `keyboard_name=` and `keyboard_device=` lines for
+  each keyboard, replacing the `bongocat-find-devices` script.
+
+### Fixed
+
+- **Fullscreen on multiple monitors** - A fullscreen window keeps its monitor
+  covered while focus is on another monitor, and focusing an empty workspace
+  uncovers it.
+- **Configuration** - Files with Windows line endings load; keys below a
+  mistyped section header no longer change the previous section; per-monitor
+  settings no longer repeat warnings at runtime; a value containing `#` is
+  kept unless the `#` follows whitespace.
+- `--check-config` and `--doctor` report missing configuration files as using
+  defaults instead of invalid, and `--list-devices` works on setgid installs.
+- A second instance reports that bongocat is already running, and `--toggle`
+  waits for a stopping instance instead of failing.
+- An output whose overlay the compositor closes or cannot allocate no longer
+  stops the program or recreates surfaces in a loop.
+- With `enable_hand_mapping=0`, every monitor shows the same random paw.
+
+### Changed
+
+- **Lower idle cost** - The renderer only handles the source that woke it,
+  redraws only the cat's area, stops drawing while hidden, and wakes for
+  scheduled sleep only at its start and end. The helper has no timers.
+- The Hyprland `hyprctl` fallback is removed; fullscreen detection uses
+  wlr-foreign-toplevel-management, which Hyprland supports.
+- `enable_antialiasing` and `hotplug_scan_interval` are obsolete and ignored
+  with a warning. The undocumented `keyboard_devices` alias is removed.
+- The build honors `CC`, `CFLAGS`, `LDFLAGS` and `PREFIX`; `make install` no
+  longer installs `bongocat-find-devices`. The `memcheck`, `tsan`, `profile`,
+  `release-local` and `embed-assets` targets are removed; artwork is embedded
+  straight from `assets/svg/`.
+- Nix options default to the program's defaults, add `followActiveMonitor`,
+  and remove `enableAntialiasing` and `hotplugScanInterval`.
+
 ## [2.1.0] - 2026-10-17
 
 ### Fixed

@@ -18,8 +18,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc make libwayland-dev wayland-protocols \
-            clang-format clang-tidy clang-tools shellcheck
+          sudo apt-get install -y gcc make libwayland-dev libwayland-bin \
+            wayland-protocols python3 clang-format clang-tidy clang-tools shellcheck
 
       - name: Check formatting
         run: make format-check
@@ -30,8 +30,11 @@ jobs:
       - name: Build debug (ASan + UBSan)
         run: make clean && make debug
 
-      - name: Run tests
+      - name: Run unit tests (ASan + UBSan)
         run: make test-sanitize
+
+      - name: Run runtime tests
+        run: make test-runtime
 
       - name: Run clang-tidy
         run: make lint

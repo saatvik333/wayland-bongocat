@@ -1,44 +1,30 @@
 {pkgs ? import <nixpkgs> {}}:
 pkgs.mkShellNoCC {
   nativeBuildInputs = with pkgs; [
-    # Build dependencies
-    # Core
-    pkg-config # Finds build dependencies
-    gcc # C/C++ compiler and also for `make`
+    gcc # Compiler (make is provided by the shell's stdenv)
+    wayland-scanner # make protocols, make test-runtime
+    python3 # make test-runtime
+    clang-tools # clang-format, clang-tidy (make format-check, make lint)
+    gdb
 
-    # Wayland
-    wayland-scanner
-
-    # Devtools
-    gdb # Debugger
-    valgrind # Memory debugger
-    clang-tools # Useful tools for C/C++ including a formatter `clang-format`
-
-    # Optional tools for input device debugging
-    evtest
+    # Input device debugging
     udev
+    evtest
   ];
   buildInputs = with pkgs; [
-    wayland
+    wayland # libwayland-client; libwayland-server for make test-runtime
     wayland-protocols
   ];
   shellHook = ''
-    # Simple TUI
-    echo "🐱 Bongo Cat Development Environment"
-    echo "Build output is stored in 'build' if you don't use 'nix build'"
-    echo "Commands:"
-    echo "  nix build         - Build the Nix package (Build output is stored in 'result')"
-    echo "  make              - Build the project"
-    echo "  make debug        - Build with debug symbols"
-    echo "  make release      - Build in release mode with optimizations and such (Longer compile time)"
-    echo "  make protocols    - Generate protocol files"
-    echo "  make embed-assets - Generate embedded assets"
-    echo "  make clean        - Clean build artifacts"
-    echo "  make memcheck     - Run with valgrind (Requires debug build)"
-    echo ""
-    echo "Helper scripts:"
-    echo "  ./scripts/find_input_devices.sh - Find input devices"
-    echo "  ./scripts/test_nix_build.sh     - Test Nix flake and package"
-    echo "  ./scripts/test_toggle.sh        - Test Bongocat toggle functionality (Install Bongocat first)"
+    echo "wayland-bongocat development shell"
+    echo "  make / make release  optimized build (build/release/bongocat)"
+    echo "  make debug           ASan + UBSan build"
+    echo "  make test            unit tests"
+    echo "  make test-sanitize   unit tests under ASan + UBSan"
+    echo "  make test-runtime    compositor fixture tests"
+    echo "  make format-check    check formatting"
+    echo "  make lint            clang-tidy"
+    echo "  nix build            build the package into ./result"
+    echo "  ./scripts/test_nix_build.sh  check the flake, package and dev shell"
   '';
 }

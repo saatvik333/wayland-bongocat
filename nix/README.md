@@ -1,31 +1,21 @@
-# Nix/NixOS Support
-## Files
-- **`NIXOS.md`** - Comprehensive installation guide for Nix/NixOS users
-- **`default.nix`** - Main package derivation
-- **`nixos-module.nix`** - NixOS system module
-- **`shell.nix`** - Development environment
-- **`scripts/test_nix_build.sh`** - Test script for validating builds
+# Nix support
 
-## Quick Usage
-Run these commands from the root directory of the project where `flake.nix` is.
+- `default.nix` - package derivation (release build, unit tests in the check phase)
+- `common.nix` - shared implementation of both modules
+- `nixos-module.nix` - NixOS module (`nixosModules.default`)
+- `home-module.nix` - Home Manager module (`homeManagerModules.default`)
+- `shell.nix` - development shell (`devShells.default`)
+
+From the repository root:
+
 ```bash
-# Enter development shell
-nix develop
-
-# Build
-nix build
-
-# Build and run
-nix run ./#default
-
-# Test all Nix builds
-./scripts/test_nix_build.sh
+nix develop                    # development shell
+nix build                      # build into ./result
+nix run .#default              # build and run
+./scripts/test_nix_build.sh    # flake check, package build, dev shell
 ```
 
-See [NIXOS.md](NIXOS.md) for further information.
-
-Input selectors default to automatic keyboard discovery. Use `monitorSettings`
-for per-output appearance overrides (snake_case configuration keys), for example
-`monitorSettings."HDMI-A-1".cat_height = 60;`. Set `monitor` to select outputs;
-override sections alone do not create overlays. See [NIXOS.md](NIXOS.md) for an
-example and diagnostic commands.
+Module settings default to `null` and are omitted from the generated config, so
+the binary's defaults apply. Input devices are detected automatically unless
+`inputDevices` or `inputDeviceNames` is set. See [NIXOS.md](NIXOS.md) for
+module usage, `followActiveMonitor` and `monitorSettings`.

@@ -1,25 +1,16 @@
 #!/usr/bin/env bash
-# Test script for Nix builds
+# Check the Nix flake, package build and development shell.
 set -euo pipefail
 
-echo "🧪 Testing Nix builds for wayland-bongocat"
-echo "=========================================="
+command -v nix >/dev/null || { echo "error: nix is required" >&2; exit 1; }
 
-command -v nix >/dev/null || { echo "❌ Nix is required"; exit 1; }
-
-# Test flake build
-echo "📦 Testing flake build..."
+echo "Checking flake..."
 nix flake check --no-build
-echo "✅ Flake check: SUCCESS"
+
+echo "Building package..."
 nix build --no-link
-echo "✅ Flake build: SUCCESS"
 
-# Test development shell
-echo ""
-echo "🔧 Testing development shell..."
+echo "Entering development shell..."
 nix develop --command true
-echo "✅ Development shell: SUCCESS"
 
-echo ""
-echo "🎉 All Nix builds completed successfully!"
-echo ""
+echo "All Nix checks passed."

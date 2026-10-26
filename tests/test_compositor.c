@@ -1,9 +1,9 @@
 // Small protocol fixture; intentionally has no renderer or input dependencies.
 #define _GNU_SOURCE
-#include "fullscreen-server.h"
-#include "layer-server.h"
-#include "scale-server.h"
-#include "viewport-server.h"
+#include "fractional-scale-v1-server.h"
+#include "viewporter-server.h"
+#include "wlr-foreign-toplevel-management-unstable-v1-server.h"
+#include "wlr-layer-shell-unstable-v1-server.h"
 
 #include <assert.h>
 #include <signal.h>
@@ -13,10 +13,15 @@
 #include <unistd.h>
 #include <wayland-server.h>
 
+// wl_display_set_default_max_buffer_size() appeared in libwayland 1.23.
+#define LARGE_BUFFERS (WAYLAND_VERSION_MAJOR > 1 || WAYLAND_VERSION_MINOR >= 23)
+
 static struct wl_display *server;
 static struct wl_event_loop *loop;
 static unsigned commits, surfaces;
 static struct wl_resource *toplevel;
+static struct wl_resource *second_toplevel, *focus_manager;
+static bool focus_test;
 static struct wl_resource *fractional_objects[32];
 struct monitor {
   struct wl_global *global;
@@ -34,7 +39,9 @@ struct test_surface {
   struct wl_event_source *release_timer;
   struct monitor *monitor;
   unsigned height;
+  int width;  // Last configured width
   bool configure_pending;
+  int64_t damage;  // Buffer pixels damaged since the last commit
 };
 static void destroy_request(struct wl_client *client,
                             struct wl_resource *resource) {
@@ -91,6 +98,10 @@ static void delay_release(struct test_surface *surface) {
 }
 static void surface_destroyed(struct wl_resource *resource) {
   struct test_surface *surface = wl_resource_get_user_data(resource);
+  if (surface->monitor) {
+    printf("destroy %s\n", surface->monitor->name);
+    fflush(stdout);
+  }
   if (surface->buffer)
     wl_list_remove(&surface->buffer_destroy.link);
   wl_event_source_remove(surface->release_timer);
@@ -121,6 +132,15 @@ static void rectangle(struct wl_client *client, struct wl_resource *resource,
   (void)width;
   (void)height;
 }
+static void damage_buffer(struct wl_client *client,
+                          struct wl_resource *resource, int32_t x, int32_t y,
+                          int32_t width, int32_t height) {
+  (void)client;
+  (void)x;
+  (void)y;
+  struct test_surface *surface = wl_resource_get_user_data(resource);
+  surface->damage += (int64_t)width * height;
+}
 static void frame(struct wl_client *client, struct wl_resource *resource,
                   uint32_t id) {
   (void)resource;
@@ -139,11 +159,13 @@ static void region_request(struct wl_client *client,
 static void commit(struct wl_client *client, struct wl_resource *resource) {
   (void)client;
   struct test_surface *surface = wl_resource_get_user_data(resource);
-  if (surface->layer && surface->configure_pending) {
+  // Like a compositor, reconfigure surfaces whose output changed size.
+  if (surface->layer && (surface->configure_pending ||
+                         surface->width != surface->monitor->width)) {
+    surface->width = surface->monitor->width;
     zwlr_layer_surface_v1_send_configure(
         surface->layer, wl_display_next_serial(server),
-        (uint32_t)surface->monitor->width,
-        surface->height ? surface->height : 50);
+        (uint32_t)surface->width, surface->height ? surface->height : 50);
     surface->configure_pending = false;
   }
   if (surface->buffer) {
@@ -159,8 +181,11 @@ static void commit(struct wl_client *client, struct wl_resource *resource) {
       visible |= pixels[i] != 0;
     wl_shm_buffer_end_access(buffer);
     printf("visible %s %d\n", surface->monitor->name, visible);
-    printf("commit %s %dx%d\n", surface->monitor->name,
-           wl_shm_buffer_get_width(buffer), wl_shm_buffer_get_height(buffer));
+    // Damage is the pixel count, compared with the buffer's in the tests.
+    printf("commit %s %dx%d damage %lld\n", surface->monitor->name,
+           wl_shm_buffer_get_width(buffer), wl_shm_buffer_get_height(buffer),
+           (long long)surface->damage);
+    surface->damage = 0;
     fflush(stdout);
     // Send release now for surface reuse, while exercising a queued event.
     // Separate client buffers remain busy until it dispatches this event.
@@ -183,7 +208,7 @@ static const struct wl_surface_interface surface_impl = {
     .commit = commit,
     .set_buffer_transform = integer_request,
     .set_buffer_scale = integer_request,
-    .damage_buffer = rectangle};
+    .damage_buffer = damage_buffer};
 static void create_surface(struct wl_client *client,
                            struct wl_resource *resource, uint32_t id) {
   struct test_surface *surface = calloc(1, sizeof(*surface));
@@ -396,6 +421,8 @@ static void bind_scale(struct wl_client *client, void *data, uint32_t version,
 static void toplevel_destroyed(struct wl_resource *resource) {
   if (toplevel == resource)
     toplevel = NULL;
+  if (second_toplevel == resource)
+    second_toplevel = NULL;
 }
 static const struct zwlr_foreign_toplevel_handle_v1_interface toplevel_impl = {
     .destroy = destroy_request};
@@ -411,13 +438,14 @@ static void bind_fullscreen(struct wl_client *client, void *data,
   (void)data;
   struct wl_resource *resource = wl_resource_create(
       client, &zwlr_foreign_toplevel_manager_v1_interface, (int)version, id);
+  focus_manager = resource;
   wl_resource_set_implementation(resource, &manager_impl, NULL, NULL);
   toplevel = wl_resource_create(
       client, &zwlr_foreign_toplevel_handle_v1_interface, (int)version, 0);
   wl_resource_set_implementation(toplevel, &toplevel_impl, NULL,
                                  toplevel_destroyed);
   zwlr_foreign_toplevel_manager_v1_send_toplevel(resource, toplevel);
-  for (size_t m = 0; m < 2; m++)
+  for (size_t m = 0; m < (focus_test ? 1U : 2U); m++)
     for (size_t i = 0; i < 32; i++)
       if (monitors[m].resources[i] &&
           wl_resource_get_client(monitors[m].resources[i]) == client)
@@ -425,16 +453,143 @@ static void bind_fullscreen(struct wl_client *client, void *data,
             toplevel, monitors[m].resources[i]);
   struct wl_array state;
   wl_array_init(&state);
-  uint32_t *values = wl_array_add(&state, 2 * sizeof(*values));
+  uint32_t *values =
+      wl_array_add(&state, (focus_test ? 1U : 2U) * sizeof(*values));
   assert(values);
-  values[0] = ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN;
-  values[1] = ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED;
+  values[0] = focus_test ? ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED
+                         : ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN;
+  if (!focus_test)
+    values[1] = ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED;
   zwlr_foreign_toplevel_handle_v1_send_state(toplevel, &state);
   zwlr_foreign_toplevel_handle_v1_send_done(toplevel);
   wl_array_release(&state);
+  if (focus_test) {
+    second_toplevel = wl_resource_create(
+        client, &zwlr_foreign_toplevel_handle_v1_interface, (int)version, 0);
+    wl_resource_set_implementation(second_toplevel, &toplevel_impl, NULL,
+                                   toplevel_destroyed);
+    zwlr_foreign_toplevel_manager_v1_send_toplevel(resource, second_toplevel);
+    for (size_t i = 0; i < 32; i++) {
+      if (monitors[0].resources[i] &&
+          wl_resource_get_client(monitors[0].resources[i]) == client)
+        zwlr_foreign_toplevel_handle_v1_send_output_enter(
+            second_toplevel, monitors[0].resources[i]);
+    }
+    wl_array_init(&state);
+    zwlr_foreign_toplevel_handle_v1_send_state(second_toplevel, &state);
+    zwlr_foreign_toplevel_handle_v1_send_done(second_toplevel);
+    wl_array_release(&state);
+  }
 }
-static int step(void *data) {
+
+static void focus_output(size_t monitor, bool entering) {
+  for (size_t i = 0; i < 32; i++) {
+    struct wl_resource *resource = monitors[monitor].resources[i];
+    if (resource &&
+        wl_resource_get_client(resource) == wl_resource_get_client(toplevel)) {
+      if (entering)
+        zwlr_foreign_toplevel_handle_v1_send_output_enter(toplevel, resource);
+      else
+        zwlr_foreign_toplevel_handle_v1_send_output_leave(toplevel, resource);
+    }
+  }
+}
+
+static void focus_state(struct wl_resource *window, bool activated,
+                        bool fullscreen) {
+  struct wl_array state;
+  wl_array_init(&state);
+  if (activated) {
+    uint32_t *value = wl_array_add(&state, sizeof(*value));
+    assert(value);
+    *value = ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED;
+  }
+  if (fullscreen) {
+    uint32_t *value = wl_array_add(&state, sizeof(*value));
+    assert(value);
+    *value = ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN;
+  }
+  zwlr_foreign_toplevel_handle_v1_send_state(window, &state);
+  wl_array_release(&state);
+}
+
+static int focus_step(int signal, void *data) {
   static unsigned phase;
+  (void)signal;
+  (void)data;
+  phase++;
+  assert(toplevel || phase == 17);
+  switch (phase) {
+  case 1:
+    focus_output(0, false);
+    focus_output(1, true);
+    break;  // Intentionally wait for the next signal before committing.
+  case 2:
+    break;
+  case 3:
+    focus_state(toplevel, false, false);
+    break;
+  case 4:
+    focus_output(1, false);
+    focus_output(0, true);
+    break;
+  case 5:
+    focus_state(toplevel, true, false);
+    break;
+  case 6:
+    focus_output(1, true);
+    break;
+  case 7:
+    focus_output(0, false);
+    break;
+  case 8:
+    focus_state(toplevel, true, true);
+    break;
+  case 9:
+    focus_state(toplevel, true, false);
+    break;
+  case 10:
+    wl_global_destroy(monitors[1].global);
+    monitors[1].global = NULL;
+    break;
+  case 11:
+    monitors[1].global = wl_global_create(server, &wl_output_interface, 4,
+                                          &monitors[1], bind_output);
+    break;
+  case 12:
+    focus_output(1, true);
+    break;
+  case 13:
+    focus_state(second_toplevel, true, false);
+    zwlr_foreign_toplevel_handle_v1_send_done(second_toplevel);
+    break;
+  case 14:
+    zwlr_foreign_toplevel_handle_v1_send_title(toplevel, "unchanged focus");
+    break;
+  case 15:
+    focus_state(second_toplevel, false, false);
+    zwlr_foreign_toplevel_handle_v1_send_done(second_toplevel);
+    break;
+  case 16:
+    zwlr_foreign_toplevel_handle_v1_send_closed(toplevel);
+    break;
+  case 17:
+    zwlr_foreign_toplevel_manager_v1_send_finished(focus_manager);
+    break;
+  default:
+    assert(false);
+  }
+  if (phase != 1 && phase != 16 && phase != 17)
+    zwlr_foreign_toplevel_handle_v1_send_done(toplevel);
+  printf("focus-phase %u\n", phase);
+  fflush(stdout);
+  return 0;
+}
+// Runtime phases advance on SIGUSR1, so the test waits for the client
+// instead of racing wall-clock timers.
+static int step(int signal, void *data) {
+  static unsigned phase;
+  (void)signal;
   (void)data;
   phase++;
   if (phase == 1) {
@@ -463,14 +618,15 @@ static int step(void *data) {
     monitors[1].global = wl_global_create(server, &wl_output_interface, 4,
                                           &monitors[1], bind_output);
   else if (phase == 4) {
-    // Exceed the socket send buffer and force the client to drain pending
-    // events.
+    // Queue more events than the client reads at once, forcing it to drain
+    // them across wakeups. Before libwayland 1.23 the server buffer is fixed,
+    // so stay within the kernel socket buffer.
     char description[4000];
     memset(description, 'x', sizeof(description) - 1);
     description[3999] = '\0';
     for (size_t i = 0; i < 32; i++)
       if (monitors[0].resources[i])
-        for (size_t n = 0; n < 512; n++)
+        for (size_t n = 0; n < (LARGE_BUFFERS ? 512 : 32); n++)
           wl_output_send_description(monitors[0].resources[i], description);
   }
   printf("phase %u\n", phase);
@@ -484,9 +640,14 @@ static int stop(int signal, void *data) {
   return 0;
 }
 int main(void) {
+  focus_test = getenv("BONGOCAT_TEST_FOCUS") != NULL;
+  if (focus_test)
+    monitors[1].scale = 2;
   server = wl_display_create();
   assert(server);
+#if LARGE_BUFFERS
   wl_display_set_default_max_buffer_size(server, 4 * 1024 * 1024);
+#endif
   loop = wl_display_get_event_loop(server);
   assert(wl_display_add_socket(server, "wayland-test") == 0);
   assert(wl_display_init_shm(server) == 0);
@@ -498,16 +659,11 @@ int main(void) {
   for (size_t i = 0; i < 2; i++)
     monitors[i].global = wl_global_create(server, &wl_output_interface, 4,
                                           &monitors[i], bind_output);
-  struct wl_event_source *timer = wl_event_loop_add_timer(loop, step, NULL);
-  wl_event_source_remove(timer);
-  struct wl_event_source *steps[4];
-  for (size_t i = 0; i < 4; i++) {
-    steps[i] = wl_event_loop_add_timer(loop, step, NULL);
-    wl_event_source_timer_update(steps[i], (int)(i + 1) * 700);
-  }
+  wl_event_loop_add_signal(loop, SIGUSR1, focus_test ? focus_step : step, NULL);
   wl_event_loop_add_signal(loop, SIGTERM, stop, NULL);
-  wl_global_create(server, &zwlr_foreign_toplevel_manager_v1_interface, 3, NULL,
-                   bind_fullscreen);
+  if (!getenv("BONGOCAT_TEST_NO_TOPLEVEL"))
+    wl_global_create(server, &zwlr_foreign_toplevel_manager_v1_interface, 3,
+                     NULL, bind_fullscreen);
   puts("ready");
   fflush(stdout);
   wl_display_run(server);

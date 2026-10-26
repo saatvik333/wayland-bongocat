@@ -9,8 +9,15 @@ static void *test_realloc(void *pointer, size_t size) {
   return fail_reallocation ? NULL : realloc(pointer, size);
 }
 #define realloc test_realloc
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
+#pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#pragma GCC diagnostic ignored "-Wold-style-definition"
 #include <nanosvg.h>
 #include <nanosvgrast.h>
+#pragma GCC diagnostic pop
 #undef realloc
 
 static void test_singular_inverse(void) {
@@ -55,17 +62,10 @@ static void test_failed_point_growth(void) {
   TEST_ASSERT(rasterizer.npoints == 2 && rasterizer.cpoints >= 2);
   free(rasterizer.points);
 }
-int main(int argc, char **argv) {
-  (void)argc;
-  if (argv[1] && strcmp(argv[1], "bounds") == 0) {
-    test_empty_bounds();
-  } else if (argv[1] && strcmp(argv[1], "points") == 0) {
-    test_invalid_point_count();
-  } else {
-    test_singular_inverse();
-    test_empty_bounds();
-    test_invalid_point_count();
-    test_failed_point_growth();
-  }
+int main(void) {
+  test_singular_inverse();
+  test_empty_bounds();
+  test_invalid_point_count();
+  test_failed_point_growth();
   return 0;
 }

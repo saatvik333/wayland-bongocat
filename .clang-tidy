@@ -1,45 +1,40 @@
-# Clang-Tidy Configuration for wayland-bongocat
-# Static analysis for C code with best practices
-
-# Enable checks
+# Static analysis for the C sources; run with `make lint`.
+# Disabled checks flag C and POSIX idioms: int flag macros (POLLIN, IN_*),
+# void * conversions, `while ((entry = readdir(dir)))`, and glibc's ctype
+# tables, which the analyzer treats as tainted array indexing. Clang 18's
+# valist checker loses va_start in multi-file runs (error.c's log functions).
 Checks: >
   -*,
   bugprone-*,
+  -bugprone-assignment-in-selection-statement,
   -bugprone-easily-swappable-parameters,
+  -bugprone-multi-level-implicit-pointer-conversion,
   -bugprone-reserved-identifier,
+  -bugprone-signed-bitwise,
   clang-analyzer-*,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.ArrayBound,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
-  concurrency-*,
-  -concurrency-mt-unsafe,
+  -clang-analyzer-valist.Uninitialized,
   misc-*,
+  -misc-include-cleaner,
   -misc-no-recursion,
   performance-*,
+  -performance-enum-size,
   portability-*,
   readability-*,
-  -readability-identifier-length,
-  -readability-magic-numbers,
   -readability-function-cognitive-complexity,
-  -readability-else-after-return,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-magic-numbers,
+  -readability-trailing-comma
 
-# Only analyze project headers, not system/lib headers
-HeaderFilterRegex: '.*/(include|src)/.*\.h$'
-
-# Treat warnings as warnings (not errors by default)
+HeaderFilterRegex: '.*/include/.*\.h$'
 WarningsAsErrors: ''
 
-# The renderer and helper each run a single thread; mt-unsafe calls cannot
-# race here. Other concurrency checks remain enabled.
-
-# Check options
 CheckOptions:
-  # Public libc headers provide these internal macros/types. Do not require
-  # direct inclusion of glibc implementation headers.
-  - key: misc-include-cleaner.IgnoreHeaders
-    value: '(^|/)(bits|asm-generic)/.*;(^|/)linux/(limits|prctl)\.h$'
-  # Feature-test macros are prescribed by libc, rather than project naming.
   - key: readability-identifier-naming.MacroDefinitionIgnoredRegexp
     value: '^_(GNU_SOURCE|DEFAULT_SOURCE|POSIX_C_SOURCE)$'
-  # Naming conventions (C style)
   - key: readability-identifier-naming.GlobalConstantCase
     value: UPPER_CASE
   - key: readability-identifier-naming.MacroDefinitionCase
@@ -60,29 +55,11 @@ CheckOptions:
     value: lower_case
   - key: readability-identifier-naming.EnumConstantCase
     value: UPPER_CASE
-  
-  # Braces around statements
   - key: readability-braces-around-statements.ShortStatementLines
     value: '1'
-  
-  # Function size limits (advisory)
   - key: readability-function-size.LineThreshold
     value: '200'
   - key: readability-function-size.StatementThreshold
     value: '100'
   - key: readability-function-size.ParameterThreshold
     value: '8'
-  
-  # Performance checks
-  - key: performance-unnecessary-value-param.AllowedTypes
-    value: ''
-  
-  # Misc settings
-  - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
-    value: 'true'
-
-# System header directories to ignore
-SystemHeaders: false
-
-# Use colors in diagnostics
-UseColor: true

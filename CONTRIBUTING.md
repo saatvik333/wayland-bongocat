@@ -1,94 +1,44 @@
-# Contributing to Bongo Cat Wayland Overlay
+# Contributing
 
-Thank you for your interest in contributing! 🐱
+## Setup
 
-## Getting Started
-
-### Prerequisites
-
-- Wayland compositor with layer shell support
-- GCC or Clang (C23 support)
-- wayland-client
-- Make
-
-> **Note:** `wayland-scanner` and `wayland-protocols` are only needed if you modify protocol XML files (`make protocols`). The generated protocol bindings are committed to git.
-
-### Building
+You need `wayland-client`, `make` and a C23 compiler. The runtime tests also
+need `wayland-server`, `wayland-scanner` and `python3`. Generated protocol
+bindings are committed; `make protocols` regenerates them after changing
+`protocols/*.xml`.
 
 ```bash
 git clone https://github.com/saatvik333/wayland-bongocat.git
 cd wayland-bongocat
-make debug    # Development build with debug symbols
-make          # Release build
+make debug
+./build/bongocat -c bongocat.conf.example -w
 ```
 
-### Running
+Read [ARCHITECTURE.md](ARCHITECTURE.md) before changing the event loop,
+Wayland lifecycle or input helper.
+
+## Before a pull request
 
 ```bash
-./build/bongocat -c bongocat.conf -w
+make format-check
+make release
+make clean && make debug
+make test-sanitize
+make test-runtime
+make lint
 ```
 
-## Development Workflow
+- Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`,
+  `fix(input):` …), one topic per commit.
+- Describe the behavior change and its motivation, link issues, and list the
+  commands you ran.
+- For visible changes, include a screenshot or recording.
+- For runtime bugs, include your compositor and its version, your
+  configuration, and output with `enable_debug=1`.
 
-### Code Style
+## Tests
 
-- Run `make format` before committing
-- Follow the existing code patterns
-- Use meaningful variable names
-
-### Making Changes
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-### Commit Messages
-
-Use conventional commits:
-
-```
-feat: add new feature
-fix: resolve bug
-docs: update documentation
-refactor: improve code structure
-```
-
-## Code Structure
-
-```
-src/
-├── core/       # Main application logic
-├── config/     # Configuration parsing
-├── graphics/   # Animation and rendering
-├── platform/   # Wayland integration
-└── utils/      # Error handling, memory
-```
-
-## Testing
-
-```bash
-# Run unit tests
-make test
-
-# Run with debug logging
-./build/bongocat -c bongocat.conf -w
-
-# Check for memory leaks
-make memcheck
-```
-
-## Reporting Issues
-
-When reporting bugs, please include:
-
-- Your compositor (Sway, Hyprland, etc.)
-- Config file contents
-- Debug output (`enable_debug=1`)
-
-## Questions?
-
-Open an issue or reach out to the maintainer.
-
-Thanks for helping make Bongo Cat better! 🎉
+Unit tests are standalone programs in `tests/test_<module>.c` using
+`TEST_ASSERT` from `tests/test_helpers.h`. Add the test name to `TESTS` in the
+Makefile, and its extra sources to `test_<name>_SOURCES`. Behavior involving
+the compositor belongs in `scripts/test_runtime.py` or `scripts/test_focus.py`.

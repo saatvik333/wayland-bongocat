@@ -1,216 +1,375 @@
 #define _GNU_SOURCE
 #include "config/config.h"
+#include "config/config_watcher.h"
 #include "core/bongocat.h"
 #include "core/control.h"
 #include "graphics/animation.h"
-#include "platform/hyprland.h"
 #include "platform/input.h"
+#include "platform/niri.h"
 #include "platform/wayland.h"
+#include "utils/clock.h"
 #include "utils/error.h"
 
 #include <errno.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/eventfd.h>
-#include <sys/types.h>
+#include <sys/poll.h>
+#include <sys/timerfd.h>
 #include <time.h>
 #include <unistd.h>
 
+#define INPUT_RETRY_US 5000000  // Minimum interval between helper starts
+#define TOGGLE_WAIT_US 2000000  // How long --toggle waits for a stopping cat
+#define TOGGLE_POLL_US 50000
+
 static volatile sig_atomic_t running = 1;
 static int signal_fd = -1;
+static int sleep_fd = -1;
 static config_t config;
-static ConfigWatcher watcher = {.inotify_fd = -1, .watch_fd = -1};
-static char *config_path;
+static config_watcher_t watcher;  // Inactive unless --watch-config
+static char *config_path;         // NULL while running on defaults
 static const char *monitor_override;
 static bool hidden, paused;
-static bool reload_pending;
 static int64_t input_retry_at;
-static int64_t monotonic_ms(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ((int64_t)ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
-}
+
+// =============================================================================
+// SIGNALS, SCHEDULE AND INPUT
+// =============================================================================
 
 static void stop_signal(int signal) {
   (void)signal;
   int saved = errno;
   running = 0;
   uint64_t value = 1;
-  if (signal_fd >= 0) {
-    ssize_t result = write(signal_fd, &value, sizeof(value));
-    (void)result;
+  if (write(signal_fd, &value, sizeof(value)) < 0) {
+    // The flag alone still ends the loop at its next wakeup.
   }
   errno = saved;
 }
-static int setup_signals(void) {
+
+static bool setup_signals(void) {
   signal_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (signal_fd < 0) {
-    return -1;
+    return false;
   }
   struct sigaction action = {.sa_handler = stop_signal};
   sigemptyset(&action.sa_mask);
-  int signals[] = {SIGTERM, SIGINT, SIGQUIT, SIGHUP};
+  const int signals[] = {SIGTERM, SIGINT, SIGQUIT, SIGHUP};
   for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
     if (sigaction(signals[i], &action, NULL) < 0) {
-      return -1;
+      return false;
     }
   }
   signal(SIGPIPE, SIG_IGN);
-  return 0;
+  return true;
 }
-static bool arrays_equal(char **a, int na, char **b, int nb) {
-  if (na != nb) {
+
+// Arms a wall-clock timer for the next sleep_begin/sleep_end. Wall-clock
+// timers also fire after suspend, and clock changes cancel them.
+static void update_sleep_schedule(void) {
+  // time() reads a coarse clock that can lag the timerfd that just fired,
+  // which would re-arm the same, already passed boundary.
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME, &now);
+  time_t next;
+  wayland_set_sleeping(sleep_schedule(&config, now.tv_sec, &next));
+  struct itimerspec spec = {.it_value = {.tv_sec = next}};
+  if (sleep_fd >= 0 &&
+      timerfd_settime(sleep_fd, TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET,
+                      &spec, NULL) < 0) {
+    bongocat_log_warning("Cannot schedule sleep: %s", strerror(errno));
+  }
+}
+
+static void start_input(void) {
+  input_retry_at = monotonic_us() + INPUT_RETRY_US;
+  if (input_start(&config) != BONGOCAT_SUCCESS) {
+    bongocat_log_warning("Input helper unavailable; retrying in 5s");
+  }
+}
+
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
+
+static bool same_strings(char **a, int count_a, char **b, int count_b) {
+  if (count_a != count_b) {
     return false;
   }
-  for (int i = 0; i < na; i++) {
+  for (int i = 0; i < count_a; i++) {
     if (strcmp(a[i], b[i]) != 0) {
       return false;
     }
   }
   return true;
 }
+
+// --monitor replaces the configured output list.
 static bongocat_error_t force_monitor(config_t *settings) {
   if (!monitor_override) {
     return BONGOCAT_SUCCESS;
   }
   char *name = strdup(monitor_override);
-  if (!name) {
+  char **names = name ? malloc(sizeof(*names)) : NULL;
+  if (!names) {
+    free(name);
     return BONGOCAT_ERROR_MEMORY;
   }
-  free(settings->output_name);
-  settings->output_name = name;
-  for (int i = 0; i < settings->num_output_names; i++) {
-    free(settings->output_names[i]);
+  for (int i = 0; i < settings->num_monitors; i++) {
+    free(settings->monitors[i]);
   }
-  free((void *)settings->output_names);
-  settings->output_names = NULL;
-  settings->num_output_names = 0;
+  free((void *)settings->monitors);
+  names[0] = name;
+  settings->monitors = names;
+  settings->num_monitors = 1;
   return BONGOCAT_SUCCESS;
 }
+
 static int reload(void) {
-  config_t next = {0};
-  bongocat_error_t result = load_config_strict(&next, config_path);
-  if (result == BONGOCAT_SUCCESS) {
-    result = force_monitor(&next);
-  }
-  if (result != BONGOCAT_SUCCESS) {
-    config_cleanup_full(&next);
-    bongocat_error_init(config.enable_debug);
+  config_t next;
+  if (config_load(&next, config_path, true) != BONGOCAT_SUCCESS ||
+      force_monitor(&next) != BONGOCAT_SUCCESS) {
+    config_free(&next);
+    bongocat_log_set_debug(config.enable_debug);
     bongocat_log_warning("Reload rejected; keeping current configuration");
     return 1;
   }
   bool input_changed =
-      (next.hotplug_scan_interval != config.hotplug_scan_interval ||
-       !arrays_equal(next.keyboard_devices, next.num_keyboard_devices,
-                     config.keyboard_devices, config.num_keyboard_devices) ||
-       !arrays_equal(next.keyboard_names, next.num_names, config.keyboard_names,
-                     config.num_names)) != 0;
+      !same_strings(next.keyboard_devices, next.num_keyboard_devices,
+                    config.keyboard_devices, config.num_keyboard_devices) ||
+      !same_strings(next.keyboard_names, next.num_keyboard_names,
+                    config.keyboard_names, config.num_keyboard_names);
   config_t old = config;
   config = next;
   wayland_update_config(&config);
+  update_sleep_schedule();
   if (input_changed) {
-    result = input_restart_monitoring(config.keyboard_devices,
-                                      config.num_keyboard_devices,
-                                      config.keyboard_names, config.num_names,
-                                      config.hotplug_scan_interval, 0);
-    if (result != BONGOCAT_SUCCESS) {
-      bongocat_log_warning("Input helper restart failed; retrying");
-    }
+    input_stop();
+    start_input();
   }
-  config_cleanup_full(&old);
-  bongocat_error_init(config.enable_debug);
+  config_free(&old);
+  bongocat_log_info("Configuration reloaded");
   return 0;
 }
-static void changed(const char *path) {
-  (void)path;
-  reload_pending = true;
-}
-static int command(const char *request, char *response, size_t capacity) {
+
+// =============================================================================
+// CONTROL REQUESTS
+// =============================================================================
+
+static int command(const char *request, char *reply, size_t size) {
   int result = 0;
   if (strcmp(request, "stop") == 0) {
-    {
-      running = 0;
-    }
-  } else if (strcmp(request, "hide") == 0) {
-    hidden = true;
-    wayland_set_hidden(true);
-  } else if (strcmp(request, "show") == 0) {
-    hidden = false;
-    wayland_set_hidden(false);
+    running = 0;
+  } else if (strcmp(request, "hide") == 0 || strcmp(request, "show") == 0) {
+    hidden = strcmp(request, "hide") == 0;
+    wayland_set_hidden(hidden);
   } else if (strcmp(request, "pause") == 0 || strcmp(request, "resume") == 0) {
     paused = strcmp(request, "pause") == 0;
-    input_process_events();
-    if (pending_paws) {
-      atomic_store(pending_paws, 0);
-    }
-    animation_set_paused(paused);
-    wayland_request_redraw();
+    wayland_set_paused(paused);
   } else if (strcmp(request, "reload") == 0) {
-    { result = reload(); }
+    result = reload();
   } else if (strcmp(request, "status") == 0) {
-    snprintf(
-        response, capacity,
-        "running pid=%ld hidden=%s paused=%s input=%s devices=%u config=%s",
-        (long)getpid(), (int)hidden ? "yes" : "no", (int)paused ? "yes" : "no",
-        (int)input_child_is_alive() ? "connected" : "restarting",
-        input_device_count(), config_path);
+    snprintf(reply, size,
+             "running pid=%ld hidden=%s paused=%s input=%s devices=%u "
+             "config=%s",
+             (long)getpid(), hidden ? "yes" : "no", paused ? "yes" : "no",
+             input_running() ? "connected" : "restarting", input_device_count(),
+             config_path ? config_path : "(defaults)");
     return 0;
   } else {
-    { result = 1; }
+    result = 1;
   }
-  snprintf(response, capacity, "%s", result ? "request failed" : "ok");
+  snprintf(reply, size, "%s", result ? "request failed" : "ok");
   return result;
 }
-static void tick(void) {
-  hypr_poll();
-  config_watcher_process(&watcher);
-  if (reload_pending) {
-    reload_pending = false;
-    reload();
+
+// =============================================================================
+// EVENT LOOP
+// =============================================================================
+
+enum {
+  POLL_WAYLAND,
+  POLL_SIGNAL,
+  POLL_INPUT,
+  POLL_WATCHER,
+  POLL_NIRI,
+  POLL_SLEEP,
+  POLL_CONTROL,  // Listening socket, then clients
+};
+#define POLL_COUNT (POLL_CONTROL + 1 + CONTROL_MAX_CLIENTS)
+
+static void earliest(int64_t *deadline, int64_t candidate) {
+  if (candidate && (!*deadline || candidate < *deadline)) {
+    *deadline = candidate;
   }
-  control_process(command);
-  if (!input_child_is_alive() && monotonic_ms() >= input_retry_at) {
-    input_retry_at = monotonic_ms() + 5000;
-    bongocat_error_t result = input_restart_monitoring(
-        config.keyboard_devices, config.num_keyboard_devices,
-        config.keyboard_names, config.num_names, config.hotplug_scan_interval,
-        0);
+}
+
+static bool due(int64_t deadline) {
+  return deadline && monotonic_us() >= deadline;
+}
+
+static void drain(int fd) {
+  uint64_t value;
+  while (read(fd, &value, sizeof(value)) > 0) {}
+}
+
+static bongocat_error_t run(void) {
+  struct pollfd fds[POLL_COUNT];
+  while (running) {
+    if (!input_running() && due(input_retry_at)) {
+      start_input();
+    }
+    int64_t deadline;
+    bongocat_error_t result = wayland_prepare(&fds[POLL_WAYLAND], &deadline);
     if (result != BONGOCAT_SUCCESS) {
-      bongocat_log_warning("Input helper unavailable; retrying in 5s");
+      return result;
+    }
+    earliest(&deadline, config_watcher_deadline(&watcher));
+    earliest(&deadline, control_deadline());
+    if (!input_running()) {
+      earliest(&deadline, input_retry_at);
+    }
+    fds[POLL_SIGNAL] = (struct pollfd){.fd = signal_fd, .events = POLLIN};
+    fds[POLL_INPUT] = (struct pollfd){.fd = input_fd(), .events = POLLIN};
+    fds[POLL_WATCHER] =
+        (struct pollfd){.fd = config_watcher_fd(&watcher), .events = POLLIN};
+    fds[POLL_NIRI] = (struct pollfd){.fd = niri_fd(), .events = POLLIN};
+    fds[POLL_SLEEP] = (struct pollfd){.fd = sleep_fd, .events = POLLIN};
+    int control[1 + CONTROL_MAX_CLIENTS];
+    size_t controls = control_fds(control, 1 + CONTROL_MAX_CLIENTS);
+    for (size_t i = 0; i < controls; i++) {
+      fds[POLL_CONTROL + i] =
+          (struct pollfd){.fd = control[i], .events = POLLIN};
+    }
+    nfds_t count = POLL_CONTROL + controls;
+    bool failed = false;
+    if (poll(fds, count, poll_timeout_until(deadline, monotonic_us())) < 0) {
+      failed = errno != EINTR;
+      if (failed) {
+        bongocat_log_error("poll: %s", strerror(errno));
+      }
+      for (nfds_t i = 0; i < count; i++) {
+        fds[i].revents = 0;
+      }
+    }
+    // Always pairs with the read prepared by wayland_prepare().
+    result = wayland_dispatch(&fds[POLL_WAYLAND]);
+    if (failed || result != BONGOCAT_SUCCESS) {
+      return failed ? BONGOCAT_ERROR_WAYLAND : result;
+    }
+    if (fds[POLL_SIGNAL].revents) {
+      drain(signal_fd);
+    }
+    if (fds[POLL_INPUT].revents) {
+      int64_t time = 0;
+      unsigned paws = input_read(&time);
+      wayland_add_paws(paws, time);
+    }
+    if ((fds[POLL_WATCHER].revents || due(config_watcher_deadline(&watcher))) &&
+        config_watcher_process(&watcher)) {
+      reload();
+    }
+    if (fds[POLL_NIRI].revents) {
+      niri_poll();
+    }
+    if (fds[POLL_SLEEP].revents) {
+      drain(sleep_fd);
+      update_sleep_schedule();
+    }
+    bool control_ready = due(control_deadline());
+    for (size_t i = 0; i < controls; i++) {
+      control_ready |= fds[POLL_CONTROL + i].revents != 0;
+    }
+    if (control_ready) {
+      control_process(command);
     }
   }
+  return BONGOCAT_SUCCESS;
 }
-static int runtime_timeout(void) {
-  int candidates[] = {config_watcher_timeout(&watcher), control_timeout(),
-                      hypr_timeout(), -1};
-  if (!input_child_is_alive()) {
-    int64_t remaining = input_retry_at - monotonic_ms();
-    candidates[3] = remaining > 0 ? (int)remaining : 0;
+
+// Waits for an instance that is shutting down to release the lock.
+static int lock_instance(bool wait) {
+  int result = instance_lock();
+  for (int64_t until = monotonic_us() + TOGGLE_WAIT_US;
+       wait && result == INSTANCE_LOCKED && monotonic_us() < until;
+       result = instance_lock()) {
+    struct timespec delay = {.tv_nsec = (long)TOGGLE_POLL_US * 1000};
+    nanosleep(&delay, NULL);
   }
-  int timeout = -1;
-  for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-    if (candidates[i] >= 0 && (timeout < 0 || candidates[i] < timeout)) {
-      timeout = candidates[i];
+  return result;
+}
+
+static bool start_application(bool watch, bool toggle) {
+  if (config_load(&config, config_path, false) != BONGOCAT_SUCCESS ||
+      force_monitor(&config) != BONGOCAT_SUCCESS) {
+    return false;
+  }
+  int lock = lock_instance(toggle);
+  if (lock == INSTANCE_LOCKED) {
+    bongocat_log_error("bongocat is already running");
+    return false;
+  }
+  if (lock < 0 || control_start() < 0) {
+    bongocat_log_error("Cannot create runtime files: %s", strerror(errno));
+    return false;
+  }
+  sleep_fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK | TFD_CLOEXEC);
+  if (sleep_fd < 0 || !setup_signals()) {
+    bongocat_log_error("Cannot set up signals and timers: %s", strerror(errno));
+    return false;
+  }
+  if (watch && !config_path) {
+    bongocat_log_info("No configuration file to watch");
+  } else if (watch && !config_watcher_init(&watcher, config_path)) {
+    bongocat_log_warning("Cannot watch %s; use --reload", config_path);
+  }
+  if (animation_init() != BONGOCAT_SUCCESS ||
+      wayland_init(&config) != BONGOCAT_SUCCESS) {
+    return false;
+  }
+  update_sleep_schedule();
+  start_input();
+  return true;
+}
+
+static void stop_application(void) {
+  control_cleanup();
+  input_stop();
+  niri_cleanup();
+  wayland_cleanup();
+  animation_cleanup();
+  config_watcher_cleanup(&watcher);
+  if (signal_fd >= 0) {
+    close(signal_fd);
+  }
+  if (sleep_fd >= 0) {
+    close(sleep_fd);
+  }
+  signal_fd = sleep_fd = -1;
+  config_free(&config);
+  instance_unlock();
+}
+
+static int run_application(bool watch, bool toggle) {
+  bongocat_error_t result = BONGOCAT_ERROR_CONFIG;
+  if (start_application(watch, toggle)) {
+    result = run();
+    if (result != BONGOCAT_SUCCESS) {
+      bongocat_log_error("Runtime stopped: %s", bongocat_error_string(result));
     }
   }
-  return timeout;
+  stop_application();
+  return result == BONGOCAT_SUCCESS ? 0 : 1;
 }
-static int runtime_fds(int *fds, size_t capacity) {
-  size_t count = 0;
-  int basic[] = {signal_fd, input_get_wake_fd(), watcher.inotify_fd,
-                 hypr_poll_fd()};
-  for (size_t i = 0; i < sizeof(basic) / sizeof(basic[0]) && count < capacity;
-       i++) {
-    if (basic[i] >= 0) {
-      fds[count++] = basic[i];
-    }
-  }
-  return (int)count + control_fds(fds + count, capacity - count);
-}
+
+// =============================================================================
+// COMMAND LINE
+// =============================================================================
+
 static void help(const char *program) {
   printf("Usage: %s [options]\n"
          "  -c, --config FILE    Configuration path (XDG search by default)\n"
@@ -220,70 +379,13 @@ static void help(const char *program) {
          "  --hide, --show       Control visibility of every overlay\n"
          "  --pause, --resume    Display idle frame or resume input animation\n"
          "  --reload, --status   Reload config or query running application\n"
-         "  --check-config       Strict validation without Wayland or input "
-         "access\n"
-         "  --list-devices       List evdev devices and keyboard capabilities\n"
-         "  --list-monitors      List Wayland outputs, dimensions and scales\n"
-         "  --doctor             Check config, protocols, devices and "
-         "permissions\n"
+         "  --check-config       Strictly validate the configuration\n"
+         "  --list-devices       List input devices and keyboard settings\n"
+         "  --list-monitors      List Wayland outputs, sizes and scales\n"
+         "  --doctor             Check config, devices and protocols\n"
          "  -h, --help           Show help\n"
          "  -v, --version        Show version\n",
          program);
-}
-static int run_application(bool watch, bongocat_error_t result) {
-  int exit_code = 1;
-  if (result != BONGOCAT_SUCCESS ||
-      force_monitor(&config) != BONGOCAT_SUCCESS) {
-    goto cleanup;
-  }
-  if (instance_lock() < 0) {
-    bongocat_log_error("Cannot lock instance: %s", strerror(errno));
-    goto cleanup;
-  }
-  if (control_start() < 0 || setup_signals() < 0) {
-    goto cleanup;
-  }
-  if (watch && config_watcher_init(&watcher, config_path, changed) == 0) {
-    config_watcher_start(&watcher);
-  }
-  result = animation_init(&config);
-  if (result != BONGOCAT_SUCCESS) {
-    goto cleanup;
-  }
-  result = wayland_init(&config);
-  if (result != BONGOCAT_SUCCESS) {
-    goto cleanup;
-  }
-  result = input_start_monitoring(
-      config.keyboard_devices, config.num_keyboard_devices,
-      config.keyboard_names, config.num_names, config.hotplug_scan_interval, 0);
-  if (result != BONGOCAT_SUCCESS) {
-    goto cleanup;
-  }
-  wayland_set_tick_callback(tick);
-  wayland_set_runtime_fds(runtime_fds);
-  wayland_set_runtime_timeout(runtime_timeout);
-  result = wayland_run(&running);
-  if (result != BONGOCAT_SUCCESS) {
-    bongocat_log_error("Runtime stopped: %s", bongocat_error_string(result));
-  }
-  exit_code = result == BONGOCAT_SUCCESS ? 0 : 1;
-cleanup:
-  config_watcher_cleanup(&watcher);
-  hypr_cleanup();
-  input_cleanup();
-  wayland_cleanup();
-  animation_cleanup();
-  control_cleanup();
-  if (signal_fd >= 0) {
-    int fd = signal_fd;
-    signal_fd = -1;
-    close(fd);
-  }
-  config_cleanup_full(&config);
-  free(config_path);
-  instance_unlock();
-  return exit_code;
 }
 
 int main(int argc, char **argv) {
@@ -291,8 +393,6 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--input-helper") == 0) {
     return input_helper_main(argc, argv);
   }
-  input_privilege_drop();
-  bongocat_error_init(0);
   const char *explicit_path = NULL;
   const char *request = NULL;
   bool watch = false;
@@ -303,28 +403,29 @@ int main(int argc, char **argv) {
   bool doctor = false;
   for (int i = 1; i < argc; i++) {
     const char *arg = argv[i];
-    if (!strcmp(arg, "--help") || !strcmp(arg, "-h")) {
+    if (!strcmp(arg, "-h") || !strcmp(arg, "--help")) {
       help(argv[0]);
       return 0;
     }
-    if (!strcmp(arg, "--version") || !strcmp(arg, "-v")) {
-      puts(BONGOCAT_VERSION);
+    if (!strcmp(arg, "-v") || !strcmp(arg, "--version")) {
+      printf("%s\n", BONGOCAT_VERSION);
       return 0;
     }
-    if (!strcmp(arg, "--config") || !strcmp(arg, "-c") ||
-        !strcmp(arg, "--monitor") || !strcmp(arg, "-m")) {
+    bool config_option = !strcmp(arg, "-c") || !strcmp(arg, "--config");
+    bool monitor_option = !strcmp(arg, "-m") || !strcmp(arg, "--monitor");
+    if (config_option || monitor_option) {
       if (++i >= argc) {
         fprintf(stderr, "%s requires a value\n", arg);
         return 1;
       }
-      if (!strcmp(arg, "--config") || !strcmp(arg, "-c")) {
+      if (config_option) {
         explicit_path = argv[i];
       } else {
         monitor_override = argv[i];
       }
-    } else if (!strcmp(arg, "--watch-config") || !strcmp(arg, "-w")) {
+    } else if (!strcmp(arg, "-w") || !strcmp(arg, "--watch-config")) {
       watch = true;
-    } else if (!strcmp(arg, "--toggle") || !strcmp(arg, "-t")) {
+    } else if (!strcmp(arg, "-t") || !strcmp(arg, "--toggle")) {
       toggle = true;
     } else if (!strcmp(arg, "--check-config")) {
       check = true;
@@ -337,52 +438,50 @@ int main(int argc, char **argv) {
     } else if (!strcmp(arg, "--hide") || !strcmp(arg, "--show") ||
                !strcmp(arg, "--pause") || !strcmp(arg, "--resume") ||
                !strcmp(arg, "--reload") || !strcmp(arg, "--status")) {
-      if (request) {
-        fprintf(stderr, "Select one control command\n");
-        return 1;
-      }
       request = arg + 2;
     } else {
       fprintf(stderr, "Unknown option: %s\n", arg);
       return 1;
     }
   }
+  // Listing opens devices, so it runs before the input group is dropped.
+  int device_failure = devices || doctor ? input_list_devices() : 0;
+  input_privilege_drop();
   if (request) {
     return control_request(request) == 0 ? 0 : 1;
   }
-  if (toggle) {
-    int result = control_request("stop");
-    if (result != 2) {
-      return result;
-    }
-  }
   if (devices && !doctor) {
-    return input_list_devices();
+    return device_failure;
   }
   if (monitors && !doctor) {
     return wayland_list_monitors(false);
   }
   config_path = config_resolve_path(explicit_path);
-  if (!config_path) {
-    config_path = strdup("bongocat.conf");
-  }
-  if (!config_path) {
+  if (explicit_path && !config_path) {
     return 1;
   }
-  bongocat_error_t result = (check || doctor)
-                                ? load_config_strict(&config, config_path)
-                                : load_config(&config, config_path);
   if (check || doctor) {
-    printf("Config: %s (%s)\n", config_path,
-           result == BONGOCAT_SUCCESS ? "valid" : "invalid");
-    int failure = result != BONGOCAT_SUCCESS;
+    config_t checked;
+    bool valid = config_load(&checked, config_path, true) == BONGOCAT_SUCCESS;
+    config_free(&checked);
+    printf("Config: %s (%s)\n",
+           config_path ? config_path : "no file, using defaults",
+           valid ? "valid" : "invalid");
+    int failure = !valid;
     if (doctor) {
-      failure |= input_list_devices();
-      failure |= wayland_list_monitors(true);
+      failure |= device_failure | wayland_list_monitors(true);
     }
-    config_cleanup_full(&config);
     free(config_path);
     return failure;
   }
-  return run_application(watch, result);
+  if (toggle) {
+    int result = control_request("stop");
+    if (result != 2) {
+      free(config_path);
+      return result;
+    }
+  }
+  int exit_code = run_application(watch, toggle);
+  free(config_path);
+  return exit_code;
 }

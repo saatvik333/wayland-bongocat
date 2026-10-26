@@ -1586,7 +1586,10 @@ static int nsvg__parseMatrix(float* xform, const char* str)
 	float t[6];
 	int na = 0;
 	int len = nsvg__parseTransformArgs(str, t, 6, &na);
-	if (na != 6) return len;
+	if (na != 6) {
+		nsvg__xformIdentity(xform); /* bongocat: never use garbage */
+		return len;
+	}
 	memcpy(xform, t, sizeof(float)*6);
 	return len;
 }
